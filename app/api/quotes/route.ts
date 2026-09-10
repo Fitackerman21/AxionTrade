@@ -45,21 +45,25 @@ type PartialQuote = { price: number; previousClose: number; changePct: number; s
 
 async function fetchYahooChart(symbols: string[]): Promise<Map<string, PartialQuote>> {
   const out = new Map<string, PartialQuote>();
-  // sequential-ish batches to stay polite; chart API is 1 symbol per call
-  await Promise.all(
-    symbols.slice(0, 24).map(async (axionSym) => {
-      const y = YAHOO[axionSym];
-      if (!y) return;
+  // throttled concurrency: Yahoo 429s on bursts
+  const CONCURRENCY = 4;
+  const queue = [...symbols.slice(0, 24)];
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const axionSym = queue.shift();
+      const y = axionSym ? YAHOO[axionSym] : undefined;
+      if (!axionSym || !y) continue;
       try {
         const res = await fetch(
           `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(y)}?interval=1d&range=5d`,
           { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(8000) }
         );
-        if (!res.ok) return;
+        if (!res.ok) continue;
         const j = await res.json();
         const meta = j?.chart?.result?.[0]?.meta;
         const price = meta?.regularMarketPrice;
-        if (typeof price !== "number") return;
+        if (typeof price !== "number") continue;
         const prev =
           meta?.chartPreviousClose ?? meta?.previousClose ?? price / (1 + (meta?.regularMarketChangePercent ?? 0) / 100);
         out.set(axionSym, {
@@ -70,6 +74,31 @@ async function fetchYahooChart(symbols: string[]): Promise<Map<string, PartialQu
         });
       } catch {
         /* per-symbol timeout/error ignored */
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+  return out;
+}
+
+/** gold-api.com: real-time keyless spot for precious metals */
+async function fetchMetals(): Promise<Map<string, PartialQuote>> {
+  const out = new Map<string, PartialQuote>();
+  const METALS: Record<string, string> = { XAUUSD: "XAU", XAGUSD: "XAG" };
+  await Promise.all(
+    Object.entries(METALS).map(async ([axionSym, apiSym]) => {
+      try {
+        const res = await fetch(`https://api.gold-api.com/price/${apiSym}`, {
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) return;
+        const j = await res.json();
+        const price = typeof j.price === "number" ? j.price : parseFloat(j.price);
+        if (!Number.isFinite(price)) return;
+        out.set(axionSym, { price, previousClose: price, changePct: 0, source: "gold-api" });
+      } catch {
+        /* ignore */
       }
     })
   );
@@ -148,7 +177,7 @@ async function fetchFrankfurter(): Promise<Map<string, PartialQuote>> {
 
 /* ---------------- cache + route ---------------- */
 
-const CACHE_MS = 15_000;
+const CACHE_MS = 20_000;
 const cache = new Map<string, { data: Quote; expiry: number }>();
 
 export async function GET(req: Request) {
@@ -173,18 +202,20 @@ export async function GET(req: Request) {
   if (missing.length > 0) {
     const collected = new Map<string, PartialQuote>();
 
-    const cryptos = missing.filter((s) => COINBASE_TO_AXION[s] || COINBASE_PRODUCTS.some((p) => COINBASE_TO_AXION[p] === s));
+    const cryptos = missing.filter((s) => COINBASE_PRODUCTS.some((p) => COINBASE_TO_AXION[p] === s));
     const fx = missing.filter((s) => FX.includes(s));
-    const rest = missing.filter((s) => !cryptos.includes(s) && !fx.includes(s));
+    const metals: string[] = missing.filter((s) => s === "XAUUSD" || s === "XAGUSD");
+    const rest = missing.filter((s) => !cryptos.includes(s) && !fx.includes(s) && !metals.includes(s));
 
-    // 1) Coinbase for crypto, 2) Frankfurter for FX, 3) Yahoo for everything else
-    const [cb, fk, yh] = await Promise.all([
+    // 1) Coinbase crypto · 2) Frankfurter FX · 3) gold-api metals · 4) Yahoo the rest
+    const [cb, fk, gm, yh] = await Promise.all([
       cryptos.length ? fetchCoinbase() : Promise.resolve(new Map<string, PartialQuote>()),
       fx.length ? fetchFrankfurter() : Promise.resolve(new Map<string, PartialQuote>()),
+      metals.length ? fetchMetals() : Promise.resolve(new Map<string, PartialQuote>()),
       rest.length ? fetchYahooChart(rest) : Promise.resolve(new Map<string, PartialQuote>()),
     ]);
 
-    for (const src of [cb, fk, yh]) {
+    for (const src of [cb, fk, gm, yh]) {
       for (const [sym, q] of src) {
         if (!collected.has(sym)) collected.set(sym, q);
       }
