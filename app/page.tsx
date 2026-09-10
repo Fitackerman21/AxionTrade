@@ -16,6 +16,7 @@ import {
 
 import { AuroraBackground } from "@/components/aurora-background";
 import { BrandMark, BrandWordmark } from "@/components/brand";
+import { DashboardShell } from "@/components/dashboard-shell";
 import { GlassButton } from "@/components/glass-button";
 import { TickerStrip } from "@/components/ticker-strip";
 
@@ -77,17 +78,22 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [authed, setAuthed] = useState(false);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setNotice(null);
     setLoading(true);
-    // Demo build: simulate auth round-trip until the dashboard lands.
+    // Demo build: simulated auth round-trip, then enter the dashboard.
     setTimeout(() => {
       setLoading(false);
-      setNotice("Demo build — the dashboard arrives in the next push. 🚀");
+      setAuthed(true);
     }, 1400);
   };
+
+  if (authed) {
+    return <DashboardShell />;
+  }
 
   return (
     <main className="relative flex min-h-dvh flex-col overflow-hidden">
@@ -285,11 +291,6 @@ export default function LoginPage() {
             </p>
           </form>
         </motion.section>
-      </div>
-
-      {/* bottom ticker */}
-      <div className="relative z-10 mt-auto">
-        <TickerStrip />
       </div>
 
       <footer className="relative z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 px-6 py-4 text-xs text-muted">
