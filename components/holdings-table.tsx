@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
+import { useLivePrices } from "@/components/live-prices";
 import { Sparkline } from "@/components/sparkline";
 import {
-  formatPct,
   formatPrice,
   INSTRUMENTS,
   seededSeries,
@@ -20,20 +20,19 @@ interface HoldingRow {
   inst: Instrument;
   qty: number;
   avgCost: number;
+  price: number;
+  changePct: number;
   value: number;
   pl: number;
   plPct: number;
 }
 
 /** Demo portfolio: deterministic per-symbol position sizes */
-function buildHoldings(): HoldingRow[] {
+function baseHoldings(): { inst: Instrument; qty: number; avgCost: number }[] {
   return INSTRUMENTS.filter((i) => i.kind !== "forex").map((inst, idx) => {
     const qty = Number(((((idx * 37) % 19) + 3) * (inst.price > 500 ? 0.6 : 4)).toFixed(2));
     const drift = 1 + (((idx * 53) % 21) - 10) / 100;
-    const avgCost = inst.price / drift;
-    const value = qty * inst.price;
-    const pl = value - qty * avgCost;
-    return { inst, qty, avgCost, value, pl, plPct: (pl / (qty * avgCost)) * 100 };
+    return { inst, qty, avgCost: inst.price / drift };
   });
 }
 
@@ -47,9 +46,23 @@ const COLS: { key: SortKey | null; label: string; right?: boolean }[] = [
 ];
 
 export function HoldingsTable() {
-  const rows = useMemo(buildHoldings, []);
+  const { quotes } = useLivePrices();
+  const base = useMemo(baseHoldings, []);
   const [sortKey, setSortKey] = useState<SortKey>("value");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const rows = useMemo<HoldingRow[]>(
+    () =>
+      base.map(({ inst, qty, avgCost }) => {
+        const q = quotes.get(inst.symbol);
+        const price = q?.price ?? inst.price;
+        const changePct = q?.changePct ?? inst.changePct;
+        const value = qty * price;
+        const pl = value - qty * avgCost;
+        return { inst, qty, avgCost, price, changePct, value, pl, plPct: (pl / (qty * avgCost)) * 100 };
+      }),
+    [base, quotes]
+  );
 
   const sorted = useMemo(() => {
     const out = [...rows];
@@ -76,7 +89,7 @@ export function HoldingsTable() {
     <section className="overflow-hidden rounded-2xl border border-border bg-surface/60">
       <div className="flex items-center justify-between px-5 py-4">
         <h2 className="text-sm font-semibold tracking-tight">Holdings</h2>
-        <span className="text-xs text-muted">{rows.length} instruments</span>
+        <span className="text-xs text-muted">{rows.length} instruments · live P/L</span>
       </div>
 
       <div className="overflow-x-auto">
@@ -102,10 +115,10 @@ export function HoldingsTable() {
           </thead>
           <tbody>
             {sorted.map((r) => {
-              const up = r.inst.changePct >= 0;
+              const up = r.changePct >= 0;
               const plUp = r.pl >= 0;
               return (
-                <tr key={r.inst.symbol} className="group border-b border-border/50 transition-colors last:border-0 hover:bg-surface-2/60">
+                <tr key={r.inst.symbol} className="border-b border-border/50 transition-colors last:border-0 hover:bg-surface-2/60">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <InstrumentLogo symbol={r.inst.symbol} kind={r.inst.kind} size={30} />
@@ -116,7 +129,7 @@ export function HoldingsTable() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums">
-                    {formatPrice(r.inst.price, r.inst.kind)}
+                    {formatPrice(r.price, r.inst.kind)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span
@@ -124,7 +137,8 @@ export function HoldingsTable() {
                         up ? "bg-gain/10 text-gain" : "bg-loss/10 text-loss"
                       }`}
                     >
-                      {formatPct(r.inst.changePct)}
+                      {up ? "+" : ""}
+                      {r.changePct.toFixed(2)}%
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums">
@@ -140,7 +154,7 @@ export function HoldingsTable() {
                   </td>
                   <td className="px-4 py-3">
                     <Sparkline
-                      data={seededSeries(r.inst.symbol, 40, r.inst.vol ?? 0.012).map((v) => v * r.inst.price)}
+                      data={seededSeries(r.inst.symbol, 40, r.inst.vol ?? 0.012).map((v) => v * r.price)}
                       width={88}
                       height={30}
                     />

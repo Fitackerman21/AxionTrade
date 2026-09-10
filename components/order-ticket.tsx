@@ -1,10 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import confetti from "canvas-confetti";
 import { ArrowDownRight, ArrowUpRight, Check } from "lucide-react";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
 import { GlassButton } from "@/components/glass-button";
+import { LivePrice } from "@/components/live-price";
+import { useLiveQuote } from "@/components/live-prices";
 import { formatPrice, INSTRUMENTS } from "@/lib/market-data";
 
 const PICKS = ["AAPL", "NVDA", "BTC", "ETH", "SPY", "XAUUSD"];
@@ -21,7 +24,9 @@ export function OrderTicket() {
   const [done, setDone] = useState(false);
 
   const inst = useMemo(() => INSTRUMENTS.find((i) => i.symbol === symbol)!, [symbol]);
-  const price = inst.price;
+  const liveQ = useLiveQuote(symbol);
+  const price = liveQ?.price ?? inst.price;
+  const changePct = liveQ?.changePct ?? inst.changePct;
   const isBuy = side === "buy";
 
   const amount = mode === "value" ? parseFloat(value || "0") : parseFloat(qty || "0") * price;
@@ -39,6 +44,13 @@ export function OrderTicket() {
     e.preventDefault();
     if (amount <= 0) return;
     setDone(true);
+    confetti({
+      particleCount: 90,
+      spread: 70,
+      origin: { y: 0.75 },
+      colors: ["#00c896", "#2e90fa", "#eaecef"],
+      disableForReducedMotion: true,
+    });
     setTimeout(() => setDone(false), 2600);
   };
 
@@ -85,16 +97,10 @@ export function OrderTicket() {
         })}
       </div>
 
-      {/* price line */}
+      {/* price line (live) */}
       <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-background/40 px-3 py-2.5">
         <span className="text-xs text-muted">{inst.name}</span>
-        <span className="font-mono text-sm tabular-nums">
-          {formatPrice(price, inst.kind)}
-          <span className={`ml-2 text-xs ${inst.changePct >= 0 ? "text-gain" : "text-loss"}`}>
-            {inst.changePct >= 0 ? "+" : ""}
-            {inst.changePct.toFixed(2)}%
-          </span>
-        </span>
+        <LivePrice inst={inst} showChange className="text-sm" />
       </div>
 
       <form onSubmit={submit} className="mt-4 space-y-3.5">

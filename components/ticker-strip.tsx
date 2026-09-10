@@ -1,17 +1,15 @@
 "use client";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
+import { LivePrice } from "@/components/live-price";
 import { Sparkline } from "@/components/sparkline";
 import {
-  formatPct,
-  formatPrice,
   INSTRUMENTS,
   seededSeries,
   type Instrument,
 } from "@/lib/market-data";
 
 function TickerItem({ inst }: { inst: Instrument }) {
-  const up = inst.changePct >= 0;
   const series = seededSeries(inst.symbol, 40, inst.vol ?? 0.01).map(
     (v) => v * inst.price
   );
@@ -27,18 +25,7 @@ function TickerItem({ inst }: { inst: Instrument }) {
         {inst.symbol}
       </span>
       <Sparkline data={series} width={56} height={20} strokeWidth={1.4} />
-      <span className="font-mono text-[13px] tabular-nums text-muted">
-        {formatPrice(inst.price, inst.kind)}
-      </span>
-      <span
-        className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] font-medium tabular-nums ${
-          up
-            ? "bg-gain/10 text-gain"
-            : "bg-loss/10 text-loss"
-        }`}
-      >
-        {formatPct(inst.changePct)}
-      </span>
+      <LivePrice inst={inst} showChange className="text-[13px]" />
     </a>
   );
 }

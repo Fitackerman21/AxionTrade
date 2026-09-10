@@ -3,17 +3,15 @@
 import { Plus } from "lucide-react";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
+import { LivePrice } from "@/components/live-price";
+import { useLivePrices } from "@/components/live-prices";
 import { Sparkline } from "@/components/sparkline";
-import {
-  formatPct,
-  formatPrice,
-  INSTRUMENTS,
-  seededSeries,
-} from "@/lib/market-data";
+import { INSTRUMENTS, seededSeries } from "@/lib/market-data";
 
 const WATCH = ["NVDA", "BTC", "ETH", "SOL", "TSLA", "SPY", "XAUUSD", "EURUSD"];
 
 export function Watchlist() {
+  const { quotes } = useLivePrices();
   const rows = WATCH.map((s) => INSTRUMENTS.find((i) => i.symbol === s)!).filter(Boolean);
 
   return (
@@ -27,7 +25,10 @@ export function Watchlist() {
 
       <ul className="divide-y divide-border/50 border-t border-border">
         {rows.map((inst) => {
-          const up = inst.changePct >= 0;
+          const q = quotes.get(inst.symbol);
+          const changePct = q?.changePct ?? inst.changePct;
+          const up = changePct >= 0;
+          const price = q?.price ?? inst.price;
           return (
             <li
               key={inst.symbol}
@@ -38,11 +39,12 @@ export function Watchlist() {
                 <p className="truncate text-[13px] font-semibold leading-tight">{inst.symbol}</p>
                 <p className="truncate text-xs text-muted">{inst.name}</p>
               </div>
-              <Sparkline data={seededSeries(inst.symbol, 36, inst.vol ?? 0.012).map((v) => v * inst.price)} width={64} height={24} strokeWidth={1.3} />
-              <div className="w-20 text-right">
-                <p className="font-mono text-[13px] tabular-nums">{formatPrice(inst.price, inst.kind)}</p>
+              <Sparkline data={seededSeries(inst.symbol, 36, inst.vol ?? 0.012).map((v) => v * price)} width={64} height={24} strokeWidth={1.3} />
+              <div className="w-24 text-right">
+                <LivePrice inst={inst} className="justify-end text-[13px]" />
                 <p className={`font-mono text-xs tabular-nums ${up ? "text-gain" : "text-loss"}`}>
-                  {formatPct(inst.changePct)}
+                  {up ? "+" : ""}
+                  {changePct.toFixed(2)}%
                 </p>
               </div>
             </li>

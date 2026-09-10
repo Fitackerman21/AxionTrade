@@ -18,6 +18,7 @@ import { AuroraBackground } from "@/components/aurora-background";
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { GlassButton } from "@/components/glass-button";
+import { LivePricesProvider } from "@/components/live-prices";
 import { TickerStrip } from "@/components/ticker-strip";
 
 const FEATURES = [
@@ -96,6 +97,7 @@ export default function LoginPage() {
   }
 
   return (
+    <LivePricesProvider>
     <main className="relative flex min-h-dvh flex-col overflow-hidden">
       <AuroraBackground />
 
@@ -302,5 +304,6 @@ export default function LoginPage() {
         </span>
       </footer>
     </main>
+    </LivePricesProvider>
   );
 }
