@@ -32,6 +32,7 @@ export function Watchlist() {
           return (
             <li
               key={inst.symbol}
+              data-symbol={inst.symbol}
               className="group flex cursor-pointer items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/60"
             >
               <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={28} />

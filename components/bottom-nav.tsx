@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ChartCandlestick, CircleUser, House, ListOrdered, Search, Zap } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CircleUser, House, ListOrdered, Search, Zap } from "lucide-react";
 
 type Tab = "home" | "search" | "trade" | "orders" | "account";
 
@@ -13,8 +14,37 @@ const ITEMS: { key: Tab; icon: React.ComponentType<{ className?: string }>; labe
   { key: "account", icon: CircleUser, label: "Account" },
 ];
 
-export function BottomNav({ onTrade }: { onTrade?: () => void }) {
-  const [active, setActive] = useState<Tab>("home");
+/**
+ * Mobile bottom navigation. When `active` is provided it is controlled
+ * (e.g. the trade page pins "trade"); otherwise internal state is used.
+ * The Trade tab opens the dashboard order sheet when `onTrade` is passed,
+ * otherwise it routes to the full trade page.
+ */
+export function BottomNav({
+  active,
+  onTrade,
+}: {
+  active?: Tab;
+  onTrade?: () => void;
+}) {
+  const router = useRouter();
+  const [internalActive, setInternalActive] = useState<Tab>("home");
+  const current = active ?? internalActive;
+
+  const onSelect = (key: Tab) => {
+    if (key === "trade") {
+      if (onTrade) {
+        setInternalActive("trade");
+        onTrade();
+        return;
+      }
+      setInternalActive("trade");
+      router.push("/trade");
+      return;
+    }
+    setInternalActive(key);
+    if (key === "home") router.push("/");
+  };
 
   return (
     <nav
@@ -23,17 +53,15 @@ export function BottomNav({ onTrade }: { onTrade?: () => void }) {
     >
       <div className="mx-auto grid max-w-md grid-cols-5">
         {ITEMS.map(({ key, icon: Icon, label }) => {
-          const isActive = active === key;
+          const isActive = current === key;
           if (key === "trade") {
             return (
               <button
                 key={key}
-                onClick={() => {
-                  setActive(key);
-                  onTrade?.();
-                }}
+                onClick={() => onSelect(key)}
                 className="relative -mt-5 flex flex-col items-center"
                 aria-label="Trade"
+                aria-current={isActive ? "page" : undefined}
               >
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-gain text-[#071018] shadow-[0_10px_28px_-6px_rgba(46,144,250,0.6)] ring-4 ring-background transition-transform active:scale-95">
                   <Icon className="h-5.5 w-5.5" />
@@ -47,7 +75,7 @@ export function BottomNav({ onTrade }: { onTrade?: () => void }) {
           return (
             <button
               key={key}
-              onClick={() => setActive(key)}
+              onClick={() => onSelect(key)}
               className="flex flex-col items-center gap-1 py-2.5"
               aria-current={isActive ? "page" : undefined}
             >
@@ -62,6 +90,3 @@ export function BottomNav({ onTrade }: { onTrade?: () => void }) {
     </nav>
   );
 }
-
-/** Desktop keeps the candle icon in the sidebar; imported here so the icon set stays consistent. */
-export const NAV_ICONS = { ChartCandlestick };

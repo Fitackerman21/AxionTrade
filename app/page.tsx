@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -17,6 +17,7 @@ import {
 import { AuroraBackground } from "@/components/aurora-background";
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { signIn } from "@/lib/demo-auth";
 import { GlassButton } from "@/components/glass-button";
 import { LivePricesProvider } from "@/components/live-prices";
 import { TickerStrip } from "@/components/ticker-strip";
@@ -87,13 +88,18 @@ export default function LoginPage() {
     setLoading(true);
     // Demo build: simulated auth round-trip, then enter the dashboard.
     setTimeout(() => {
+      signIn();
       setLoading(false);
       setAuthed(true);
     }, 1400);
   };
 
   if (authed) {
-    return <DashboardShell />;
+    return (
+      <Suspense fallback={<div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading workspace…</div>}>
+        <DashboardShell />
+      </Suspense>
+    );
   }
 
   return (

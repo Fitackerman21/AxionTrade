@@ -14,9 +14,9 @@ const PICKS = ["AAPL", "NVDA", "BTC", "ETH", "SPY", "XAUUSD"];
 const PILLS = [25, 50, 75, 100] as const;
 const FREE_FUNDS = 12840.55;
 
-export function OrderTicket() {
+export function OrderTicket({ defaultSymbol = "AAPL" }: { defaultSymbol?: string }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [symbol, setSymbol] = useState("AAPL");
+  const [symbol, setSymbol] = useState(defaultSymbol);
   const [mode, setMode] = useState<"value" | "quantity">("value");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [value, setValue] = useState("");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import {
   Bell,
   ChartPie,
@@ -225,7 +225,9 @@ function DashboardInner() {
 export function DashboardShell() {
   return (
     <LivePricesProvider>
-      <DashboardInner />
+      <Suspense fallback={<div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading workspace…</div>}>
+        <DashboardInner />
+      </Suspense>
     </LivePricesProvider>
   );
 }
