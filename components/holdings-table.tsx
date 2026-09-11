@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
 import { useLivePrices } from "@/components/live-prices";
 import { Sparkline } from "@/components/sparkline";
+import { useAccount } from "@/lib/account-store";
 import {
   formatPrice,
   INSTRUMENTS,
@@ -27,15 +29,6 @@ interface HoldingRow {
   plPct: number;
 }
 
-/** Demo portfolio: deterministic per-symbol position sizes */
-function baseHoldings(): { inst: Instrument; qty: number; avgCost: number }[] {
-  return INSTRUMENTS.filter((i) => i.kind !== "forex").map((inst, idx) => {
-    const qty = Number(((((idx * 37) % 19) + 3) * (inst.price > 500 ? 0.6 : 4)).toFixed(2));
-    const drift = 1 + (((idx * 53) % 21) - 10) / 100;
-    return { inst, qty, avgCost: inst.price / drift };
-  });
-}
-
 const COLS: { key: SortKey | null; label: string; right?: boolean }[] = [
   { key: "symbol", label: "Instrument" },
   { key: "price", label: "Price", right: true },
@@ -47,22 +40,34 @@ const COLS: { key: SortKey | null; label: string; right?: boolean }[] = [
 
 export function HoldingsTable() {
   const { quotes } = useLivePrices();
-  const base = useMemo(baseHoldings, []);
+  const { account } = useAccount();
+  const router = useRouter();
   const [sortKey, setSortKey] = useState<SortKey>("value");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const rows = useMemo<HoldingRow[]>(
-    () =>
-      base.map(({ inst, qty, avgCost }) => {
-        const q = quotes.get(inst.symbol);
+  const rows = useMemo<HoldingRow[]>(() => {
+    return account.positions
+      .map((p) => {
+        const inst = INSTRUMENTS.find((i) => i.symbol === p.symbol);
+        if (!inst) return null;
+        const q = quotes.get(p.symbol);
         const price = q?.price ?? inst.price;
         const changePct = q?.changePct ?? inst.changePct;
-        const value = qty * price;
-        const pl = value - qty * avgCost;
-        return { inst, qty, avgCost, price, changePct, value, pl, plPct: (pl / (qty * avgCost)) * 100 };
-      }),
-    [base, quotes]
-  );
+        const value = p.qty * price;
+        const pl = value - p.qty * p.avgCost;
+        return {
+          inst,
+          qty: p.qty,
+          avgCost: p.avgCost,
+          price,
+          changePct,
+          value,
+          pl,
+          plPct: p.avgCost > 0 ? (pl / (p.qty * p.avgCost)) * 100 : 0,
+        } satisfies HoldingRow;
+      })
+      .filter((r): r is HoldingRow => r !== null);
+  }, [account.positions, quotes]);
 
   const sorted = useMemo(() => {
     const out = [...rows];
@@ -92,79 +97,89 @@ export function HoldingsTable() {
         <span className="text-xs text-muted">{rows.length} instruments · live P/L</span>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
-          <thead>
-            <tr className="border-y border-border bg-background/40 text-xs text-muted">
-              {COLS.map((c, i) => (
-                <th
-                  key={i}
-                  onClick={() => toggle(c.key)}
-                  className={`px-4 py-2.5 font-medium ${c.right ? "text-right" : "text-left"} ${
-                    c.key ? "cursor-pointer select-none hover:text-foreground" : ""
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    {c.label}
-                    {sortKey === c.key &&
-                      (sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
-                  </span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((r) => {
-              const up = r.changePct >= 0;
-              const plUp = r.pl >= 0;
-              return (
-                <tr key={r.inst.symbol} className="border-b border-border/50 transition-colors last:border-0 hover:bg-surface-2/60">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <InstrumentLogo symbol={r.inst.symbol} kind={r.inst.kind} size={30} />
-                      <div>
-                        <p className="font-semibold leading-tight">{r.inst.symbol}</p>
-                        <p className="max-w-[180px] truncate text-xs text-muted">{r.inst.name}</p>
+      {rows.length === 0 ? (
+        <p className="px-5 pb-6 pt-2 text-center text-[13px] text-muted">
+          No open positions — buy something on the Trade page or launch AxAI.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-sm">
+            <thead>
+              <tr className="border-y border-border bg-background/40 text-xs text-muted">
+                {COLS.map((c, i) => (
+                  <th
+                    key={i}
+                    onClick={() => toggle(c.key)}
+                    className={`px-4 py-2.5 font-medium ${c.right ? "text-right" : "text-left"} ${
+                      c.key ? "cursor-pointer select-none hover:text-foreground" : ""
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {c.label}
+                      {sortKey === c.key &&
+                        (sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => {
+                const up = r.changePct >= 0;
+                const plUp = r.pl >= 0;
+                return (
+                  <tr
+                    key={r.inst.symbol}
+                    onClick={() => router.push("/trade")}
+                    className="cursor-pointer border-b border-border/50 transition-colors last:border-0 hover:bg-surface-2/60"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <InstrumentLogo symbol={r.inst.symbol} kind={r.inst.kind} size={30} />
+                        <div>
+                          <p className="font-semibold leading-tight">{r.inst.symbol}</p>
+                          <p className="max-w-[180px] truncate text-xs text-muted">{r.inst.name}</p>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums">
-                    {formatPrice(r.price, r.inst.kind)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <span
-                      className={`rounded-md px-1.5 py-0.5 font-mono text-xs tabular-nums ${
-                        up ? "bg-gain/10 text-gain" : "bg-loss/10 text-loss"
-                      }`}
-                    >
-                      {up ? "+" : ""}
-                      {r.changePct.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums">
-                    ${r.value.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                    <span className="block text-xs text-muted">{r.qty} units</span>
-                  </td>
-                  <td className={`px-4 py-3 text-right font-mono text-[13px] tabular-nums ${plUp ? "text-gain" : "text-loss"}`}>
-                    {plUp ? "+" : "−"}${Math.abs(r.pl).toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                    <span className="block text-xs opacity-75">
-                      {plUp ? "+" : "−"}
-                      {Math.abs(r.plPct).toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Sparkline
-                      data={seededSeries(r.inst.symbol, 40, r.inst.vol ?? 0.012).map((v) => v * r.price)}
-                      width={88}
-                      height={30}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">
+                      {formatPrice(r.price, r.inst.kind)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 font-mono text-xs tabular-nums ${
+                          up ? "bg-gain/10 text-gain" : "bg-loss/10 text-loss"
+                        }`}
+                      >
+                        {up ? "+" : ""}
+                        {r.changePct.toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">
+                      ${r.value.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                      <span className="block text-xs text-muted">{r.qty} units</span>
+                    </td>
+                    <td className={`px-4 py-3 text-right font-mono text-[13px] tabular-nums ${plUp ? "text-gain" : "text-loss"}`}>
+                      {plUp ? "+" : "−"}${Math.abs(r.pl).toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                      <span className="block text-xs opacity-75">
+                        {plUp ? "+" : "−"}
+                        {Math.abs(r.plPct).toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Sparkline
+                        data={seededSeries(r.inst.symbol, 40, r.inst.vol ?? 0.012).map((v) => v * r.price)}
+                        width={88}
+                        height={30}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

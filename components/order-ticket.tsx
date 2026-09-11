@@ -8,42 +8,62 @@ import { InstrumentLogo } from "@/components/instrument-logo";
 import { GlassButton } from "@/components/glass-button";
 import { LivePrice } from "@/components/live-price";
 import { useLiveQuote } from "@/components/live-prices";
+import { useAccount } from "@/lib/account-store";
 import { formatPrice, INSTRUMENTS } from "@/lib/market-data";
 
 const PICKS = ["AAPL", "NVDA", "BTC", "ETH", "SPY", "XAUUSD"];
 const PILLS = [25, 50, 75, 100] as const;
-const FREE_FUNDS = 12840.55;
 
-export function OrderTicket({ defaultSymbol = "AAPL" }: { defaultSymbol?: string }) {
+export function OrderTicket({
+  defaultSymbol = "AAPL",
+  onDone,
+}: {
+  defaultSymbol?: string;
+  /** called after a successful fill (e.g. to close the sheet) */
+  onDone?: () => void;
+}) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [mode, setMode] = useState<"value" | "quantity">("value");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [value, setValue] = useState("");
   const [qty, setQty] = useState("");
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const { account, buy, sell } = useAccount();
 
   const inst = useMemo(() => INSTRUMENTS.find((i) => i.symbol === symbol)!, [symbol]);
   const liveQ = useLiveQuote(symbol);
   const price = liveQ?.price ?? inst.price;
   const changePct = liveQ?.changePct ?? inst.changePct;
   const isBuy = side === "buy";
+  const freeFunds = account.cash;
+  const owned = account.positions.find((p) => p.symbol === symbol)?.qty ?? 0;
 
-  const amount = mode === "value" ? parseFloat(value || "0") : parseFloat(qty || "0") * price;
+  const inputQty = parseFloat(qty || "0");
+  const amount = mode === "value" ? parseFloat(value || "0") : inputQty * price;
+  const execQty = mode === "value" ? (price > 0 ? amount / price : 0) : inputQty;
   const fee = amount * 0.0002; // 2 bps demo fee
   const total = isBuy ? amount + fee : amount - fee;
 
   const setPill = (pct: number) => {
     setMode("value");
-    const v = (FREE_FUNDS * pct) / 100;
+    const v = (freeFunds * pct) / 100;
     setValue(v.toFixed(2));
     setQty("");
   };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (amount <= 0) return;
-    setDone(true);
+    if (amount <= 0 || execQty <= 0) return;
+    const r = isBuy ? buy(symbol, execQty, price) : sell(symbol, execQty, price);
+    if (!r.ok) {
+      setErr(r.msg);
+      setTimeout(() => setErr(null), 3200);
+      return;
+    }
+    setErr(null);
+    setDone(r.msg);
     confetti({
       particleCount: 90,
       spread: 70,
@@ -51,7 +71,10 @@ export function OrderTicket({ defaultSymbol = "AAPL" }: { defaultSymbol?: string
       colors: ["#00c896", "#2e90fa", "#eaecef"],
       disableForReducedMotion: true,
     });
-    setTimeout(() => setDone(false), 2600);
+    setTimeout(() => {
+      setDone(null);
+      onDone?.();
+    }, 2600);
   };
 
   return (
@@ -192,12 +215,24 @@ export function OrderTicket({ defaultSymbol = "AAPL" }: { defaultSymbol?: string
             <span>{isBuy ? "Total" : "You receive"}</span>
             <span className="font-mono tabular-nums">${(total || 0).toFixed(2)}</span>
           </div>
+          <div className="flex justify-between text-muted">
+            <span>{isBuy ? "Free funds after" : "You own"}</span>
+            <span className="font-mono tabular-nums">
+              {isBuy
+                ? `$${Math.max(freeFunds - total, 0).toFixed(2)}`
+                : `${owned} ${inst.kind === "crypto" ? "units" : "shares"}`}
+            </span>
+          </div>
         </div>
+
+        {err && (
+          <p className="rounded-lg border border-loss/30 bg-loss/10 px-3 py-2 text-center text-[13px] text-loss">{err}</p>
+        )}
 
         <GlassButton type="submit" disabled={amount <= 0}>
           {done ? (
             <span className="flex items-center gap-1.5">
-              <Check className="h-4 w-4" /> {isBuy ? "Bought" : "Sold"} — demo fill
+              <Check className="h-4 w-4" /> {done}
             </span>
           ) : (
             <span className="capitalize">

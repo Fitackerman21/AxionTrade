@@ -1,10 +1,13 @@
 "use client";
 
 import { Suspense, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Bell,
+  Bot,
   ChartPie,
   ChartLine,
+  ChevronRight,
   CircleUser,
   Compass,
   LayoutGrid,
@@ -21,51 +24,140 @@ import { BottomNav } from "@/components/bottom-nav";
 import { BrandWordmark } from "@/components/brand";
 import { HoldingsTable } from "@/components/holdings-table";
 import { LiveDot } from "@/components/live-price";
-import { LivePricesProvider, useLivePrices } from "@/components/live-prices";
+import { useLivePrices } from "@/components/live-prices";
 import { MoversStrip } from "@/components/movers-strip";
 import { OrderTicket } from "@/components/order-ticket";
 import { PortfolioChart } from "@/components/portfolio-chart";
 import { Watchlist } from "@/components/watchlist";
-import { formatPct, INSTRUMENTS } from "@/lib/market-data";
+import { useAccount } from "@/lib/account-store";
+import { useAiSession } from "@/lib/ai-session";
+import { INSTRUMENTS } from "@/lib/market-data";
 
 const NAV = [
-  { icon: LayoutGrid, label: "Dashboard", active: true },
-  { icon: ChartLine, label: "Portfolio" },
-  { icon: ListOrdered, label: "Orders" },
-  { icon: ChartPie, label: "Pies" },
-  { icon: Compass, label: "Discover" },
-  { icon: Newspaper, label: "News" },
-  { icon: Wallet, label: "Wallet" },
+  { icon: LayoutGrid, label: "Dashboard", href: null, active: true },
+  { icon: ChartLine, label: "Portfolio", href: null },
+  { icon: ListOrdered, label: "Orders", href: null },
+  { icon: ChartPie, label: "Pies", href: null },
+  { icon: Bot, label: "AxAI Engine", href: "/ai" },
+  { icon: Compass, label: "Discover", href: null },
+  { icon: Newspaper, label: "News", href: null },
 ];
 
-function useLiveTotals() {
-  const { quotes } = useLivePrices();
-  return useMemo(() => {
-    let invested = 0;
-    let dayChange = 0;
-    for (const i of INSTRUMENTS) {
-      if (i.kind === "forex") continue;
-      const q = quotes.get(i.symbol);
-      const price = q?.price ?? i.price;
-      const changePct = q?.changePct ?? i.changePct;
-      const weight = i.kind === "crypto" ? 0.06 : 0.035;
-      invested += price * weight * 10;
-      dayChange += price * weight * 10 * (changePct / 100);
-    }
-    const cash = 12840.55;
-    return { invested, cash, dayChange, total: invested + cash };
-  }, [quotes]);
+const fmt = (v: number, frac = 2) =>
+  `$${v.toLocaleString("en-US", { maximumFractionDigits: frac, minimumFractionDigits: frac })}`;
+
+function AiCard() {
+  const { session } = useAiSession();
+  const { account } = useAccount();
+
+  if (session && session.phase === "running") {
+    const pnl = session.equity - session.principal;
+    const pnlPct = (pnl / session.principal) * 100;
+    return (
+      <Link
+        href="/ai"
+        className="group block rounded-2xl border border-brand/30 bg-gradient-to-br from-brand/10 to-gain/5 p-4 transition-colors hover:border-brand/50"
+      >
+        <div className="flex items-center gap-3">
+          <span className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-brand/30 bg-brand/10">
+            <Bot className="h-5 w-5 text-brand" />
+            <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+              <span className="absolute h-full w-full animate-ping rounded-full bg-gain opacity-70" />
+              <span className="relative h-2.5 w-2.5 rounded-full bg-gain" />
+            </span>
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">AxAI engine is trading</p>
+            <p className="text-xs text-muted">
+              Equity {fmt(session.equity)} ·{" "}
+              <span className={`font-mono font-semibold ${pnl >= 0 ? "text-gain" : "text-loss"}`}>
+                {pnl >= 0 ? "+" : "−"}
+                {fmt(Math.abs(pnl))} ({pnlPct >= 0 ? "+" : "−"}
+                {Math.abs(pnlPct).toFixed(1)}%)
+              </span>
+            </p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted transition-transform group-hover:translate-x-0.5" />
+        </div>
+      </Link>
+    );
+  }
+
+  if (session && session.phase === "done" && session.outcome === "goal") {
+    const pnl = session.equity - session.principal;
+    return (
+      <Link
+        href="/ai"
+        className="group block rounded-2xl border border-gain/30 bg-gain/8 p-4 transition-colors hover:border-gain/50"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-gain/30 bg-gain/10">
+            <Bot className="h-5 w-5 text-gain" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-gain">AxAI hit its profit goal</p>
+            <p className="text-xs text-muted">
+              <span className="font-mono font-semibold text-gain">+{fmt(pnl)}</span> settled into your fund
+            </p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted transition-transform group-hover:translate-x-0.5" />
+        </div>
+      </Link>
+    );
+  }
+
+  return (
+    <Link
+      href="/ai"
+      className="group block rounded-2xl border border-border bg-gradient-to-br from-surface to-background p-4 transition-colors hover:border-brand/40"
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-brand/30 bg-brand/10">
+          <Bot className="h-5 w-5 text-brand" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">
+            AxAI · Autonomous trading engine
+          </p>
+          <p className="text-xs text-muted">
+            {account.aiPrincipal > 0
+              ? `${fmt(account.aiPrincipal)} earmarked — launch a mission.`
+              : "Hand over funds, set a goal, watch it trade."}
+          </p>
+        </div>
+        <span className="rounded-lg bg-gradient-to-r from-brand to-gain px-3 py-1.5 text-xs font-bold text-[#071018]">
+          Launch
+        </span>
+      </div>
+    </Link>
+  );
 }
 
 function DashboardInner() {
-  const totals = useLiveTotals();
-  const { connected } = useLivePrices();
+  const { account } = useAccount();
+  const { session } = useAiSession();
+  const { connected, quotes } = useLivePrices();
   const [navOpen, setNavOpen] = useState(false);
   const [tradeOpen, setTradeOpen] = useState(false);
-  const up = totals.dayChange >= 0;
 
-  const fmt = (v: number, frac = 2) =>
-    `$${v.toLocaleString("en-US", { maximumFractionDigits: frac, minimumFractionDigits: frac })}`;
+  const totals = useMemo(() => {
+    let invested = 0;
+    let dayChange = 0;
+    for (const p of account.positions) {
+      const inst = INSTRUMENTS.find((i) => i.symbol === p.symbol);
+      if (!inst) continue;
+      const q = quotes.get(p.symbol);
+      const price = q?.price ?? inst.price;
+      const changePct = q?.changePct ?? inst.changePct;
+      const value = p.qty * price;
+      invested += value;
+      dayChange += value * (changePct / 100);
+    }
+    const aiEquity = session ? session.equity : account.aiPrincipal;
+    return { invested, dayChange, aiEquity, cash: account.cash, total: account.cash + invested + aiEquity };
+  }, [account.positions, account.cash, account.aiPrincipal, quotes, session]);
+
+  const up = totals.dayChange >= 0;
 
   return (
     <div className="flex min-h-dvh">
@@ -83,32 +175,46 @@ function DashboardInner() {
         </div>
 
         <nav className="mt-2 flex-1 space-y-1 px-3">
-          {NAV.map((item) => (
-            <a
-              key={item.label}
-              href="#"
-              onClick={(e) => e.preventDefault()}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
-                item.active
-                  ? "bg-brand/12 text-foreground ring-1 ring-brand/25"
-                  : "text-muted hover:bg-surface-2 hover:text-foreground"
-              }`}
-            >
-              <item.icon className="h-4.5 w-4.5" size={18} />
-              {item.label}
-            </a>
-          ))}
+          {NAV.map((item) =>
+            item.href ? (
+              <Link
+                key={item.label}
+                href={item.href}
+                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <item.icon className="h-4.5 w-4.5" size={18} />
+                {item.label}
+                {item.label === "AxAI Engine" && (
+                  <span className="ml-auto rounded-md bg-gain/15 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-gain">
+                    NEW
+                  </span>
+                )}
+              </Link>
+            ) : (
+              <span
+                key={item.label}
+                className={`flex cursor-default items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium ${
+                  item.active
+                    ? "bg-brand/12 text-foreground ring-1 ring-brand/25"
+                    : "text-muted"
+                }`}
+              >
+                <item.icon className="h-4.5 w-4.5" size={18} />
+                {item.label}
+              </span>
+            )
+          )}
         </nav>
 
         <div className="border-t border-border p-3">
-          <a href="#" onClick={(e) => e.preventDefault()} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+          <Link href="/account" className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
             <Settings className="h-4.5 w-4.5" size={18} />
             Settings
-          </a>
-          <a href="#" onClick={(e) => e.preventDefault()} className="mt-1 flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+          </Link>
+          <Link href="/account" className="mt-1 flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
             <CircleUser className="h-4.5 w-4.5" size={18} />
             Account
-          </a>
+          </Link>
         </div>
       </aside>
 
@@ -139,24 +245,24 @@ function DashboardInner() {
               <Bell className="h-4 w-4" />
               <span className="absolute top-2 right-2.5 h-1.5 w-1.5 rounded-full bg-gain" />
             </button>
-            <div className="flex h-9 items-center gap-2 rounded-xl border border-border px-2.5">
+            <Link href="/account" className="flex h-9 items-center gap-2 rounded-xl border border-border px-2.5">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-brand to-gain text-[11px] font-bold text-[#071018]">
                 FT
               </span>
               <span className="hidden text-sm font-medium md:block">Fitackerman21</span>
-            </div>
+            </Link>
           </div>
         </header>
 
         {/* content — vertical scroll on mobile, bottom padding for the nav bar */}
-        <main className="mx-auto w-full max-w-7xl flex-1 space-y-5 px-4 pt-5 pb-28 lg:pb-8 sm:px-6">
+        <main className="mx-auto w-full max-w-7xl flex-1 space-y-5 px-4 pt-5 pb-28 sm:px-6 lg:pb-8">
           {/* balance hero */}
           <section className="rounded-2xl border border-border bg-surface/60 p-5">
             <p className="text-[13px] text-muted">Total value</p>
             <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="text-3xl font-semibold tracking-tight sm:text-4xl">{fmt(totals.total)}</span>
               <span className={`inline-flex items-center gap-1 rounded-lg px-2 py-0.5 font-mono text-sm font-semibold ${up ? "bg-gain/12 text-gain" : "bg-loss/12 text-loss"}`}>
-                {up ? "▲" : "▼"} {formatPct((totals.dayChange / totals.total) * 100)}
+                {up ? "▲" : "▼"} {(totals.dayChange / Math.max(totals.total, 1) * 100).toFixed(2)}%
               </span>
             </div>
             <p className={`mt-1 text-[13px] font-medium ${up ? "text-gain" : "text-loss"}`}>
@@ -164,7 +270,7 @@ function DashboardInner() {
               {fmt(Math.abs(totals.dayChange))} today
             </p>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-border bg-background/40 p-3">
                 <p className="text-xs text-muted">Invested</p>
                 <p className="mt-0.5 text-lg font-semibold tracking-tight">{fmt(totals.invested)}</p>
@@ -173,17 +279,25 @@ function DashboardInner() {
                 <p className="text-xs text-muted">Free funds</p>
                 <p className="mt-0.5 text-lg font-semibold tracking-tight">{fmt(totals.cash)}</p>
               </div>
+              <Link href="/ai" className="rounded-xl border border-brand/25 bg-brand/5 p-3 transition-colors hover:border-brand/45">
+                <p className="flex items-center gap-1.5 text-xs text-brand">
+                  <Bot className="h-3 w-3" /> With AxAI
+                </p>
+                <p className="mt-0.5 text-lg font-semibold tracking-tight">{fmt(totals.aiEquity)}</p>
+              </Link>
             </div>
 
             <div className="mt-4 flex gap-2.5">
-              <button className="flex-1 rounded-xl bg-gradient-to-r from-brand to-gain py-2.5 text-sm font-semibold text-[#071018] transition-transform active:scale-[0.98]">
+              <Link href="/account" className="flex-1 rounded-xl bg-gradient-to-r from-brand to-gain py-2.5 text-center text-sm font-semibold text-[#071018] transition-transform active:scale-[0.98]">
                 Deposit
-              </button>
-              <button className="flex-1 rounded-xl border border-border py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-surface-2">
+              </Link>
+              <Link href="/account" className="flex-1 rounded-xl border border-border py-2.5 text-center text-sm font-semibold text-foreground transition-colors hover:bg-surface-2">
                 Withdraw
-              </button>
+              </Link>
             </div>
           </section>
+
+          <AiCard />
 
           <MoversStrip />
 
@@ -216,18 +330,15 @@ function DashboardInner() {
         </div>
       )}
 
-      {/* desktop order ticket is not shown in main flow; FAB opens sheet on mobile */}
-      <BottomNav onTrade={() => setTradeOpen((v) => !v)} />
+      <BottomNav active="home" />
     </div>
   );
 }
 
 export function DashboardShell() {
   return (
-    <LivePricesProvider>
-      <Suspense fallback={<div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading workspace…</div>}>
-        <DashboardInner />
-      </Suspense>
-    </LivePricesProvider>
+    <Suspense fallback={<div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading workspace…</div>}>
+      <DashboardInner />
+    </Suspense>
   );
 }

@@ -24,6 +24,7 @@ import { TradeChart } from "@/components/trade-chart";
 import { Watchlist } from "@/components/watchlist";
 import { formatPct, formatPrice, INSTRUMENTS, type Instrument } from "@/lib/market-data";
 import { useRequireAuth } from "@/lib/demo-auth";
+import { AppProviders } from "@/lib/providers";
 
 /* ------------------------------------------------------------------ */
 /* Instrument switcher (sheet on mobile, dropdown on desktop)          */
@@ -116,23 +117,6 @@ function SearchIcon() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Watchlist with trade-page navigation                                */
-/* ------------------------------------------------------------------ */
-
-function TradePageWatchlist({ onPick }: { onPick: (inst: Instrument) => void }) {
-  return (
-    <div onClick={(e) => {
-      const el = (e.target as HTMLElement).closest("li");
-      const sym = el?.querySelector("[data-symbol]")?.getAttribute("data-symbol");
-      const inst = sym ? INSTRUMENTS.find((i) => i.symbol === sym) : undefined;
-      if (inst) onPick(inst);
-    }}>
-      <Watchlist />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* Order sheet (mobile) / floating ticket (desktop)                    */
 /* ------------------------------------------------------------------ */
 
@@ -154,7 +138,7 @@ function OrderSheet({
           <span className="h-1.5 w-10 rounded-full bg-border" />
         </div>
         <div className="px-3 pb-4">
-          <OrderTicket key={symbol} defaultSymbol={symbol} />
+          <OrderTicket key={symbol} defaultSymbol={symbol} onDone={onClose} />
         </div>
       </div>
     </div>
@@ -365,7 +349,7 @@ function TradeInner() {
                 </p>
               </div>
             ) : (
-              <TradePageWatchlist onPick={(i) => setSymbol(i.symbol)} />
+              <Watchlist onPick={(sym) => setSymbol(sym)} />
             )}
           </div>
         </section>
@@ -383,5 +367,9 @@ function TradeInner() {
 }
 
 export default function TradePage() {
-  return <TradeInner />;
+  return (
+    <AppProviders>
+      <TradeInner />
+    </AppProviders>
+  );
 }

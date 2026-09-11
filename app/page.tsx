@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -18,6 +18,7 @@ import { AuroraBackground } from "@/components/aurora-background";
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { signIn } from "@/lib/demo-auth";
+import { AppProviders } from "@/lib/providers";
 import { GlassButton } from "@/components/glass-button";
 import { LivePricesProvider } from "@/components/live-prices";
 import { TickerStrip } from "@/components/ticker-strip";
@@ -96,9 +97,9 @@ export default function LoginPage() {
 
   if (authed) {
     return (
-      <Suspense fallback={<div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading workspace…</div>}>
+      <AppProviders>
         <DashboardShell />
-      </Suspense>
+      </AppProviders>
     );
   }
 

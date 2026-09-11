@@ -10,7 +10,7 @@ import { INSTRUMENTS, seededSeries } from "@/lib/market-data";
 
 const WATCH = ["NVDA", "BTC", "ETH", "SOL", "TSLA", "SPY", "XAUUSD", "EURUSD"];
 
-export function Watchlist() {
+export function Watchlist({ onPick }: { onPick?: (symbol: string) => void }) {
   const { quotes } = useLivePrices();
   const rows = WATCH.map((s) => INSTRUMENTS.find((i) => i.symbol === s)!).filter(Boolean);
 
@@ -33,6 +33,7 @@ export function Watchlist() {
             <li
               key={inst.symbol}
               data-symbol={inst.symbol}
+              onClick={() => onPick?.(inst.symbol)}
               className="group flex cursor-pointer items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/60"
             >
               <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={28} />
