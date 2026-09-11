@@ -58,7 +58,7 @@ interface AccountCtx {
   sell: (symbol: string, qty: number, price: number) => TradeResult;
   entrustToAi: (amount: number) => TradeResult;
   /** settle a finished AI session: returns principal + pnl to cash */
-  aiSettle: (pnl: number) => void;
+  aiSettle: (pnl: number, principal?: number) => void;
   qtyOwned: (symbol: string) => number;
   /** demo helper: restore the starting cash and portfolio */
   resetAccount: () => void;
@@ -179,10 +179,10 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     [account.cash]
   );
 
-  const aiSettle = useCallback((pnl: number) => {
+  const aiSettle = useCallback((pnl: number, principal?: number) => {
     setAccount((a) => ({
       ...a,
-      cash: a.cash + a.aiPrincipal + pnl,
+      cash: a.cash + (principal ?? a.aiPrincipal) + pnl,
       aiPrincipal: 0,
       realizedPl: a.realizedPl + pnl,
     }));
@@ -196,7 +196,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const resetAccount = useCallback(() => {
     setAccount(defaultAccount());
     try {
-      window.localStorage.removeItem("axion_ai_session_v1");
+      window.localStorage.removeItem("axion_ai_session_v3");
+      window.localStorage.removeItem("axion_ai_notifications_v1");
     } catch {
       /* noop */
     }

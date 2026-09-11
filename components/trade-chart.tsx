@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   CandlestickSeries,
   ColorType,
   createChart,
+  createSeriesMarkers,
   CrosshairMode,
   HistogramSeries,
   LineStyle,
@@ -12,6 +14,8 @@ import {
   type IPriceLine,
   type ISeriesApi,
   type IChartApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 
@@ -27,14 +31,40 @@ interface CandleResp {
   candles: Candle[];
 }
 
+/** An AI trade resolved while this chart was watching. */
+export interface AiTradeAnnotation {
+  id: string;
+  symbol: string;
+  dir: "LONG" | "SHORT";
+  pnl: number;
+  outcome: "WIN" | "LOSS";
+  at: number;
+}
+
 const GAIN = "#00c896";
 const LOSS = "#f6465d";
 
-export function TradeChart({ inst }: { inst: Instrument }) {
+interface SpikeState {
+  id: string;
+  /** +1 win (spike up), -1 loss (spike down) */
+  dir: 1 | -1;
+  label: string;
+}
+
+export function TradeChart({
+  inst,
+  aiTrade,
+}: {
+  inst: Instrument;
+  /** the latest AI trade — triggers the marker + spike animation */
+  aiTrade?: AiTradeAnnotation | null;
+}) {
   const [tfId, setTfId] = useState("5m");
   const [data, setData] = useState<Candle[] | null>(null);
   const [meta, setMeta] = useState<{ live: boolean; source: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [spike, setSpike] = useState<SpikeState | null>(null);
+  const [markerBadge, setMarkerBadge] = useState<{ id: string; pnl: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -43,6 +73,10 @@ export function TradeChart({ inst }: { inst: Instrument }) {
   const priceLineRef = useRef<IPriceLine | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const candleMapRef = useRef<Map<number, Candle>>(new Map());
+  const markersApiRef = useRef<{
+    setMarkers: (m: SeriesMarker<Time>[]) => void;
+  } | null>(null);
+  const markersRef = useRef<SeriesMarker<Time>[]>([]);
 
   const quote = useLiveQuote(inst.symbol);
   const livePrice = quote?.price;
@@ -122,6 +156,12 @@ export function TradeChart({ inst }: { inst: Instrument }) {
     });
     candleSeriesRef.current = candleSeries;
 
+    try {
+      markersApiRef.current = createSeriesMarkers(candleSeries, []);
+    } catch {
+      markersApiRef.current = null;
+    }
+
     const volSeries = chart.addSeries(HistogramSeries, {
       priceScaleId: "vol",
       priceFormat: { type: "volume" },
@@ -137,6 +177,8 @@ export function TradeChart({ inst }: { inst: Instrument }) {
       candleSeriesRef.current = null;
       volSeriesRef.current = null;
       priceLineRef.current = null;
+      markersApiRef.current = null;
+      markersRef.current = [];
     };
   }, []);
 
@@ -162,14 +204,17 @@ export function TradeChart({ inst }: { inst: Instrument }) {
       }))
     );
 
-    priceLineRef.current = cs.createPriceLine({
-      price: data[data.length - 1].close,
-      color: "#868e96",
-      lineWidth: 1,
-      lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: "",
-    });
+    priceLineRef.current?.applyOptions({ price: data[data.length - 1].close });
+    if (!priceLineRef.current) {
+      priceLineRef.current = cs.createPriceLine({
+        price: data[data.length - 1].close,
+        color: "#868e96",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "",
+      });
+    }
 
     chartRef.current?.timeScale().fitContent();
   }, [data]);
@@ -197,6 +242,86 @@ export function TradeChart({ inst }: { inst: Instrument }) {
     priceLineRef.current?.applyOptions({ price: livePrice });
   }, [livePrice]);
 
+  /* ---------------- AI trade annotation: marker + spike + label ---------------- */
+  const lastAnnotatedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!aiTrade || aiTrade.id === lastAnnotatedRef.current) return;
+    lastAnnotatedRef.current = aiTrade.id;
+
+    const win = aiTrade.pnl >= 0;
+    const dir: 1 | -1 = win ? 1 : -1;
+
+    // 1) floating +$x / −$x label near the last price
+    setMarkerBadge({ id: aiTrade.id, pnl: aiTrade.pnl });
+    const badgeT = setTimeout(() => setMarkerBadge(null), 3200);
+
+    // 2) animated spike: stretch the last few candles in the trade's favor
+    const arr = candlesRef.current;
+    const cs = candleSeriesRef.current;
+    let iv: ReturnType<typeof setInterval> | undefined;
+    if (cs && arr.length >= 4 && Math.abs(aiTrade.pnl) > 0) {
+      const idx = arr.length - 1;
+      const base = arr.slice(-4).map((c) => ({ ...c }));
+      const stretch = Math.min(0.012, 0.003 + Math.abs(aiTrade.pnl) / Math.max(arr[idx].close * 400, 1));
+      const steps = 14;
+      let s = 0;
+      iv = setInterval(() => {
+        s += 1;
+        const phase = s <= steps / 2 ? s / (steps / 2) : 2 - s / (steps / 2); // up then ease back
+        const k = phase * stretch * dir;
+        for (let j = 0; j < 4; j++) {
+          const c = base[j];
+          const w = 1 + Math.abs(k) * (j + 1) * 0.8;
+          const close = c.close * (1 + k * (j === 3 ? 1 : 0.35));
+          cs.update({
+            time: c.time as UTCTimestamp,
+            open: c.open,
+            high: Math.max(c.high, close) * (dir === 1 ? w : 1),
+            low: Math.min(c.low, close) / (dir === -1 ? w : 1),
+            close,
+          });
+        }
+        if (s >= steps) {
+          if (iv) clearInterval(iv);
+          for (let j = 0; j < 4; j++) {
+            const c = base[j];
+            cs.update({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close });
+          }
+        }
+      }, 55);
+    }
+
+    // 3) durable arrow marker at the resolution time
+    const t = Math.floor(Date.now() / 1000) as UTCTimestamp;
+    markersRef.current = [
+      ...markersRef.current.slice(-12),
+      {
+        time: t,
+        position: win ? "belowBar" : "aboveBar",
+        color: win ? GAIN : LOSS,
+        shape: win ? "arrowUp" : "arrowDown",
+        text: `${win ? "+" : "−"}$${Math.abs(aiTrade.pnl).toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+        size: 1.4,
+      },
+    ];
+    markersApiRef.current?.setMarkers(markersRef.current);
+
+    setSpike({ id: aiTrade.id, dir, label: `${win ? "+" : "−"}$${Math.abs(aiTrade.pnl).toFixed(2)}` });
+    const spikeT = setTimeout(() => setSpike(null), 2400);
+    return () => {
+      clearTimeout(badgeT);
+      clearTimeout(spikeT);
+      if (iv) clearInterval(iv);
+    };
+  }, [aiTrade]);
+
+  // clear markers when switching instrument
+  useEffect(() => {
+    markersRef.current = [];
+    markersApiRef.current?.setMarkers([]);
+    lastAnnotatedRef.current = null;
+  }, [inst.symbol]);
+
   /* ---------------- crosshair OHLC legend ---------------- */
   const [legend, setLegend] = useState<Candle | null>(null);
   useEffect(() => {
@@ -215,11 +340,7 @@ export function TradeChart({ inst }: { inst: Instrument }) {
 
   const shown = legend ?? data?.[data.length - 1] ?? null;
   const shownUp = shown ? shown.close >= shown.open : true;
-  const decimals = inst.kind === "forex" ? 4 : 2;
-  const fmtNum = useCallback(
-    (v: number) => formatPrice(v, inst.kind),
-    [inst.kind]
-  );
+  const fmtNum = useCallback((v: number) => formatPrice(v, inst.kind), [inst.kind]);
 
   const liveBadge = useMemo(() => {
     if (!meta) return null;
@@ -242,7 +363,7 @@ export function TradeChart({ inst }: { inst: Instrument }) {
   }, [meta]);
 
   return (
-    <section className="rounded-2xl border border-border bg-surface/60">
+    <section className="relative rounded-2xl border border-border bg-surface/60">
       {/* toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2.5 sm:px-4">
         <div className="flex rounded-lg border border-border bg-background/60 p-0.5">
@@ -290,8 +411,49 @@ export function TradeChart({ inst }: { inst: Instrument }) {
         )}
       </div>
 
-      {/* chart canvas — explicit height, chart handles resize */}
-      <div ref={containerRef} className="h-[380px] w-full sm:h-[460px]" />
+      {/* chart canvas with overlays */}
+      <div className="relative">
+        <div ref={containerRef} className="h-[380px] w-full sm:h-[460px]" />
+
+        {/* AI fill badge — floats over the last price right after a trade */}
+        <AnimatePresence>
+          {markerBadge && (
+            <motion.div
+              key={markerBadge.id}
+              initial={{ opacity: 0, y: 12, scale: 0.85 }}
+              animate={{ opacity: 1, y: -6, scale: 1 }}
+              exit={{ opacity: 0, y: -26, scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              className={`pointer-events-none absolute top-10 right-4 z-10 rounded-xl border px-3 py-1.5 font-mono text-sm font-bold shadow-lg backdrop-blur-md tabular-nums ${
+                markerBadge.pnl >= 0
+                  ? "border-gain/40 bg-gain/15 text-gain shadow-[0_0_24px_rgba(0,200,150,0.35)]"
+                  : "border-loss/40 bg-loss/15 text-loss shadow-[0_0_24px_rgba(246,70,93,0.3)]"
+              }`}
+            >
+              {markerBadge.pnl >= 0 ? "+" : "−"}${Math.abs(markerBadge.pnl).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+              <span className="ml-1.5 text-[10px] font-semibold tracking-wide opacity-80">AXAI FILL</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* spike glow — the whole chart breathes with the AI's result */}
+        <AnimatePresence>
+          {spike && (
+            <motion.div
+              key={spike.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 1, 0] }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 2.2, times: [0, 0.25, 1] }}
+              className={`pointer-events-none absolute inset-x-0 bottom-0 z-0 h-full ${
+                spike.dir === 1
+                  ? "bg-[radial-gradient(ellipse_at_75%_60%,rgba(0,200,150,0.14),transparent_60%)]"
+                  : "bg-[radial-gradient(ellipse_at_75%_60%,rgba(246,70,93,0.12),transparent_60%)]"
+              }`}
+            />
+          )}
+        </AnimatePresence>
+      </div>
 
       <p className="px-4 pb-2 text-right text-[10px] text-muted">
         {meta?.live ? `Source: ${meta.source}` : "Simulated data"}

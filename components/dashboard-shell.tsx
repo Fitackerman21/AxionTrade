@@ -35,12 +35,12 @@ import { INSTRUMENTS } from "@/lib/market-data";
 
 const NAV = [
   { icon: LayoutGrid, label: "Dashboard", href: null, active: true },
-  { icon: ChartLine, label: "Portfolio", href: null },
-  { icon: ListOrdered, label: "Orders", href: null },
-  { icon: ChartPie, label: "Pies", href: null },
-  { icon: Bot, label: "AxAI Engine", href: "/ai" },
-  { icon: Compass, label: "Discover", href: null },
-  { icon: Newspaper, label: "News", href: null },
+  { icon: ChartLine, label: "Portfolio", href: "/trade" },
+  { icon: ListOrdered, label: "Orders", href: "/trade" },
+  { icon: ChartPie, label: "Pies", href: "/trade" },
+  { icon: Bot, label: "AxAI Terminal", href: "/trade" },
+  { icon: Compass, label: "Discover", href: "/trade" },
+  { icon: Newspaper, label: "News", href: "/trade" },
 ];
 
 const fmt = (v: number, frac = 2) =>
@@ -55,7 +55,7 @@ function AiCard() {
     const pnlPct = (pnl / session.principal) * 100;
     return (
       <Link
-        href="/ai"
+        href="/trade"
         className="group block rounded-2xl border border-brand/30 bg-gradient-to-br from-brand/10 to-gain/5 p-4 transition-colors hover:border-brand/50"
       >
         <div className="flex items-center gap-3">
@@ -83,11 +83,11 @@ function AiCard() {
     );
   }
 
-  if (session && session.phase === "done" && session.outcome === "goal") {
+  if (session && session.phase === "done") {
     const pnl = session.equity - session.principal;
     return (
       <Link
-        href="/ai"
+        href="/trade"
         className="group block rounded-2xl border border-gain/30 bg-gain/8 p-4 transition-colors hover:border-gain/50"
       >
         <div className="flex items-center gap-3">
@@ -95,9 +95,14 @@ function AiCard() {
             <Bot className="h-5 w-5 text-gain" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-gain">AxAI hit its profit goal</p>
+            <p className="text-sm font-semibold text-gain">
+              {pnl >= 0 ? "AxAI finished in profit" : "AxAI session ended"}
+            </p>
             <p className="text-xs text-muted">
-              <span className="font-mono font-semibold text-gain">+{fmt(pnl)}</span> settled into your fund
+              <span className={`font-mono font-semibold ${pnl >= 0 ? "text-gain" : "text-loss"}`}>
+                {pnl >= 0 ? "+" : "−"}{fmt(Math.abs(pnl))}
+              </span>{" "}
+              settled into your fund
             </p>
           </div>
           <ChevronRight className="h-4 w-4 text-muted transition-transform group-hover:translate-x-0.5" />
@@ -108,7 +113,7 @@ function AiCard() {
 
   return (
     <Link
-      href="/ai"
+      href="/trade"
       className="group block rounded-2xl border border-border bg-gradient-to-br from-surface to-background p-4 transition-colors hover:border-brand/40"
     >
       <div className="flex items-center gap-3">
@@ -184,9 +189,9 @@ function DashboardInner() {
               >
                 <item.icon className="h-4.5 w-4.5" size={18} />
                 {item.label}
-                {item.label === "AxAI Engine" && (
+                {item.label === "AxAI Terminal" && (
                   <span className="ml-auto rounded-md bg-gain/15 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-gain">
-                    NEW
+                    AI
                   </span>
                 )}
               </Link>
@@ -279,7 +284,7 @@ function DashboardInner() {
                 <p className="text-xs text-muted">Free funds</p>
                 <p className="mt-0.5 text-lg font-semibold tracking-tight">{fmt(totals.cash)}</p>
               </div>
-              <Link href="/ai" className="rounded-xl border border-brand/25 bg-brand/5 p-3 transition-colors hover:border-brand/45">
+              <Link href="/trade" className="rounded-xl border border-brand/25 bg-brand/5 p-3 transition-colors hover:border-brand/45">
                 <p className="flex items-center gap-1.5 text-xs text-brand">
                   <Bot className="h-3 w-3" /> With AxAI
                 </p>
