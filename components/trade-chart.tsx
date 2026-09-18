@@ -44,6 +44,12 @@ export interface AiTradeAnnotation {
 const GAIN = "#00c896";
 const LOSS = "#f6465d";
 
+/**
+ * Candles kept on screen. Kept deliberately small so the price axis stays
+ * scaled to recent action and live ticks are visibly large.
+ */
+const VISIBLE_CANDLES = 55;
+
 interface SpikeState {
   id: string;
   /** +1 win (spike up), -1 loss (spike down) */
@@ -65,6 +71,8 @@ export function TradeChart({
   const [loading, setLoading] = useState(true);
   const [spike, setSpike] = useState<SpikeState | null>(null);
   const [markerBadge, setMarkerBadge] = useState<{ id: string; pnl: number } | null>(null);
+  /** the still-forming candle, so the OHLC readout ticks with the tape */
+  const [liveCandle, setLiveCandle] = useState<Candle | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -93,6 +101,7 @@ export function TradeChart({
             candlesRef.current = json.candles;
             candleMapRef.current = new Map(json.candles.map((c) => [c.time, c]));
             setData(json.candles);
+            setLiveCandle(null);
             setMeta({ live: json.live, source: json.source });
           }
         }
@@ -209,14 +218,23 @@ export function TradeChart({
       priceLineRef.current = cs.createPriceLine({
         price: data[data.length - 1].close,
         color: "#868e96",
-        lineWidth: 1,
+        lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
         title: "",
       });
     }
 
-    chartRef.current?.timeScale().fitContent();
+    // Show only the most recent window rather than the whole history. With
+    // 350+ candles on screen the price axis spans the entire day, which makes
+    // live ticks sub-pixel — this is what makes the tape look frozen. A tight
+    // window keeps the axis scaled to recent action so ticks are visible.
+    const ts = chartRef.current?.timeScale();
+    if (ts) {
+      const n = candleData.length;
+      const from = Math.max(0, n - VISIBLE_CANDLES);
+      ts.setVisibleLogicalRange({ from, to: n + 5 });
+    }
   }, [data]);
 
   /* ---------------- live last-candle + price line updates ---------------- */
@@ -226,12 +244,43 @@ export function TradeChart({
     if (!cs || !livePrice || arr.length === 0) return;
 
     const last = arr[arr.length - 1];
-    // Ignore live prices on a different scale than the candle series
-    // (e.g. seeded candles vs. real quotes) — that would draw a fake spike.
-    if (Math.abs(livePrice - last.close) / last.close > 0.02) return;
-
     const tfSec = TF_MAP[tfId]?.sec ?? 300;
     const bucket = Math.floor(Date.now() / 1000 / tfSec) * tfSec;
+
+    // The live quote sitting on a different scale to the series means the
+    // candles came from a different source than the quote feed (e.g. a rested
+    // Nasdaq close vs. a CNBC tick). Stretching the last candle to meet it
+    // would draw a fake spike, but simply bailing out leaves the chart frozen —
+    // which is worse. Open a fresh candle at the live price instead: the tape
+    // keeps moving and the jump reads as a genuine source switch.
+    if (Math.abs(livePrice - last.close) / last.close > 0.02) {
+      const gapTime = Math.max(bucket, last.time + tfSec) as UTCTimestamp;
+      const gap: Candle = {
+        time: gapTime as number,
+        open: livePrice,
+        high: livePrice,
+        low: livePrice,
+        close: livePrice,
+        volume: Math.max(1, Math.round(last.volume / 6)),
+      };
+      cs.update({
+        time: gapTime,
+        open: gap.open,
+        high: gap.high,
+        low: gap.low,
+        close: gap.close,
+      });
+      arr.push(gap);
+      candleMapRef.current.set(gap.time, gap);
+      priceLineRef.current?.applyOptions({
+        price: livePrice,
+        color: quote?.dir === "up" ? GAIN : quote?.dir === "down" ? LOSS : "#868e96",
+        lineWidth: 2,
+      });
+      setLiveCandle(gap);
+      return;
+    }
+
 
     // Period rolled over — open a fresh candle at the previous close so the
     // chart keeps growing in real time instead of standing still.
@@ -253,7 +302,11 @@ export function TradeChart({
         low: fresh.low,
         close: fresh.close,
       });
-      priceLineRef.current?.applyOptions({ price: livePrice });
+      priceLineRef.current?.applyOptions({
+        price: livePrice,
+        color: quote?.dir === "up" ? GAIN : quote?.dir === "down" ? LOSS : "#868e96",
+        lineWidth: 1,
+      });
       return;
     }
 
@@ -272,8 +325,15 @@ export function TradeChart({
     });
     arr[arr.length - 1] = updated;
     candleMapRef.current.set(last.time, updated);
-    priceLineRef.current?.applyOptions({ price: livePrice });
-  }, [livePrice, tfId]);
+    // colour the live price line by tick direction — the axis label reads as a
+    // moving, breathing quote rather than a fixed reference
+    priceLineRef.current?.applyOptions({
+      price: livePrice,
+      color: quote?.dir === "up" ? GAIN : quote?.dir === "down" ? LOSS : "#868e96",
+      lineWidth: 2,
+    });
+    setLiveCandle(updated);
+  }, [livePrice, tfId, quote?.dir]);
 
   /* ---------------- AI trade annotation: marker + spike + label ---------------- */
   const lastAnnotatedRef = useRef<string | null>(null);
@@ -371,7 +431,7 @@ export function TradeChart({
     return () => chart.unsubscribeCrosshairMove(handler);
   }, []);
 
-  const shown = legend ?? data?.[data.length - 1] ?? null;
+  const shown = legend ?? liveCandle ?? data?.[data.length - 1] ?? null;
   const shownUp = shown ? shown.close >= shown.open : true;
   const fmtNum = useCallback((v: number) => formatPrice(v, inst.kind), [inst.kind]);
 

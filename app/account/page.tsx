@@ -4,8 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bot, LogOut, RotateCcw, Wallet } from "lucide-react";
 
+import { AppShell } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
 import { BrandMark } from "@/components/brand";
+import { CashFlowSheet, PendingStrip, TransactionsLedger } from "@/components/cash-flow";
 import { useRequireAuth } from "@/lib/demo-auth";
 import { useAccount } from "@/lib/account-store";
 import { useAiSession } from "@/lib/ai-session";
@@ -20,6 +22,7 @@ function AccountInner() {
   const { account, resetAccount } = useAccount();
   const { session } = useAiSession();
   const [confirming, setConfirming] = useState(false);
+  const [cashMode, setCashMode] = useState<"deposit" | "withdraw" | null>(null);
 
   if (authed === null) {
     return <div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading…</div>;
@@ -43,11 +46,12 @@ function AccountInner() {
   const aiPnl = session ? session.equity - session.principal : 0;
 
   return (
+    <AppShell>
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
         <Link
           href="/"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground lg:hidden"
           aria-label="Back to dashboard"
         >
           <ArrowLeft className="h-4.5 w-4.5" />
@@ -55,7 +59,7 @@ function AccountInner() {
         <span className="text-sm font-semibold tracking-tight">Account</span>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 pt-4 pb-28 sm:px-6">
+      <main className="mx-auto w-full max-w-4xl flex-1 space-y-4 px-4 pt-4 pb-28 sm:px-6 lg:pb-10">
         <section className="rounded-2xl border border-border bg-surface/60 p-5">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-background/40">
@@ -95,13 +99,42 @@ function AccountInner() {
             </div>
           </div>
 
+          <PendingStrip />
+
+          <div className="mt-4 flex gap-2.5">
+            <button
+              onClick={() => setCashMode("deposit")}
+              className="flex-1 rounded-xl bg-gradient-to-r from-brand to-gain py-2.5 text-sm font-bold text-[#071018] transition-transform active:scale-[0.98]"
+            >
+              Add funds
+            </button>
+            <button
+              onClick={() => setCashMode("withdraw")}
+              className="flex-1 rounded-xl border border-border py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-surface-2"
+            >
+              Withdraw
+            </button>
+          </div>
+
           <Link
             href="/trade"
-            className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-brand/40 bg-brand/10 py-2.5 text-sm font-semibold text-brand transition-colors hover:bg-brand/20"
+            className="mt-2.5 flex items-center justify-center gap-2 rounded-xl border border-brand/40 bg-brand/10 py-2.5 text-sm font-semibold text-brand transition-colors hover:bg-brand/20"
           >
             <Bot className="h-4 w-4" />
             Manage AxAI allocation
           </Link>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-surface/60 p-4 sm:p-5">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-semibold tracking-tight">Account statement</h2>
+            <span className="text-[11.5px] text-muted">
+              Deposits, withdrawals and AxAI settlements
+            </span>
+          </div>
+          <div className="mt-1">
+            <TransactionsLedger emptyHint="Nothing has moved through this account yet." />
+          </div>
         </section>
 
         <section className="rounded-2xl border border-border bg-surface/60 p-5">
@@ -148,8 +181,16 @@ function AccountInner() {
         </section>
       </main>
 
+      <CashFlowSheet
+        open={cashMode !== null}
+        mode={cashMode ?? "deposit"}
+        onModeChange={setCashMode}
+        onClose={() => setCashMode(null)}
+      />
+
       <BottomNav active="account" />
     </div>
+    </AppShell>
   );
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import Link from "next/link";
 import { Flame } from "lucide-react";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
@@ -23,7 +24,10 @@ export function MoversStrip() {
   const Card = ({ inst, changePct }: { inst: (typeof INSTRUMENTS)[number]; changePct: number }) => {
     const up = changePct >= 0;
     return (
-      <div className="group flex min-w-[150px] shrink-0 items-center gap-2.5 rounded-xl border border-border bg-surface/70 px-3 py-2.5 transition-colors hover:border-muted/40">
+      <Link
+        href={`/trade?symbol=${inst.symbol}`}
+        className="group flex min-w-[150px] shrink-0 items-center gap-2.5 rounded-xl border border-border bg-surface/70 px-3 py-2.5 transition-colors hover:border-brand/40"
+      >
         <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={26} />
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold leading-tight">{inst.symbol}</p>
@@ -36,7 +40,7 @@ export function MoversStrip() {
         >
           {up ? "▲" : "▼"} {Math.abs(changePct).toFixed(2)}%
         </span>
-      </div>
+      </Link>
     );
   };
 

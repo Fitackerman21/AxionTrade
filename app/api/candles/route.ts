@@ -338,7 +338,13 @@ export async function GET(req: NextRequest) {
     }
   }
   if (!candles) {
-    candles = seededCandles(symbol, tf, inst.price, inst.vol ?? 0.01);
+    // Per-bar volatility has to scale with the bar size: a 5m candle moves far
+    // less than a daily one. `vol`/the class default is a DAILY figure, so scale
+    // it by the square root of time or intraday bars come out ~20x too tall.
+    const dailyVol =
+      inst.vol ?? (inst.kind === "crypto" ? 0.035 : inst.kind === "forex" ? 0.006 : inst.kind === "commodity" ? 0.015 : 0.018);
+    const barVol = Math.max(0.0004, dailyVol * Math.sqrt(tf.sec / 86400));
+    candles = seededCandles(symbol, tf, inst.price, barVol);
     prevClose = inst.price / (1 + inst.changePct / 100);
   }
 

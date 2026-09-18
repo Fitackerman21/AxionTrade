@@ -37,15 +37,28 @@ const REST_INTERVAL_MS = 7_000;
  * to interpolate BETWEEN real quotes — see the micro-tick engine below.
  */
 const KIND_TICK_VOL: Record<string, number> = {
-  crypto: 0.00042,
-  commodity: 0.00017,
-  stock: 0.00014,
-  etf: 0.00009,
-  index: 0.00008,
-  forex: 0.00005,
+  crypto: 0.0016,
+  commodity: 0.0009,
+  stock: 0.00085,
+  etf: 0.0005,
+  index: 0.00045,
+  forex: 0.0003,
 };
 const KIND_BY_SYMBOL = new Map(INSTRUMENTS.map((i) => [i.symbol, i.kind]));
-const tickVol = (sym: string) => KIND_TICK_VOL[KIND_BY_SYMBOL.get(sym) ?? "stock"] ?? 0.00014;
+const tickVol = (sym: string) => KIND_TICK_VOL[KIND_BY_SYMBOL.get(sym) ?? "stock"] ?? 0.0006;
+
+/**
+ * Interpolation cadence. The volatility figures above are calibrated per
+ * 850ms, so switching cadence keeps the *variance per second* constant:
+ * step scales with sqrt(dt) and the mean-reversion pull scales linearly with
+ * dt. 220ms is the sweet spot — fast enough that the tape reads as a
+ * continuous stream rather than a steppy 1Hz jump, without re-rendering every
+ * consumer 60x a second.
+ */
+const TICK_MS = 220;
+const TICK_DT = TICK_MS / 850;
+const TICK_VOL_SCALE = Math.sqrt(TICK_DT);
+const TICK_PULL = 0.22 * TICK_DT;
 
 interface LivePricesCtx {
   quotes: Map<string, LiveQuote>;
@@ -190,41 +203,59 @@ export function LivePricesProvider({ children }: { children: React.ReactNode }) 
    * last real value, so the book moves continuously while staying anchored to
    * live data rather than drifting off into fiction.
    */
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (anchorRef.current.size === 0) return;
-      setQuotes((prev) => {
-        if (prev.size === 0) return prev;
-        const next = new Map(prev);
-        for (const [sym, q] of prev) {
-          const anchor = anchorRef.current.get(sym);
-          if (anchor === undefined || !Number.isFinite(anchor)) continue;
+  const tick = useCallback(() => {
+    if (anchorRef.current.size === 0) return;
+    setQuotes((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      for (const [sym, q] of prev) {
+        const anchor = anchorRef.current.get(sym);
+        if (anchor === undefined || !Number.isFinite(anchor)) continue;
 
-          const vol = tickVol(sym);
-          // sum of three uniforms ~ triangular, cheap approximation of noise
-          const noise = (Math.random() + Math.random() + Math.random() - 1.5) * vol * anchor;
-          const pull = (anchor - q.price) * 0.22; // stay glued to the real value
-          const price = Math.max(anchor * 0.85, q.price + pull + noise);
+        const vol = tickVol(sym) * TICK_VOL_SCALE;
+        // sum of three uniforms ~ triangular, cheap approximation of noise
+        const noise = (Math.random() + Math.random() + Math.random() - 1.5) * vol * anchor;
+        const pull = (anchor - q.price) * TICK_PULL; // stay glued to the real value
+        const price = Math.max(anchor * 0.85, q.price + pull + noise);
 
-          // only flip direction on a meaningful move, otherwise the colour strobes
-          const moved = Math.abs(price - q.price) > vol * anchor * 0.35;
-          const dir: TickDir = moved ? (price > q.price ? "up" : "down") : q.dir;
+        // only flip direction on a meaningful move, otherwise the colour strobes
+        const moved = Math.abs(price - q.price) > vol * anchor * 0.35;
+        const dir: TickDir = moved ? (price > q.price ? "up" : "down") : q.dir;
 
-          next.set(sym, {
-            ...q,
-            price,
-            dir,
-            changePct: q.previousClose ? ((price - q.previousClose) / q.previousClose) * 100 : q.changePct,
-            ts: Date.now(),
-          });
-        }
-        priceRef.current = next;
-        return next;
-      });
-    }, 850);
-
-    return () => clearInterval(id);
+        next.set(sym, {
+          ...q,
+          price,
+          dir,
+          changePct: q.previousClose ? ((price - q.previousClose) / q.previousClose) * 100 : q.changePct,
+          ts: Date.now(),
+        });
+      }
+      priceRef.current = next;
+      return next;
+    });
   }, []);
+
+  useEffect(() => {
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id === null) id = setInterval(tick, TICK_MS);
+    };
+    const stop = () => {
+      if (id !== null) {
+        clearInterval(id);
+        id = null;
+      }
+    };
+
+    // don't burn a phone battery animating a hidden tab
+    const onVisibility = () => (document.hidden ? stop() : start());
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
+  }, [tick]);
 
   // ---- seed baseline prices instantly on first mount (no flash of zeros) ----
   useEffect(() => {

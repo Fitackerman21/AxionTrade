@@ -130,7 +130,7 @@ export function HoldingsTable() {
                 return (
                   <tr
                     key={r.inst.symbol}
-                    onClick={() => router.push("/trade")}
+                    onClick={() => router.push(`/trade?symbol=${r.inst.symbol}`)}
                     className="cursor-pointer border-b border-border/50 transition-colors last:border-0 hover:bg-surface-2/60"
                   >
                     <td className="px-4 py-3">

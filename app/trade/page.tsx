@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -21,109 +21,21 @@ import {
 } from "lucide-react";
 
 import { AiPanel } from "@/components/ai-panel";
+import { AppShell } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
 import { BrandMark } from "@/components/brand";
 import { InstrumentLogo } from "@/components/instrument-logo";
+import { InstrumentPicker } from "@/components/instrument-picker";
 import { LiveDot, LivePrice } from "@/components/live-price";
 import { useLivePrices, useLiveQuote } from "@/components/live-prices";
 import { OrderTicket } from "@/components/order-ticket";
 import { TradeChart, type AiTradeAnnotation } from "@/components/trade-chart";
 import { Watchlist } from "@/components/watchlist";
-import { formatPct, formatPrice, INSTRUMENTS, type Instrument } from "@/lib/market-data";
+import { formatPct, formatPrice, INSTRUMENTS } from "@/lib/market-data";
 import { useAccount } from "@/lib/account-store";
 import { useAiSession } from "@/lib/ai-session";
 import { useRequireAuth } from "@/lib/demo-auth";
 import { AppProviders } from "@/lib/providers";
-
-/* ------------------------------------------------------------------ */
-/* Instrument switcher (sheet on mobile, dropdown on desktop)          */
-/* ------------------------------------------------------------------ */
-
-const GROUP_ORDER: Instrument["kind"][] = ["stock", "etf", "crypto", "forex", "commodity"];
-const GROUP_LABEL: Record<Instrument["kind"], string> = {
-  stock: "Stocks",
-  etf: "ETFs",
-  crypto: "Crypto",
-  forex: "Forex",
-  commodity: "Commodities",
-  index: "Indices",
-};
-
-function InstrumentSwitcher({
-  current,
-  onSelect,
-  onClose,
-}: {
-  current: Instrument;
-  onSelect: (inst: Instrument) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-start sm:justify-center sm:pt-16" role="dialog" aria-modal="true" aria-label="Choose instrument">
-      <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={onClose} />
-      <motion.div
-        initial={{ opacity: 0, y: 24, scale: 0.99 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        className="relative max-h-[72dvh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface shadow-2xl sm:max-w-lg sm:rounded-2xl"
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur">
-          <div className="flex items-center gap-2">
-            <SearchIcon />
-            <span className="text-sm font-semibold">Search markets</span>
-          </div>
-          <button onClick={onClose} className="text-muted transition-colors hover:text-foreground" aria-label="Close">
-            ✕
-          </button>
-        </div>
-
-        <div className="px-2 py-2">
-          {GROUP_ORDER.map((kind) => {
-            const list = INSTRUMENTS.filter((i) => i.kind === kind);
-            if (list.length === 0) return null;
-            return (
-              <div key={kind} className="mb-1">
-                <p className="px-3 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
-                  {GROUP_LABEL[kind]}
-                </p>
-                {list.map((inst) => (
-                  <button
-                    key={inst.symbol}
-                    onClick={() => {
-                      onSelect(inst);
-                      onClose();
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
-                      inst.symbol === current.symbol ? "bg-brand/10" : "hover:bg-surface-2"
-                    }`}
-                  >
-                    <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={26} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold">{inst.symbol}</span>
-                      <span className="block truncate text-xs text-muted">{inst.name}</span>
-                    </span>
-                    <span className="font-mono text-xs tabular-nums text-muted">
-                      {formatPrice(inst.price, inst.kind)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-3.5-3.5" />
-    </svg>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* Order sheet (mobile) / centered modal (desktop)                     */
@@ -233,6 +145,34 @@ function TradeInner() {
   const { account } = useAccount();
   const [symbol, setSymbol] = useState("BTC");
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  /* ------------------------------------------------------------------ */
+  /* instrument routing — /trade?symbol=AAPL is a real, shareable URL,    */
+  /* so holdings, watchlist rows and the market list can all deep-link     */
+  /* into the terminal, and browser back/forward walks your chart history. */
+  /* ------------------------------------------------------------------ */
+  const selectSymbol = useCallback((sym: string) => {
+    setSymbol(sym);
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("symbol") !== sym) {
+        url.searchParams.set("symbol", sym);
+        window.history.pushState(null, "", url.toString());
+      }
+    } catch {
+      /* history unavailable (e.g. sandboxed frame) — state still updates */
+    }
+  }, []);
+
+  useEffect(() => {
+    const read = () => {
+      const want = new URLSearchParams(window.location.search).get("symbol")?.toUpperCase();
+      if (want && INSTRUMENTS.some((i) => i.symbol === want)) setSymbol(want);
+    };
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [tab, setTab] = useState<"positions" | "watchlist">("positions");
   const [toast, setToast] = useState<string | null>(null);
@@ -261,6 +201,14 @@ function TradeInner() {
       setSheetOpen(true);
     }
   };
+
+  // live two-way quote: every market has a spread, and showing it is what
+  // makes the ticket read as a real instrument rather than a price display
+  const spreadPct =
+    inst.kind === "forex" ? 0.00012 : inst.kind === "crypto" ? 0.00035 : inst.kind === "commodity" ? 0.0004 : 0.0006;
+  const halfSpread = (price * spreadPct) / 2;
+  const bid = price - halfSpread;
+  const ask = price + halfSpread;
 
   // real position in the viewed instrument
   const positionUnits = account.positions.find((p) => p.symbol === symbol)?.qty ?? 0;
@@ -293,12 +241,13 @@ function TradeInner() {
   }
 
   return (
+    <AppShell>
     <div className="flex min-h-dvh flex-col">
       {/* top bar */}
       <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
         <Link
           href="/"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground lg:hidden"
           aria-label="Back to dashboard"
         >
           <ArrowLeft className="h-4.5 w-4.5" />
@@ -346,7 +295,10 @@ function TradeInner() {
       )}
 
       {/* scrollable content — bottom nav clears via pb-28 */}
-      <main className="mx-auto w-full max-w-5xl flex-1 space-y-4 px-4 pt-4 pb-28 sm:px-6 lg:pb-8">
+      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-4 pb-28 sm:px-6 lg:pb-10">
+       <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[336px_minmax(0,1fr)] lg:items-start lg:gap-5">
+        {/* LEFT — the desk: balances, order entry and the book */}
+        <div className="order-2 space-y-4 lg:order-1 lg:sticky lg:top-20">
         {/* instrument header */}
         <section className="rounded-2xl border border-border bg-surface/60 p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -394,23 +346,6 @@ function TradeInner() {
           </div>
         </section>
 
-        {/* chart — AI fills on THIS instrument animate on it */}
-        <TradeChart
-          inst={inst}
-          aiTrade={
-            lastTrade && lastTrade.symbol === inst.symbol
-              ? {
-                  id: lastTrade.id,
-                  symbol: lastTrade.symbol,
-                  dir: lastTrade.dir,
-                  pnl: lastTrade.pnl,
-                  outcome: lastTrade.outcome,
-                  at: lastTrade.at,
-                }
-              : null
-          }
-        />
-
         {/* buy / sell — signal the engine when it runs, manual orders otherwise */}
         <section className="grid grid-cols-2 gap-3">
           <button
@@ -431,9 +366,22 @@ function TradeInner() {
           </button>
         </section>
 
-        {/* the autonomous engine terminal — merged in, nothing sacrificed */}
-        <div id="ai-terminal" className="scroll-mt-20">
-          <AiPanel />
+        {/* live two-way quote */}
+        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border bg-border/60 text-center">
+          <div className="bg-background/60 px-2 py-2">
+            <p className="text-[10.5px] tracking-wide text-muted uppercase">Bid</p>
+            <p className="font-mono text-[13px] font-semibold tabular-nums text-loss">{formatPrice(bid, inst.kind)}</p>
+          </div>
+          <div className="bg-background/60 px-2 py-2">
+            <p className="text-[10.5px] tracking-wide text-muted uppercase">Spread</p>
+            <p className="font-mono text-[13px] font-semibold tabular-nums text-muted">
+              {(spreadPct * 100).toFixed(3)}%
+            </p>
+          </div>
+          <div className="bg-background/60 px-2 py-2">
+            <p className="text-[10.5px] tracking-wide text-muted uppercase">Ask</p>
+            <p className="font-mono text-[13px] font-semibold tabular-nums text-gain">{formatPrice(ask, inst.kind)}</p>
+          </div>
         </div>
 
         {/* positions / watchlist tabs */}
@@ -496,15 +444,42 @@ function TradeInner() {
                 )}
               </div>
             ) : (
-              <Watchlist onPick={(sym) => setSymbol(sym)} />
+              <Watchlist onPick={selectSymbol} />
             )}
           </div>
         </section>
+        </div>
+
+        {/* RIGHT — the chart, with the AI engine beneath it */}
+        <div className="order-1 min-w-0 space-y-4 lg:order-2">
+          {/* chart — AI fills on THIS instrument animate on it */}
+          <TradeChart
+            inst={inst}
+            aiTrade={
+              lastTrade && lastTrade.symbol === inst.symbol
+                ? {
+                    id: lastTrade.id,
+                    symbol: lastTrade.symbol,
+                    dir: lastTrade.dir,
+                    pnl: lastTrade.pnl,
+                    outcome: lastTrade.outcome,
+                    at: lastTrade.at,
+                  }
+                : null
+            }
+          />
+
+          {/* the autonomous engine terminal — merged in, nothing sacrificed */}
+          <div id="ai-terminal" className="scroll-mt-20">
+            <AiPanel />
+          </div>
+        </div>
+       </div>
       </main>
 
       {/* overlays */}
       {pickerOpen && (
-        <InstrumentSwitcher current={inst} onSelect={(i) => setSymbol(i.symbol)} onClose={() => setPickerOpen(false)} />
+        <InstrumentPicker current={symbol} onSelect={(i) => selectSymbol(i.symbol)} onClose={() => setPickerOpen(false)} />
       )}
       <OrderSheet symbol={inst.symbol} open={sheetOpen} onClose={() => setSheetOpen(false)} />
 
@@ -525,6 +500,7 @@ function TradeInner() {
 
       <BottomNav active="trade" />
     </div>
+    </AppShell>
   );
 }
 

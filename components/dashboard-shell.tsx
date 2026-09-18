@@ -1,27 +1,15 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Bell,
-  Bot,
-  ChartPie,
-  ChartLine,
-  ChevronRight,
-  CircleUser,
-  Compass,
-  LayoutGrid,
-  ListOrdered,
-  Menu,
-  Newspaper,
-  Search,
-  Settings,
-  Wallet,
-  X,
-} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bell, Bot, ChevronRight, Search } from "lucide-react";
 
+import { InstrumentPicker } from "@/components/instrument-picker";
+
+import { AppShell } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
-import { BrandWordmark } from "@/components/brand";
+import { CashFlowSheet, PendingStrip, TransactionsLedger } from "@/components/cash-flow";
 import { HoldingsTable } from "@/components/holdings-table";
 import { LiveDot } from "@/components/live-price";
 import { useLivePrices } from "@/components/live-prices";
@@ -32,16 +20,6 @@ import { Watchlist } from "@/components/watchlist";
 import { useAccount } from "@/lib/account-store";
 import { useAiSession } from "@/lib/ai-session";
 import { INSTRUMENTS } from "@/lib/market-data";
-
-const NAV = [
-  { icon: LayoutGrid, label: "Dashboard", href: null, active: true },
-  { icon: ChartLine, label: "Portfolio", href: "/trade" },
-  { icon: ListOrdered, label: "Orders", href: "/trade" },
-  { icon: ChartPie, label: "Pies", href: "/trade" },
-  { icon: Bot, label: "AxAI Terminal", href: "/trade" },
-  { icon: Compass, label: "Discover", href: "/trade" },
-  { icon: Newspaper, label: "News", href: "/trade" },
-];
 
 const fmt = (v: number, frac = 2) =>
   `$${v.toLocaleString("en-US", { maximumFractionDigits: frac, minimumFractionDigits: frac })}`;
@@ -142,8 +120,10 @@ function DashboardInner() {
   const { account } = useAccount();
   const { session } = useAiSession();
   const { connected, quotes } = useLivePrices();
-  const [navOpen, setNavOpen] = useState(false);
+  const router = useRouter();
   const [tradeOpen, setTradeOpen] = useState(false);
+  const [cashMode, setCashMode] = useState<"deposit" | "withdraw" | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const totals = useMemo(() => {
     let invested = 0;
@@ -162,83 +142,48 @@ function DashboardInner() {
     return { invested, dayChange, aiEquity, cash: account.cash, total: account.cash + invested + aiEquity };
   }, [account.positions, account.cash, account.aiPrincipal, quotes, session]);
 
+  // ⌘K / Ctrl-K as advertised in the search field
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const up = totals.dayChange >= 0;
 
   return (
+    <AppShell>
     <div className="flex min-h-dvh">
-      {/* ---------- sidebar (desktop) ---------- */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-surface/80 backdrop-blur-md transition-transform lg:static lg:translate-x-0 ${
-          navOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="flex h-14 items-center justify-between px-5">
-          <BrandWordmark compact />
-          <button onClick={() => setNavOpen(false)} className="text-muted hover:text-foreground lg:hidden" aria-label="Close menu">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <nav className="mt-2 flex-1 space-y-1 px-3">
-          {NAV.map((item) =>
-            item.href ? (
-              <Link
-                key={item.label}
-                href={item.href}
-                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-              >
-                <item.icon className="h-4.5 w-4.5" size={18} />
-                {item.label}
-                {item.label === "AxAI Terminal" && (
-                  <span className="ml-auto rounded-md bg-gain/15 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-gain">
-                    AI
-                  </span>
-                )}
-              </Link>
-            ) : (
-              <span
-                key={item.label}
-                className={`flex cursor-default items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium ${
-                  item.active
-                    ? "bg-brand/12 text-foreground ring-1 ring-brand/25"
-                    : "text-muted"
-                }`}
-              >
-                <item.icon className="h-4.5 w-4.5" size={18} />
-                {item.label}
-              </span>
-            )
-          )}
-        </nav>
-
-        <div className="border-t border-border p-3">
-          <Link href="/account" className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
-            <Settings className="h-4.5 w-4.5" size={18} />
-            Settings
-          </Link>
-          <Link href="/account" className="mt-1 flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
-            <CircleUser className="h-4.5 w-4.5" size={18} />
-            Account
-          </Link>
-        </div>
-      </aside>
-
-      {navOpen && <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden" onClick={() => setNavOpen(false)} />}
-
       {/* ---------- main ---------- */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* topbar */}
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2.5 border-b border-border bg-background/85 px-4 backdrop-blur-md sm:px-6">
-          <button onClick={() => setNavOpen(true)} className="text-muted hover:text-foreground lg:hidden" aria-label="Open menu">
-            <Menu className="h-5 w-5" />
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="relative hidden h-9 max-w-md flex-1 items-center gap-2.5 rounded-xl border border-border bg-background/60 pl-9 pr-3 text-left text-sm text-muted transition-colors hover:border-muted/40 sm:flex"
+            aria-label="Search markets"
+          >
+            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted" />
+            <span className="truncate">Search markets…</span>
+            <span className="ml-auto hidden shrink-0 rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted md:block">
+              ⌘K
+            </span>
           </button>
 
-          <div className="relative hidden max-w-md flex-1 sm:block">
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted" />
-            <input placeholder="Search markets (⌘K)…" className="input-dark pl-9" aria-label="Search markets" />
-          </div>
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground sm:hidden"
+            aria-label="Search markets"
+          >
+            <Search className="h-4 w-4" />
+          </button>
 
-          <div className="flex-1 sm:hidden" />
+          <div className="hidden flex-1 sm:block" />
 
           <span className="inline-flex items-center gap-1.5 rounded-full border border-gain/25 bg-gain/8 px-2.5 py-1 text-[11px] font-semibold text-gain">
             <LiveDot connected={connected} />
@@ -293,13 +238,21 @@ function DashboardInner() {
             </div>
 
             <div className="mt-4 flex gap-2.5">
-              <Link href="/account" className="flex-1 rounded-xl bg-gradient-to-r from-brand to-gain py-2.5 text-center text-sm font-semibold text-[#071018] transition-transform active:scale-[0.98]">
+              <button
+                onClick={() => setCashMode("deposit")}
+                className="flex-1 rounded-xl bg-gradient-to-r from-brand to-gain py-2.5 text-center text-sm font-semibold text-[#071018] transition-transform active:scale-[0.98]"
+              >
                 Deposit
-              </Link>
-              <Link href="/account" className="flex-1 rounded-xl border border-border py-2.5 text-center text-sm font-semibold text-foreground transition-colors hover:bg-surface-2">
+              </button>
+              <button
+                onClick={() => setCashMode("withdraw")}
+                className="flex-1 rounded-xl border border-border py-2.5 text-center text-sm font-semibold text-foreground transition-colors hover:bg-surface-2"
+              >
                 Withdraw
-              </Link>
+              </button>
             </div>
+
+            <PendingStrip />
           </section>
 
           <AiCard />
@@ -317,6 +270,19 @@ function DashboardInner() {
               <Watchlist />
             </div>
           </div>
+
+          {/* account statement — the same ledger the account page shows in full */}
+          <section className="rounded-2xl border border-border bg-surface/60 p-4 sm:p-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-semibold tracking-tight">Recent activity</h2>
+              <Link href="/account" className="text-[12px] font-semibold text-brand hover:underline">
+                Full statement →
+              </Link>
+            </div>
+            <div className="mt-1">
+              <TransactionsLedger limit={4} />
+            </div>
+          </section>
         </main>
       </div>
 
@@ -335,8 +301,23 @@ function DashboardInner() {
         </div>
       )}
 
+      <CashFlowSheet
+        open={cashMode !== null}
+        mode={cashMode ?? "deposit"}
+        onModeChange={setCashMode}
+        onClose={() => setCashMode(null)}
+      />
+
+      {searchOpen && (
+        <InstrumentPicker
+          onSelect={(i) => router.push(`/trade?symbol=${i.symbol}`)}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
+
       <BottomNav active="home" />
     </div>
+    </AppShell>
   );
 }
 

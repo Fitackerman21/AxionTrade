@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 
 import { InstrumentLogo } from "@/components/instrument-logo";
@@ -12,6 +13,11 @@ const WATCH = ["NVDA", "BTC", "ETH", "SOL", "TSLA", "SPY", "XAUUSD", "EURUSD"];
 
 export function Watchlist({ onPick }: { onPick?: (symbol: string) => void }) {
   const { quotes } = useLivePrices();
+  const router = useRouter();
+  // on the terminal the row swaps the chart in place; anywhere else it links
+  // straight into the terminal for that instrument
+  const pick = (symbol: string) =>
+    onPick ? onPick(symbol) : router.push(`/trade?symbol=${symbol}`);
   const rows = WATCH.map((s) => INSTRUMENTS.find((i) => i.symbol === s)!).filter(Boolean);
 
   return (
@@ -33,7 +39,7 @@ export function Watchlist({ onPick }: { onPick?: (symbol: string) => void }) {
             <li
               key={inst.symbol}
               data-symbol={inst.symbol}
-              onClick={() => onPick?.(inst.symbol)}
+              onClick={() => pick(inst.symbol)}
               className="group flex cursor-pointer items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/60"
             >
               <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={28} />
