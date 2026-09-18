@@ -48,7 +48,7 @@ const LOSS = "#f6465d";
  * Candles kept on screen. Kept deliberately small so the price axis stays
  * scaled to recent action and live ticks are visibly large.
  */
-const VISIBLE_CANDLES = 55;
+const VISIBLE_CANDLES = 46;
 
 interface SpikeState {
   id: string;

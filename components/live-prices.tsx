@@ -37,12 +37,12 @@ const REST_INTERVAL_MS = 7_000;
  * to interpolate BETWEEN real quotes — see the micro-tick engine below.
  */
 const KIND_TICK_VOL: Record<string, number> = {
-  crypto: 0.0016,
-  commodity: 0.0009,
-  stock: 0.00085,
-  etf: 0.0005,
-  index: 0.00045,
-  forex: 0.0003,
+  crypto: 0.0024,
+  commodity: 0.0014,
+  stock: 0.0013,
+  etf: 0.0008,
+  index: 0.0007,
+  forex: 0.00045,
 };
 const KIND_BY_SYMBOL = new Map(INSTRUMENTS.map((i) => [i.symbol, i.kind]));
 const tickVol = (sym: string) => KIND_TICK_VOL[KIND_BY_SYMBOL.get(sym) ?? "stock"] ?? 0.0006;
