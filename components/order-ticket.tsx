@@ -16,9 +16,12 @@ const PILLS = [25, 50, 75, 100] as const;
 
 export function OrderTicket({
   defaultSymbol = "AAPL",
+  defaultValue,
   onDone,
 }: {
   defaultSymbol?: string;
+  /** pre-filled order size in USD, e.g. from the position-size calculator */
+  defaultValue?: string;
   /** called after a successful fill (e.g. to close the sheet) */
   onDone?: () => void;
 }) {
@@ -26,7 +29,7 @@ export function OrderTicket({
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [mode, setMode] = useState<"value" | "quantity">("value");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(defaultValue ?? "");
   const [qty, setQty] = useState("");
   const [done, setDone] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);

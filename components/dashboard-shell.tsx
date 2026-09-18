@@ -7,11 +7,11 @@ import { Bell, Bot, ChevronRight, Search } from "lucide-react";
 
 import { InstrumentPicker } from "@/components/instrument-picker";
 
+import { AppHeader } from "@/components/app-header";
 import { AppShell } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
 import { CashFlowSheet, PendingStrip, TransactionsLedger } from "@/components/cash-flow";
 import { HoldingsTable } from "@/components/holdings-table";
-import { LiveDot } from "@/components/live-price";
 import { useLivePrices } from "@/components/live-prices";
 import { MoversStrip } from "@/components/movers-strip";
 import { OrderTicket } from "@/components/order-ticket";
@@ -162,47 +162,50 @@ function DashboardInner() {
       {/* ---------- main ---------- */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* topbar */}
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-2.5 border-b border-border bg-background/85 px-4 backdrop-blur-md sm:px-6">
-          <button
-            onClick={() => setSearchOpen(true)}
-            className="relative hidden h-9 max-w-md flex-1 items-center gap-2.5 rounded-xl border border-border bg-background/60 pl-9 pr-3 text-left text-sm text-muted transition-colors hover:border-muted/40 sm:flex"
-            aria-label="Search markets"
-          >
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted" />
-            <span className="truncate">Search markets…</span>
-            <span className="ml-auto hidden shrink-0 rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted md:block">
-              ⌘K
-            </span>
-          </button>
+        <AppHeader
+          leading={
+            <>
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="relative hidden h-9 max-w-md flex-1 items-center gap-2.5 rounded-xl border border-border bg-background/60 pl-9 pr-3 text-left text-sm text-muted transition-colors hover:border-muted/40 sm:flex"
+                aria-label="Search markets"
+              >
+                <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted" />
+                <span className="truncate">Search markets…</span>
+                <span className="ml-auto hidden shrink-0 rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted md:block">
+                  ⌘K
+                </span>
+              </button>
 
-          <button
-            onClick={() => setSearchOpen(true)}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground sm:hidden"
-            aria-label="Search markets"
-          >
-            <Search className="h-4 w-4" />
-          </button>
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground sm:hidden"
+                aria-label="Search markets"
+              >
+                <Search className="h-4 w-4" />
+              </button>
 
-          <div className="hidden flex-1 sm:block" />
-
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-gain/25 bg-gain/8 px-2.5 py-1 text-[11px] font-semibold text-gain">
-            <LiveDot connected={connected} />
-            LIVE
-          </span>
-
-          <div className="ml-auto flex items-center gap-2">
-            <button className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground" aria-label="Notifications">
-              <Bell className="h-4 w-4" />
-              <span className="absolute top-2 right-2.5 h-1.5 w-1.5 rounded-full bg-gain" />
-            </button>
-            <Link href="/account" className="flex h-9 items-center gap-2 rounded-xl border border-border px-2.5">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-brand to-gain text-[11px] font-bold text-[#071018]">
-                FT
-              </span>
-              <span className="hidden text-sm font-medium md:block">Fitackerman21</span>
-            </Link>
-          </div>
-        </header>
+              <div className="hidden flex-1 sm:block" />
+            </>
+          }
+          actions={
+            <>
+              <button
+                className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground"
+                aria-label="Notifications"
+              >
+                <Bell className="h-4 w-4" />
+                <span className="absolute top-2 right-2.5 h-1.5 w-1.5 rounded-full bg-gain" />
+              </button>
+              <Link href="/account" className="flex h-9 items-center gap-2 rounded-xl border border-border px-2.5">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-brand to-gain text-[11px] font-bold text-[#071018]">
+                  FT
+                </span>
+                <span className="hidden text-sm font-medium md:block">Fitackerman21</span>
+              </Link>
+            </>
+          }
+        />
 
         {/* content — vertical scroll on mobile, bottom padding for the nav bar */}
         <main className="mx-auto w-full max-w-7xl flex-1 space-y-5 px-4 pt-5 pb-28 sm:px-6 lg:pb-8">

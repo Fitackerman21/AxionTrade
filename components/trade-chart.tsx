@@ -45,6 +45,27 @@ const GAIN = "#00c896";
 const LOSS = "#f6465d";
 
 /**
+ * Write a bar to the candle series only if it is not older than the newest one
+ * already there.
+ *
+ * lightweight-charts throws "Cannot update oldest data" for any out-of-order
+ * update. Two writers share this series — the live-quote path (which advances
+ * the forming candle) and the AI fill animation (which stretches it) — and a
+ * racing write is guaranteed eventually. Such a write carries no new
+ * information, so dropping it is the correct behaviour rather than a
+ * workaround.
+ */
+function safeUpdate(
+  cs: ISeriesApi<"Candlestick">,
+  lastWrittenTime: number,
+  bar: { time: UTCTimestamp; open: number; high: number; low: number; close: number }
+): boolean {
+  if (bar.time < lastWrittenTime) return false;
+  cs.update(bar);
+  return true;
+}
+
+/**
  * Candles kept on screen. Kept deliberately small so the price axis stays
  * scaled to recent action and live ticks are visibly large.
  */
@@ -85,6 +106,13 @@ export function TradeChart({
     setMarkers: (m: SeriesMarker<Time>[]) => void;
   } | null>(null);
   const markersRef = useRef<SeriesMarker<Time>[]>([]);
+  /**
+   * Newest time already written to the candle series. lightweight-charts
+   * rejects any update older than that point, and two writers touch this
+   * series concurrently — the live-quote path and the AI fill animation — so
+   * without this guard a racing update throws and breaks the chart.
+   */
+  const lastWrittenTimeRef = useRef<number>(0);
 
   const quote = useLiveQuote(inst.symbol);
   const livePrice = quote?.price;
@@ -205,6 +233,7 @@ export function TradeChart({
       close: c.close,
     }));
     cs.setData(candleData);
+    lastWrittenTimeRef.current = candleData[candleData.length - 1]?.time ?? 0;
     vs.setData(
       data.map((c) => ({
         time: c.time as UTCTimestamp,
@@ -263,13 +292,14 @@ export function TradeChart({
         close: livePrice,
         volume: Math.max(1, Math.round(last.volume / 6)),
       };
-      cs.update({
+      safeUpdate(cs, lastWrittenTimeRef.current, {
         time: gapTime,
         open: gap.open,
         high: gap.high,
         low: gap.low,
         close: gap.close,
       });
+      lastWrittenTimeRef.current = Math.max(lastWrittenTimeRef.current, gapTime as number);
       arr.push(gap);
       candleMapRef.current.set(gap.time, gap);
       priceLineRef.current?.applyOptions({
@@ -295,13 +325,14 @@ export function TradeChart({
       };
       arr.push(fresh);
       candleMapRef.current.set(fresh.time, fresh);
-      cs.update({
+      safeUpdate(cs, lastWrittenTimeRef.current, {
         time: fresh.time as UTCTimestamp,
         open: fresh.open,
         high: fresh.high,
         low: fresh.low,
         close: fresh.close,
       });
+      lastWrittenTimeRef.current = Math.max(lastWrittenTimeRef.current, fresh.time);
       priceLineRef.current?.applyOptions({
         price: livePrice,
         color: quote?.dir === "up" ? GAIN : quote?.dir === "down" ? LOSS : "#868e96",
@@ -316,13 +347,14 @@ export function TradeChart({
       low: Math.min(last.low, livePrice),
       close: livePrice,
     };
-    cs.update({
+    safeUpdate(cs, lastWrittenTimeRef.current, {
       time: updated.time as UTCTimestamp,
       open: updated.open,
       high: updated.high,
       low: updated.low,
       close: updated.close,
     });
+    lastWrittenTimeRef.current = Math.max(lastWrittenTimeRef.current, updated.time);
     arr[arr.length - 1] = updated;
     candleMapRef.current.set(last.time, updated);
     // colour the live price line by tick direction — the axis label reads as a
@@ -348,38 +380,54 @@ export function TradeChart({
     setMarkerBadge({ id: aiTrade.id, pnl: aiTrade.pnl });
     const badgeT = setTimeout(() => setMarkerBadge(null), 3200);
 
-    // 2) animated spike: stretch the last few candles in the trade's favor
-    const arr = candlesRef.current;
+    // 2) animated spike: the forming candle stretches in the fill's favour and
+    //    eases back. It re-reads the candle every frame rather than capturing a
+    //    snapshot, because the live-quote path is advancing that same candle
+    //    concurrently — a stale snapshot would be rejected as out of order.
     const cs = candleSeriesRef.current;
     let iv: ReturnType<typeof setInterval> | undefined;
-    if (cs && arr.length >= 4 && Math.abs(aiTrade.pnl) > 0) {
-      const idx = arr.length - 1;
-      const base = arr.slice(-4).map((c) => ({ ...c }));
-      const stretch = Math.min(0.012, 0.003 + Math.abs(aiTrade.pnl) / Math.max(arr[idx].close * 400, 1));
-      const steps = 14;
+    if (cs && Math.abs(aiTrade.pnl) > 0 && candlesRef.current.length > 0) {
+      const refPrice =
+        livePrice ?? candlesRef.current[candlesRef.current.length - 1]?.close ?? 1;
+      const stretch = Math.min(0.012, 0.003 + Math.abs(aiTrade.pnl) / Math.max(refPrice * 400, 1));
+      const steps = 16;
       let s = 0;
       iv = setInterval(() => {
         s += 1;
-        const phase = s <= steps / 2 ? s / (steps / 2) : 2 - s / (steps / 2); // up then ease back
-        const k = phase * stretch * dir;
-        for (let j = 0; j < 4; j++) {
-          const c = base[j];
-          const w = 1 + Math.abs(k) * (j + 1) * 0.8;
-          const close = c.close * (1 + k * (j === 3 ? 1 : 0.35));
-          cs.update({
-            time: c.time as UTCTimestamp,
-            open: c.open,
-            high: Math.max(c.high, close) * (dir === 1 ? w : 1),
-            low: Math.min(c.low, close) / (dir === -1 ? w : 1),
-            close,
-          });
+        const cur = candlesRef.current[candlesRef.current.length - 1];
+        if (!cur) {
+          if (iv) clearInterval(iv);
+          return;
         }
         if (s >= steps) {
           if (iv) clearInterval(iv);
-          for (let j = 0; j < 4; j++) {
-            const c = base[j];
-            cs.update({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close });
+          // put the true candle back
+          if (
+            safeUpdate(cs, lastWrittenTimeRef.current, {
+              time: cur.time as UTCTimestamp,
+              open: cur.open,
+              high: cur.high,
+              low: cur.low,
+              close: cur.close,
+            })
+          ) {
+            lastWrittenTimeRef.current = Math.max(lastWrittenTimeRef.current, cur.time);
           }
+          return;
+        }
+        const phase = s <= steps / 2 ? s / (steps / 2) : 2 - s / (steps / 2); // up then ease back
+        const k = phase * stretch * dir;
+        const close = cur.close * (1 + k);
+        if (
+          safeUpdate(cs, lastWrittenTimeRef.current, {
+            time: cur.time as UTCTimestamp,
+            open: cur.open,
+            high: Math.max(cur.high, close),
+            low: Math.min(cur.low, close),
+            close,
+          })
+        ) {
+          lastWrittenTimeRef.current = Math.max(lastWrittenTimeRef.current, cur.time);
         }
       }, 55);
     }

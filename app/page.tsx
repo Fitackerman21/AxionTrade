@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -17,7 +17,7 @@ import {
 import { AuroraBackground } from "@/components/aurora-background";
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { DashboardShell } from "@/components/dashboard-shell";
-import { signIn } from "@/lib/demo-auth";
+import { isAuthed, signIn } from "@/lib/demo-auth";
 import { AppProviders } from "@/lib/providers";
 import { GlassButton } from "@/components/glass-button";
 import { LivePricesProvider } from "@/components/live-prices";
@@ -82,6 +82,16 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  /**
+   * An existing session must win. Without this, landing on `/` while signed in
+   * shows the sign-in form again and strands you outside the workspace.
+   */
+  useEffect(() => {
+    if (isAuthed()) setAuthed(true);
+    setChecked(true);
+  }, []);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,6 +104,12 @@ export default function LoginPage() {
       setAuthed(true);
     }, 1400);
   };
+
+  if (!checked) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center text-sm text-muted">Loading workspace…</div>
+    );
+  }
 
   if (authed) {
     return (

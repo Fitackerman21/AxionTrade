@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bot, LogOut, RotateCcw, Wallet } from "lucide-react";
+import { Bot, LogOut, RotateCcw, Wallet } from "lucide-react";
 
+import { AppHeader } from "@/components/app-header";
 import { AppShell } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
 import { BrandMark } from "@/components/brand";
@@ -48,16 +49,7 @@ function AccountInner() {
   return (
     <AppShell>
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
-        <Link
-          href="/"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground lg:hidden"
-          aria-label="Back to dashboard"
-        >
-          <ArrowLeft className="h-4.5 w-4.5" />
-        </Link>
-        <span className="text-sm font-semibold tracking-tight">Account</span>
-      </header>
+      <AppHeader leading={<span className="text-sm font-semibold tracking-tight">Account</span>} />
 
       <main className="mx-auto w-full max-w-4xl flex-1 space-y-4 px-4 pt-4 pb-28 sm:px-6 lg:pb-10">
         <section className="rounded-2xl border border-border bg-surface/60 p-5">

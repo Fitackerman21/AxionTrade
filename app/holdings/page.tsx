@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ArrowRightLeft, Bot, ChartLine, Receipt } from "lucide-react";
+import { ArrowRightLeft, Bot, ChartLine, Receipt } from "lucide-react";
 
 import { AllocationDonut } from "@/components/allocation-donut";
+import { AppHeader } from "@/components/app-header";
 import { AppShell, MiniTicker } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
 import { BrandMark } from "@/components/brand";
-import { LiveDot } from "@/components/live-price";
-import { useLivePrices } from "@/components/live-prices";
+import { ContributionPanel, PerformanceLadder, RiskPanel } from "@/components/holdings-analytics";
 import { PortfolioInsights } from "@/components/portfolio-insights";
 import { PortfolioSummary } from "@/components/portfolio-summary";
 import { PositionsTable } from "@/components/positions-table";
@@ -22,7 +22,6 @@ const TAPE = ["BTC", "AAPL", "NVDA", "XAUUSD", "ETH"];
 function HoldingsInner() {
   const authed = useRequireAuth();
   const view = usePortfolio();
-  const { connected } = useLivePrices();
   const { session } = useAiSession();
 
   if (authed === null) {
@@ -49,29 +48,19 @@ function HoldingsInner() {
   return (
     <AppShell>
       <div className="flex min-h-dvh flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
-          <Link
-            href="/"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground lg:hidden"
-            aria-label="Back to dashboard"
-          >
-            <ArrowLeft className="h-4.5 w-4.5" />
-          </Link>
-
-          <div className="min-w-0">
-            <h1 className="text-sm leading-tight font-semibold tracking-tight">Holdings</h1>
-            <p className="hidden text-[11px] leading-tight text-muted sm:block">
-              Live positions, allocation and book quality
-            </p>
-          </div>
-
-          <MiniTicker symbols={TAPE} />
-
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-gain/25 bg-gain/8 px-2.5 py-1 text-[11px] font-semibold text-gain">
-            <LiveDot connected={connected} />
-            LIVE
-          </span>
-        </header>
+        <AppHeader
+          leading={
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="min-w-0">
+                <h1 className="text-sm leading-tight font-semibold tracking-tight">Holdings</h1>
+                <p className="hidden text-[11px] leading-tight text-muted sm:block">
+                  Live positions, allocation and book quality
+                </p>
+              </div>
+              <MiniTicker symbols={TAPE} />
+            </div>
+          }
+        />
 
         {session?.phase === "running" && (
           <div className="border-b border-brand/20 bg-gradient-to-r from-brand/10 via-gain/8 to-brand/10 px-4 py-2">
@@ -135,6 +124,16 @@ function HoldingsInner() {
                 </p>
               </section>
             </div>
+          </div>
+
+          {/* ---------- analytics: attribution, risk and return ---------- */}
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <ContributionPanel view={view} />
+            <RiskPanel view={view} />
+          </div>
+
+          <div className="mt-4">
+            <PerformanceLadder view={view} />
           </div>
         </main>
 

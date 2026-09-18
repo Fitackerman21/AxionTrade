@@ -5,7 +5,6 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   ArrowDownRight,
-  ArrowLeft,
   ArrowUpRight,
   Bell,
   Bot,
@@ -21,14 +20,16 @@ import {
 } from "lucide-react";
 
 import { AiPanel } from "@/components/ai-panel";
+import { AppHeader } from "@/components/app-header";
 import { AppShell } from "@/components/app-nav";
 import { BottomNav } from "@/components/bottom-nav";
 import { BrandMark } from "@/components/brand";
 import { InstrumentLogo } from "@/components/instrument-logo";
 import { InstrumentPicker } from "@/components/instrument-picker";
-import { LiveDot, LivePrice } from "@/components/live-price";
-import { useLivePrices, useLiveQuote } from "@/components/live-prices";
+import { LivePrice } from "@/components/live-price";
+import { useLiveQuote } from "@/components/live-prices";
 import { OrderTicket } from "@/components/order-ticket";
+import { KeyStats, OrderBookLadder, PositionSizer, TimeAndSales } from "@/components/trade-tools";
 import { TradeChart, type AiTradeAnnotation } from "@/components/trade-chart";
 import { Watchlist } from "@/components/watchlist";
 import { formatPct, formatPrice, INSTRUMENTS } from "@/lib/market-data";
@@ -43,10 +44,13 @@ import { AppProviders } from "@/lib/providers";
 
 function OrderSheet({
   symbol,
+  notional,
   open,
   onClose,
 }: {
   symbol: string;
+  /** pre-filled size in USD, e.g. handed over by the position sizer */
+  notional?: string;
   open: boolean;
   onClose: () => void;
 }) {
@@ -59,7 +63,12 @@ function OrderSheet({
           <span className="h-1.5 w-10 rounded-full bg-border" />
         </div>
         <div className="px-3 pb-4 sm:px-4">
-          <OrderTicket key={symbol} defaultSymbol={symbol} onDone={onClose} />
+          <OrderTicket
+            key={`${symbol}-${notional ?? ""}`}
+            defaultSymbol={symbol}
+            defaultValue={notional}
+            onDone={onClose}
+          />
         </div>
       </div>
     </div>
@@ -140,7 +149,6 @@ function NotificationBell() {
 
 function TradeInner() {
   const authed = useRequireAuth();
-  const { connected } = useLivePrices();
   const { session, lastTrade, signal } = useAiSession();
   const { account } = useAccount();
   const [symbol, setSymbol] = useState("BTC");
@@ -174,6 +182,7 @@ function TradeInner() {
     return () => window.removeEventListener("popstate", read);
   }, []);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [orderNotional, setOrderNotional] = useState<string | undefined>(undefined);
   const [tab, setTab] = useState<"positions" | "watchlist">("positions");
   const [toast, setToast] = useState<string | null>(null);
 
@@ -196,8 +205,9 @@ function TradeInner() {
   const onManual = (dir: "LONG" | "SHORT") => {
     if (engineRunning) {
       signal(inst.symbol, dir);
-      setToast(`Signal sent — ${dir} ${inst.symbol} queued for AxAI's next scan`);
+      setToast(`Signal sent — ${dir} ${inst.symbol} queued for AxAI's next fill`);
     } else {
+      setOrderNotional(undefined);
       setSheetOpen(true);
     }
   };
@@ -244,35 +254,22 @@ function TradeInner() {
     <AppShell>
     <div className="flex min-h-dvh flex-col">
       {/* top bar */}
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-md">
-        <Link
-          href="/"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted transition-colors hover:text-foreground lg:hidden"
-          aria-label="Back to dashboard"
-        >
-          <ArrowLeft className="h-4.5 w-4.5" />
-        </Link>
-
-        {/* instrument switcher trigger */}
-        <button
-          onClick={() => setPickerOpen(true)}
-          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl border border-border px-2.5 py-1.5 text-left transition-colors hover:border-muted/40 sm:max-w-xs"
-        >
-          <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={24} />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold leading-tight">{inst.symbol}</span>
-            <span className="block truncate text-[11px] leading-tight text-muted">{inst.name}</span>
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted" />
-        </button>
-
-        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-gain/25 bg-gain/8 px-2.5 py-1 text-[11px] font-semibold text-gain">
-          <LiveDot connected={connected} />
-          LIVE
-        </span>
-
-        <NotificationBell />
-      </header>
+      <AppHeader
+        leading={
+          <button
+            onClick={() => setPickerOpen(true)}
+            className="flex min-w-0 items-center gap-2.5 rounded-xl border border-border px-2.5 py-1.5 text-left transition-colors hover:border-muted/40 sm:max-w-xs"
+          >
+            <InstrumentLogo symbol={inst.symbol} kind={inst.kind} size={24} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold leading-tight">{inst.symbol}</span>
+              <span className="block truncate text-[11px] leading-tight text-muted">{inst.name}</span>
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted" />
+          </button>
+        }
+        actions={<NotificationBell />}
+      />
 
       {/* autonomous-mode banner */}
       {engineRunning && session && (
@@ -469,6 +466,26 @@ function TradeInner() {
             }
           />
 
+          {/* real statistics from exchange history */}
+          <KeyStats inst={inst} />
+
+          {/* market microstructure: ladder and the live tape */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <OrderBookLadder inst={inst} price={price} spreadPct={spreadPct} />
+            <TimeAndSales inst={inst} price={price} />
+          </div>
+
+          {/* risk-first sizing, which feeds the order sheet */}
+          <PositionSizer
+            inst={inst}
+            price={price}
+            cash={account.cash}
+            onApply={(notional) => {
+              setOrderNotional(notional.toFixed(2));
+              setSheetOpen(true);
+            }}
+          />
+
           {/* the autonomous engine terminal — merged in, nothing sacrificed */}
           <div id="ai-terminal" className="scroll-mt-20">
             <AiPanel />
@@ -481,7 +498,12 @@ function TradeInner() {
       {pickerOpen && (
         <InstrumentPicker current={symbol} onSelect={(i) => selectSymbol(i.symbol)} onClose={() => setPickerOpen(false)} />
       )}
-      <OrderSheet symbol={inst.symbol} open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <OrderSheet
+        symbol={inst.symbol}
+        notional={orderNotional}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+      />
 
       {/* signal toast */}
       {toast && (
