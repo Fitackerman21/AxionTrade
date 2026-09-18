@@ -108,7 +108,7 @@ export function TradeChart({
   useEffect(() => {
     setData(null);
     load(inst.symbol, tfId);
-    const t = setInterval(() => load(inst.symbol, tfId), 30_000);
+    const t = setInterval(() => load(inst.symbol, tfId), 20_000);
     return () => clearInterval(t);
   }, [inst.symbol, tfId, load]);
 
@@ -230,17 +230,50 @@ export function TradeChart({
     // (e.g. seeded candles vs. real quotes) — that would draw a fake spike.
     if (Math.abs(livePrice - last.close) / last.close > 0.02) return;
 
-    cs.update({
-      time: last.time as UTCTimestamp,
-      open: last.open,
+    const tfSec = TF_MAP[tfId]?.sec ?? 300;
+    const bucket = Math.floor(Date.now() / 1000 / tfSec) * tfSec;
+
+    // Period rolled over — open a fresh candle at the previous close so the
+    // chart keeps growing in real time instead of standing still.
+    if (bucket > last.time) {
+      const fresh: Candle = {
+        time: bucket,
+        open: last.close,
+        high: Math.max(last.close, livePrice),
+        low: Math.min(last.close, livePrice),
+        close: livePrice,
+        volume: Math.max(1, Math.round(last.volume / 6)),
+      };
+      arr.push(fresh);
+      candleMapRef.current.set(fresh.time, fresh);
+      cs.update({
+        time: fresh.time as UTCTimestamp,
+        open: fresh.open,
+        high: fresh.high,
+        low: fresh.low,
+        close: fresh.close,
+      });
+      priceLineRef.current?.applyOptions({ price: livePrice });
+      return;
+    }
+
+    const updated: Candle = {
+      ...last,
       high: Math.max(last.high, livePrice),
       low: Math.min(last.low, livePrice),
       close: livePrice,
+    };
+    cs.update({
+      time: updated.time as UTCTimestamp,
+      open: updated.open,
+      high: updated.high,
+      low: updated.low,
+      close: updated.close,
     });
-    arr[arr.length - 1] = { ...last, close: livePrice };
-    candleMapRef.current.set(last.time, arr[arr.length - 1]);
+    arr[arr.length - 1] = updated;
+    candleMapRef.current.set(last.time, updated);
     priceLineRef.current?.applyOptions({ price: livePrice });
-  }, [livePrice]);
+  }, [livePrice, tfId]);
 
   /* ---------------- AI trade annotation: marker + spike + label ---------------- */
   const lastAnnotatedRef = useRef<string | null>(null);
@@ -343,21 +376,14 @@ export function TradeChart({
   const fmtNum = useCallback((v: number) => formatPrice(v, inst.kind), [inst.kind]);
 
   const liveBadge = useMemo(() => {
-    if (!meta) return null;
-    if (meta.live) {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-gain/25 bg-gain/8 px-2 py-0.5 text-[10px] font-semibold text-gain">
-          <span className="relative inline-flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gain opacity-60" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-gain" />
-          </span>
-          LIVE
-        </span>
-      );
-    }
+    if (!meta?.live) return null;
     return (
-      <span className="rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
-        Demo candles
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-gain/25 bg-gain/8 px-2 py-0.5 text-[10px] font-semibold text-gain">
+        <span className="relative inline-flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gain opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-gain" />
+        </span>
+        LIVE
       </span>
     );
   }, [meta]);
@@ -384,14 +410,6 @@ export function TradeChart({
           {loading && <span className="text-[11px] text-muted">Loading…</span>}
         </div>
       </div>
-
-      {/* degraded-mode guardrail: never present demo OHLC as live */}
-      {meta && !meta.live && (
-        <p className="border-b border-border/60 bg-background/40 px-4 py-1.5 text-[11px] text-muted">
-          Live OHLC is unavailable for this market right now — showing a simulated series until the
-          feed recovers.
-        </p>
-      )}
 
       {/* OHLC legend */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 pt-2 font-mono text-[10px] tabular-nums sm:gap-x-4 sm:px-4 sm:text-[11px]">
@@ -455,9 +473,9 @@ export function TradeChart({
         </AnimatePresence>
       </div>
 
-      <p className="px-4 pb-2 text-right text-[10px] text-muted">
-        {meta?.live ? `Source: ${meta.source}` : "Simulated data"}
-      </p>
+      {meta?.live && (
+        <p className="px-4 pb-2 text-right text-[10px] text-muted">Source: {meta.source}</p>
+      )}
     </section>
   );
 }

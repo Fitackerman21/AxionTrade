@@ -254,7 +254,8 @@ async function fetchFrankfurter(): Promise<Map<string, PartialQuote>> {
 
 /* ---------------- cache + route ---------------- */
 
-const CACHE_MS = 20_000;
+/** Short TTL so the client can poll briskly without hammering the provider. */
+const CACHE_MS = 6_000;
 const cache = new Map<string, { data: Quote; expiry: number }>();
 
 const EMPTY = () => new Map<string, PartialQuote>();

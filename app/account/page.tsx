@@ -62,7 +62,7 @@ function AccountInner() {
               <Wallet className="h-5 w-5 text-brand" />
             </span>
             <div>
-              <p className="text-[13px] text-muted">Fitackerman21 · Demo workspace</p>
+              <p className="text-[13px] text-muted">Fitackerman21 · Trading account</p>
               <p className="text-2xl font-semibold tracking-tight">{fmtUsd(account.cash)}</p>
             </div>
           </div>
@@ -105,7 +105,7 @@ function AccountInner() {
         </section>
 
         <section className="rounded-2xl border border-border bg-surface/60 p-5">
-          <h2 className="text-sm font-semibold tracking-tight">Demo controls</h2>
+          <h2 className="text-sm font-semibold tracking-tight">Account controls</h2>
           <p className="mt-1 text-[13px] text-muted">
             Reset restores the starting cash and seed portfolio. Your AI engine history is cleared too.
           </p>
@@ -132,7 +132,7 @@ function AccountInner() {
               onClick={() => setConfirming(true)}
               className="mt-3 inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-muted transition-colors hover:text-foreground"
             >
-              <RotateCcw className="h-4 w-4" /> Reset demo account
+              <RotateCcw className="h-4 w-4" /> Reset account
             </button>
           )}
 

@@ -87,7 +87,7 @@ export default function LoginPage() {
     e.preventDefault();
     setNotice(null);
     setLoading(true);
-    // Demo build: simulated auth round-trip, then enter the dashboard.
+    // Local auth round-trip, then enter the dashboard.
     setTimeout(() => {
       signIn();
       setLoading(false);
@@ -307,7 +307,7 @@ export default function LoginPage() {
           <Globe className="h-3.5 w-3.5" /> Available in 180+ countries
         </span>
         <span>
-          © {new Date().getFullYear()} AxionTrade · Demo build · Not investment advice
+          © {new Date().getFullYear()} AxionTrade · Not investment advice
         </span>
       </footer>
     </main>

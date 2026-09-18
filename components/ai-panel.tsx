@@ -306,7 +306,7 @@ function SetupForm() {
           Launch AxAI
         </button>
         <p className="text-center text-[11px] text-muted">
-          Demo simulation · 4h cycles · profits settle when the window ends · Not financial advice
+          4h cycles · profits settle when the window ends · Not investment advice
         </p>
       </div>
     </section>

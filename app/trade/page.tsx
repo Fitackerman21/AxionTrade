@@ -280,7 +280,7 @@ function TradeInner() {
         <BrandMark size={40} />
         <h1 className="text-xl font-semibold">Sign in to trade</h1>
         <p className="max-w-xs text-sm text-muted">
-          The trading terminal is available to signed-in members of this demo workspace.
+          The trading terminal is available to signed-in members.
         </p>
         <Link
           href="/"
