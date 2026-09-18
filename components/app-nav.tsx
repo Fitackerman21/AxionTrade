@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, ChartLine, CircleUser, House, LogOut, Wallet } from "lucide-react";
+import { Bot, ChartLine, CircleUser, House, LogOut, PieChart, Wallet } from "lucide-react";
 
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { useAccount } from "@/lib/account-store";
@@ -14,6 +14,7 @@ import { INSTRUMENTS, formatPrice } from "@/lib/market-data";
 
 const NAV = [
   { href: "/", label: "Overview", icon: House },
+  { href: "/holdings", label: "Holdings", icon: PieChart },
   { href: "/trade", label: "Trade", icon: ChartLine },
   { href: "/account", label: "Account", icon: CircleUser },
 ] as const;
@@ -137,7 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 export function MiniTicker({ symbols }: { symbols: string[] }) {
   const { quotes } = useLivePrices();
   return (
-    <div className="hidden items-center gap-4 lg:flex">
+    <div className="hidden shrink-0 items-center gap-4 2xl:flex">
       {symbols.map((s) => {
         const q = quotes.get(s);
         const inst = INSTRUMENTS.find((i) => i.symbol === s);

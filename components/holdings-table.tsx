@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
@@ -92,9 +93,12 @@ export function HoldingsTable() {
 
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-surface/60">
-      <div className="flex items-center justify-between px-5 py-4">
+      <div className="flex items-center justify-between gap-3 px-5 py-4">
         <h2 className="text-sm font-semibold tracking-tight">Holdings</h2>
         <span className="text-xs text-muted">{rows.length} instruments · live P/L</span>
+        <Link href="/holdings" className="text-[12px] font-semibold text-brand hover:underline">
+          Full view →
+        </Link>
       </div>
 
       {rows.length === 0 ? (

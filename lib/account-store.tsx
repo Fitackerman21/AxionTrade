@@ -47,6 +47,13 @@ export interface Account {
 const STORAGE_KEY = "axion_account_v3";
 
 const START_CASH = 12840.55;
+/**
+ * Market value of the seeded book. Chosen so the opening account balances:
+ * deposits 25,000 − withdrawn 2,000 = 23,000 = free cash + invested. A book
+ * that reads larger than everything ever deposited is the fastest way to make
+ * a portfolio look fake.
+ */
+const SEED_BOOK_VALUE = 10_159.45;
 
 const DAY = 86_400_000;
 /** deterministic reference so hydration matches between server and client */
@@ -90,13 +97,32 @@ function seedTransactions(): Transaction[] {
   ];
 }
 
-/** Deterministic seed portfolio so the dashboard looks alive on first run */
+/**
+ * Deterministic seed portfolio so the dashboard looks alive on first run.
+ * Notional is allocated across the book and then converted to units at the
+ * baseline price, so the book always totals SEED_BOOK_VALUE regardless of how
+ * expensive the underlying instruments are — and quantities land on believable
+ * numbers (fractional shares, whole coins, large altcoin counts).
+ */
 export function seedPositions(): Position[] {
   const list = INSTRUMENTS.filter((i) => i.kind !== "forex");
+  // three-tier weight spread so the book has a realistic shape, not an even split
+  const weights = list.map((_, idx) => 1 + ((idx * 37) % 13) / 3);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
   return list.map((inst, idx) => {
-    const qty = Number(((((idx * 37) % 19) + 3) * (inst.price > 500 ? 0.6 : 4)).toFixed(2));
+    const notional = (SEED_BOOK_VALUE * weights[idx]) / totalWeight;
+    const raw = notional / inst.price;
+    const qty = Number(raw.toFixed(raw >= 100 ? 0 : raw >= 1 ? 2 : 4));
+    // ±10% cost basis spread, so the book opens with winners AND losers
     const drift = 1 + (((idx * 53) % 21) - 10) / 100;
-    return { symbol: inst.symbol, qty, avgCost: inst.price / drift, openedAt: 0, source: "manual" as const };
+    return {
+      symbol: inst.symbol,
+      qty: qty > 0 ? qty : Number(raw.toFixed(6)),
+      avgCost: inst.price / drift,
+      openedAt: 0,
+      source: "manual" as const,
+    };
   });
 }
 

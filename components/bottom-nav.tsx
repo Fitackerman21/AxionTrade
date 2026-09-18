@@ -1,20 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, CircleUser, House, Zap } from "lucide-react";
+import { Bot, CircleUser, House, PieChart, Zap } from "lucide-react";
 
-type Tab = "home" | "trade" | "account";
+type Tab = "home" | "holdings" | "trade" | "axai" | "account";
 
-const ITEMS: { key: Tab; icon: React.ComponentType<{ className?: string }>; label: string; href: string }[] = [
+/**
+ * Five slots so the raised Trade button sits dead centre. The order mirrors the
+ * desktop rail (Overview · Holdings · Trade · AxAI · Account) so wayfinding is
+ * the same shape at every width.
+ */
+const ITEMS: {
+  key: Tab;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  href: string;
+}[] = [
   { key: "home", icon: House, label: "Home", href: "/" },
+  { key: "holdings", icon: PieChart, label: "Holdings", href: "/holdings" },
   { key: "trade", icon: Zap, label: "Trade", href: "/trade" },
+  { key: "axai", icon: Bot, label: "AxAI", href: "/trade#ai-terminal" },
   { key: "account", icon: CircleUser, label: "Account", href: "/account" },
 ];
 
 /**
- * Mobile bottom navigation — 3 real routes: Home, Trade (the AI terminal,
- * raised FAB), Account. The Trade FAB carries a small pulsing AI badge to
- * signal that trading on AxionTrade is autonomous.
+ * Mobile bottom navigation. Trading on AxionTrade is autonomous, so the raised
+ * Trade button carries a small pulsing AI badge.
  */
 export function BottomNav({ active }: { active?: Tab }) {
   return (
@@ -22,9 +33,10 @@ export function BottomNav({ active }: { active?: Tab }) {
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-lg lg:hidden"
       aria-label="Primary"
     >
-      <div className="mx-auto grid max-w-md grid-cols-3">
+      <div className="mx-auto grid max-w-md grid-cols-5">
         {ITEMS.map(({ key, icon: Icon, label, href }) => {
           const isActive = active === key;
+
           if (key === "trade") {
             return (
               <Link
@@ -42,12 +54,15 @@ export function BottomNav({ active }: { active?: Tab }) {
                     <span className="absolute inset-0 animate-ping rounded-full bg-gain/30" />
                   </span>
                 </span>
-                <span className={`mt-1 text-[10px] font-medium ${isActive ? "text-foreground" : "text-muted"}`}>
+                <span
+                  className={`mt-1 text-[10px] font-medium ${isActive ? "text-foreground" : "text-muted"}`}
+                >
                   {label}
                 </span>
               </Link>
             );
           }
+
           return (
             <Link
               key={key}
@@ -55,8 +70,14 @@ export function BottomNav({ active }: { active?: Tab }) {
               className="flex flex-col items-center gap-1 py-2.5"
               aria-current={isActive ? "page" : undefined}
             >
-              <Icon className={`h-5 w-5 transition-colors ${isActive ? "text-brand" : "text-muted"}`} />
-              <span className={`text-[10px] font-medium transition-colors ${isActive ? "text-foreground" : "text-muted"}`}>
+              <Icon
+                className={`h-5 w-5 transition-colors ${isActive ? "text-brand" : "text-muted"}`}
+              />
+              <span
+                className={`text-[10px] font-medium transition-colors ${
+                  isActive ? "text-foreground" : "text-muted"
+                }`}
+              >
                 {label}
               </span>
             </Link>
