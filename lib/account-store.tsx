@@ -112,6 +112,19 @@ function defaultAccount(): Account {
   };
 }
 
+/**
+ * How long a rail takes to settle. Real rails quote one to three business
+ * days, which no one can watch in a browser, so these are compressed to the
+ * shortest span that still reads as "arrives later" rather than instant.
+ * Card and wallet rails are the fast ones; bank and crypto take longer.
+ */
+function settleDelayMs(t: Transaction): number {
+  if (t.status !== "processing") return Number.POSITIVE_INFINITY;
+  const fast = /card|wallet/i.test(t.method);
+  if (t.kind === "deposit") return fast ? 40_000 : 150_000;
+  return fast ? 75_000 : 210_000;
+}
+
 export type TradeResult = { ok: true; msg: string } | { ok: false; msg: string };
 export type CashResult =
   | { ok: true; msg: string; reference: string; status: TxStatus }
@@ -154,6 +167,31 @@ export function useAccount(): AccountCtx {
 export function AccountProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<Account>(defaultAccount);
   const [hydrated, setHydrated] = useState(false);
+
+  /*
+   * Settle anything in flight. Without this a withdrawal sits on "Processing"
+   * forever, which is the one thing that gives a funding flow away.
+   */
+  useEffect(() => {
+    if (!hydrated) return;
+    const id = setInterval(() => {
+      setAccount((a) => {
+        const now = Date.now();
+        let changed = false;
+        const transactions = a.transactions.map((t) => {
+          if (now - t.at < settleDelayMs(t)) return t;
+          changed = true;
+          return {
+            ...t,
+            status: "completed" as TxStatus,
+            note: t.amount > 0 ? "Cleared" : "Settled back to your funding rail",
+          };
+        });
+        return changed ? { ...a, transactions } : a;
+      });
+    }, 5000);
+    return () => clearInterval(id);
+  }, [hydrated]);
 
   // hydrate from localStorage after first client render (SSR-safe)
   useEffect(() => {
