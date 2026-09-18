@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { seededCandles, TF_MAP, type Candle } from "@/lib/candles";
+import { bucketWeeks, seededCandles, TF_MAP, type Candle } from "@/lib/candles";
 import { INSTRUMENTS } from "@/lib/market-data";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +24,14 @@ async function getJson(url: string, timeoutMs = 8000): Promise<unknown | null> {
   } catch {
     return null;
   }
+}
+
+/** Nasdaq serialises numbers as display strings ("4,396.70"). */
+function toNum(v: unknown): number | undefined {
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v !== "string") return undefined;
+  const n = parseFloat(v.replace(/[^0-9.+-]/g, ""));
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /* -------------------- Coinbase (crypto, real candles) -------------------- */
@@ -65,10 +73,27 @@ const Y_INTERVAL: Record<string, { interval: string; range: string }> = {
 const Y_SYMBOL: Record<string, string> = {
   "commodity:XAUUSD": "GC=F",
   "commodity:WTIUSD": "CL=F",
+  // Yahoo needs the =X suffix for FX pairs, otherwise these never resolve
+  "forex:EURUSD": "EURUSD=X",
+  "forex:GBPUSD": "GBPUSD=X",
+  "forex:USDJPY": "USDJPY=X",
 };
 
 function yahooSymbol(symbol: string, kind: string): string {
   return Y_SYMBOL[`${kind}:${symbol}`] ?? encodeURIComponent(symbol);
+}
+
+/**
+ * Yahoo is frequently rate-limited (429), so try both public hosts before
+ * giving up. This roughly doubles the chance of a real intraday series.
+ */
+async function yahooFetch(symbol: string, kind: string, cfg: { interval: string; range: string }) {
+  const path = `v8/finance/chart/${yahooSymbol(symbol, kind)}?interval=${cfg.interval}&range=${cfg.range}`;
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    const data = await getJson(`https://${host}/${path}`);
+    if (data) return data;
+  }
+  return null;
 }
 
 async function fromYahoo(
@@ -78,9 +103,7 @@ async function fromYahoo(
 ): Promise<{ candles: Candle[]; prevClose?: number } | null> {
   const cfg = Y_INTERVAL[tf];
   if (!cfg) return null;
-  const data = (await getJson(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol(symbol, kind)}?interval=${cfg.interval}&range=${cfg.range}`
-  )) as {
+  const data = (await yahooFetch(symbol, kind, cfg)) as {
     chart?: {
       result?: Array<{
         meta?: { chartPreviousClose?: number; previousClose?: number };
@@ -122,6 +145,120 @@ async function fromYahoo(
   return { candles, prevClose: r.meta?.chartPreviousClose ?? r.meta?.previousClose };
 }
 
+/* ------------- Nasdaq (daily history for stocks + ETFs) ------------- */
+
+const NASDAQ_CLASS: Record<string, string> = { stock: "stocks", etf: "etf" };
+
+function isoDay(backMs: number): string {
+  return new Date(Date.now() - backMs).toISOString().slice(0, 10);
+}
+
+/**
+ * Nasdaq's public chart endpoint serves real daily OHLC back years, which is
+ * what the daily/weekly views need. Yahoo covers the intraday timeframes.
+ */
+async function fromNasdaq(symbol: string, kind: string, tf: string): Promise<Candle[] | null> {
+  const assetClass = NASDAQ_CLASS[kind];
+  if (!assetClass) return null;
+  const weekly = tf === "1w";
+  const spanMs = (weekly ? 5 * 365 : 400) * 86400000;
+
+  const data = (await getJson(
+    `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/chart?assetclass=${assetClass}` +
+      `&fromdate=${isoDay(spanMs)}&todate=${isoDay(0)}`,
+    10000
+  )) as {
+    data?: {
+      chart?: Array<{
+        x?: number;
+        z?: { open?: string; high?: string; low?: string; close?: string; volume?: string };
+      }>;
+    };
+  } | null;
+
+  const rows = data?.data?.chart;
+  if (!Array.isArray(rows) || rows.length < 30) return null;
+
+  const candles: Candle[] = [];
+  for (const r of rows) {
+    const o = toNum(r?.z?.open);
+    const h = toNum(r?.z?.high);
+    const l = toNum(r?.z?.low);
+    const c = toNum(r?.z?.close);
+    const t = typeof r?.x === "number" ? Math.floor(r.x / 1000) : undefined;
+    if (o === undefined || h === undefined || l === undefined || c === undefined || t === undefined) continue;
+    candles.push({ time: t, open: o, high: h, low: l, close: c, volume: toNum(r?.z?.volume) ?? 0 });
+  }
+  if (candles.length < 30) return null;
+  candles.sort((a, b) => a.time - b.time);
+
+  if (weekly) {
+    const bars = bucketWeeks(candles);
+    return bars.length >= 20 ? bars : null;
+  }
+  return candles.slice(-400);
+}
+
+/* --------- Frankfurter (real daily FX closes, keyless) --------- */
+
+const FX_PAIR: Record<string, { base: string; quote: string }> = {
+  EURUSD: { base: "EUR", quote: "USD" },
+  GBPUSD: { base: "GBP", quote: "USD" },
+  USDJPY: { base: "USD", quote: "JPY" },
+};
+
+/**
+ * Frankfurter publishes one official reference rate per business day — real
+ * closes, but no intraday high/low. Daily bars are therefore built
+ * close-to-close (open = previous close) with a small symmetric range proxy,
+ * which is the standard way to chart reference-rate data.
+ */
+async function fromFrankfurter(symbol: string, tf: string): Promise<Candle[] | null> {
+  const pair = FX_PAIR[symbol];
+  if (!pair) return null;
+  if (tf !== "1d" && tf !== "1w") return null;
+
+  const spanDays = tf === "1w" ? 5 * 365 : 400;
+  const data = (await getJson(
+    `https://api.frankfurter.dev/v1/${isoDay(spanDays * 86400000)}..${isoDay(0)}` +
+      `?base=${pair.base}&symbols=${pair.quote}`,
+    10000
+  )) as { rates?: Record<string, Record<string, number>> } | null;
+
+  const rates = data?.rates;
+  if (!rates) return null;
+  const days = Object.keys(rates).sort();
+  if (days.length < 30) return null;
+
+  const wiggle = 0.0006;
+  const candles: Candle[] = [];
+  let prev: number | undefined;
+
+  for (const day of days) {
+    const close = rates[day]?.[pair.quote];
+    if (typeof close !== "number" || !Number.isFinite(close)) continue;
+    const open = prev ?? close;
+    const time = Math.floor(new Date(`${day}T00:00:00Z`).getTime() / 1000);
+    if (!Number.isFinite(time)) continue;
+    candles.push({
+      time,
+      open,
+      high: Math.max(open, close) * (1 + wiggle),
+      low: Math.min(open, close) * (1 - wiggle),
+      close,
+      volume: 0,
+    });
+    prev = close;
+  }
+  if (candles.length < 30) return null;
+
+  if (tf === "1w") {
+    const bars = bucketWeeks(candles);
+    return bars.length >= 20 ? bars : null;
+  }
+  return candles.slice(-400);
+}
+
 /* --------------------------------- route --------------------------------- */
 
 export async function GET(req: NextRequest) {
@@ -140,13 +277,38 @@ export async function GET(req: NextRequest) {
   if (inst.kind === "crypto") {
     candles = await fromCoinbase(symbol, tf.id);
     if (candles) source = "coinbase";
-  }
-  if (!candles && inst.kind !== "crypto") {
-    const y = await fromYahoo(symbol, inst.kind, tf.id);
-    if (y) {
-      candles = y.candles;
-      prevClose = y.prevClose;
-      source = "yahoo";
+    // Coinbase has no weekly granularity — build weeks from its daily bars
+    if (!candles && tf.id === "1w") {
+      const daily = await fromCoinbase(symbol, "1d");
+      if (daily) {
+        candles = bucketWeeks(daily);
+        source = "coinbase";
+      }
+    }
+  } else {
+    // FX daily/weekly: Frankfurter's published reference rates
+    if (inst.kind === "forex" && (tf.id === "1d" || tf.id === "1w")) {
+      const fxc = await fromFrankfurter(symbol, tf.id);
+      if (fxc) {
+        candles = fxc;
+        source = "frankfurter";
+      }
+    }
+    // daily + weekly come from Nasdaq (Yahoo rate-limits hard); intraday from Yahoo
+    if (!candles && (tf.id === "1d" || tf.id === "1w")) {
+      const nq = await fromNasdaq(symbol, inst.kind, tf.id);
+      if (nq) {
+        candles = nq;
+        source = "nasdaq";
+      }
+    }
+    if (!candles) {
+      const y = await fromYahoo(symbol, inst.kind, tf.id);
+      if (y) {
+        candles = y.candles;
+        prevClose = y.prevClose;
+        source = "yahoo";
+      }
     }
   }
   if (!candles) {

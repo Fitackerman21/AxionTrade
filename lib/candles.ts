@@ -108,6 +108,41 @@ export function seededCandles(
   return candles;
 }
 
+/**
+ * Collapse daily candles into Monday-aligned weekly candles.
+ * Epoch day 0 was a Thursday, so shifting 4 days lands week boundaries on Monday.
+ */
+export function bucketWeeks(candles: Candle[]): Candle[] {
+  if (candles.length === 0) return [];
+  const out: Candle[] = [];
+  let group: Candle[] = [];
+  let week = Number.NaN;
+
+  const flush = () => {
+    if (group.length === 0) return;
+    out.push({
+      time: group[0].time,
+      open: group[0].open,
+      high: Math.max(...group.map((c) => c.high)),
+      low: Math.min(...group.map((c) => c.low)),
+      close: group[group.length - 1].close,
+      volume: group.reduce((s, c) => s + c.volume, 0),
+    });
+  };
+
+  for (const c of candles) {
+    const w = Math.floor((c.time + 345600) / 604800);
+    if (w !== week) {
+      flush();
+      group = [];
+      week = w;
+    }
+    group.push(c);
+  }
+  flush();
+  return out;
+}
+
 /** Resample lower-timeframe candles up by an integer factor (e.g. 60s -> 300s). */
 export function resample(candles: Candle[], factor: number): Candle[] {
   if (factor <= 1) return candles;
