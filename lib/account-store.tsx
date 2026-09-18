@@ -33,6 +33,12 @@ export interface Transaction {
 }
 
 export interface Account {
+  /**
+   * Which seed the book was opened from. Bumped when the seed changes shape,
+   * so an account opened from an older seed can be re-seeded — but only while
+   * it is still untouched (see migrateSeed below).
+   */
+  seedVersion?: number;
   cash: number;
   deposits: number;
   withdrawn: number;
@@ -45,6 +51,29 @@ export interface Account {
 }
 
 const STORAGE_KEY = "axion_account_v3";
+
+/** bump whenever seedPositions() changes shape */
+const SEED_VERSION = 2;
+
+/**
+ * Re-seed a book that was opened from an older seed and has never been traded
+ * in. Anything the user has actually done leaves a trace — a different cash
+ * balance or an extra statement line — and those accounts are left alone.
+ *
+ * `storedVersion` must come from the raw stored payload: merging defaults in
+ * first would back-fill the current version and skip this entirely.
+ */
+function migrateSeed(stored: Account, storedVersion: number | undefined): Account {
+  const merged: Account = { ...defaultAccount(), ...stored, seedVersion: SEED_VERSION };
+  if (storedVersion === SEED_VERSION) return merged;
+
+  const untouched =
+    merged.cash === START_CASH &&
+    merged.transactions.length === 2 &&
+    merged.transactions.every((t) => t.id.startsWith("seed-"));
+
+  return untouched ? { ...merged, positions: seedPositions() } : merged;
+}
 
 const START_CASH = 12840.55;
 /**
@@ -128,6 +157,7 @@ export function seedPositions(): Position[] {
 
 function defaultAccount(): Account {
   return {
+    seedVersion: SEED_VERSION,
     cash: START_CASH,
     deposits: 25000,
     withdrawn: 2000,
@@ -226,7 +256,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       if (raw) {
         const parsed = JSON.parse(raw) as Account;
         if (typeof parsed.cash === "number" && Array.isArray(parsed.positions)) {
-          setAccount({ ...defaultAccount(), ...parsed });
+          setAccount(migrateSeed(parsed, parsed.seedVersion));
         }
       }
     } catch {
