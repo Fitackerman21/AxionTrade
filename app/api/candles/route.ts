@@ -84,14 +84,19 @@ function yahooSymbol(symbol: string, kind: string): string {
 }
 
 /**
- * Yahoo is frequently rate-limited (429), so try both public hosts before
- * giving up. This roughly doubles the chance of a real intraday series.
+ * Yahoo rate-limits hard (429) but answers in bursts, so query both public
+ * hosts in parallel and retry once after a short backoff. Parallel probing
+ * keeps the worst case near one timeout rather than stacking them up.
  */
 async function yahooFetch(symbol: string, kind: string, cfg: { interval: string; range: string }) {
   const path = `v8/finance/chart/${yahooSymbol(symbol, kind)}?interval=${cfg.interval}&range=${cfg.range}`;
-  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
-    const data = await getJson(`https://${host}/${path}`);
-    if (data) return data;
+  const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const results = await Promise.all(hosts.map((h) => getJson(`https://${h}/${path}`, 6500)));
+    const hit = results.find((r) => r);
+    if (hit) return hit;
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
   }
   return null;
 }
@@ -261,6 +266,23 @@ async function fromFrankfurter(symbol: string, tf: string): Promise<Candle[] | n
 
 /* --------------------------------- route --------------------------------- */
 
+/**
+ * Short server-side cache. This both smooths the chart on reload AND cuts the
+ * number of upstream calls, which is what keeps us under Yahoo's burst limit.
+ * Real series are held longer than seeded ones so a successful fetch wins.
+ */
+const CANDLE_TTL_LIVE = 45_000;
+const CANDLE_TTL_SEEDED = 8_000;
+type CandlePayload = {
+  symbol: string;
+  tf: string;
+  source: string;
+  live: boolean;
+  prevClose?: number;
+  candles: Candle[];
+};
+const candleCache = new Map<string, { data: CandlePayload; expiry: number }>();
+
 export async function GET(req: NextRequest) {
   const symbol = (req.nextUrl.searchParams.get("symbol") ?? "").toUpperCase();
   const tfId = req.nextUrl.searchParams.get("tf") ?? "5m";
@@ -268,6 +290,10 @@ export async function GET(req: NextRequest) {
   const inst = INSTRUMENTS.find((i) => i.symbol === symbol);
 
   if (!tf || !inst) return bad(400, "Unknown symbol or timeframe");
+
+  const cacheKey = `${symbol}:${tf.id}`;
+  const cached = candleCache.get(cacheKey);
+  if (cached && cached.expiry > Date.now()) return ok(cached.data);
 
   // source chain per asset class
   let candles: Candle[] | null = null;
@@ -316,12 +342,19 @@ export async function GET(req: NextRequest) {
     prevClose = inst.price / (1 + inst.changePct / 100);
   }
 
-  return ok({
+  const payload: CandlePayload = {
     symbol,
     tf: tf.id,
     source,
     live: source !== "seeded",
     prevClose,
     candles,
+  };
+
+  candleCache.set(cacheKey, {
+    data: payload,
+    expiry: Date.now() + (payload.live ? CANDLE_TTL_LIVE : CANDLE_TTL_SEEDED),
   });
+
+  return ok(payload);
 }
