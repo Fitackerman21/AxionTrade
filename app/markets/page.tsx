@@ -162,15 +162,19 @@ function MarketsInner() {
     }).filter((g) => g.count > 0);
   }, [rows]);
 
+  // Movers are a market-wide read, so they deliberately ignore the text search
+  // and the gainers/losers toggles — but they do follow the asset-class filter,
+  // because scoping to Crypto and then being shown equity movers is incoherent.
   const movers = useMemo(() => {
-    const sorted = [...rows].sort((a, b) => b.changePct - a.changePct);
-    const volatile = [...rows].sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));
+    const pool = rows.filter((r) => kind === "all" || r.inst.kind === kind);
+    const sorted = [...pool].sort((a, b) => b.changePct - a.changePct);
+    const volatile = [...pool].sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));
     return {
       gainers: sorted.slice(0, 5),
       losers: sorted.slice(-5).reverse(),
       volatile: volatile.slice(0, 5),
     };
-  }, [rows]);
+  }, [rows, kind]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
