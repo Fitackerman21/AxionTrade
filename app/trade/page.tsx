@@ -30,7 +30,7 @@ import { LivePrice } from "@/components/live-price";
 import { useLiveQuote } from "@/components/live-prices";
 import { OrderTicket } from "@/components/order-ticket";
 import { KeyStats, OrderBookLadder, PositionSizer, TimeAndSales } from "@/components/trade-tools";
-import { TradeChart, type AiTradeAnnotation } from "@/components/trade-chart";
+import { TradeChart } from "@/components/trade-chart";
 import { Watchlist } from "@/components/watchlist";
 import { formatPct, formatPrice, INSTRUMENTS } from "@/lib/market-data";
 import { useAccount } from "@/lib/account-store";
@@ -449,10 +449,12 @@ function TradeInner() {
 
         {/* RIGHT — the chart, with the AI engine beneath it */}
         <div className="order-1 min-w-0 space-y-4 lg:order-2">
-          {/* chart — the engine's book drives this tape, and every fill it books
-              is annotated here, whichever instrument that fill was on */}
+          {/* the pane — the engine's book drives the arrow, every fill it books
+              is pinned on the trail, and the book strip hands a symbol back so
+              the terminal doubles as a scanner for what AxAI is holding */}
           <TradeChart
             inst={inst}
+            onSelect={selectSymbol}
             aiTrade={
               lastTrade
                 ? {
