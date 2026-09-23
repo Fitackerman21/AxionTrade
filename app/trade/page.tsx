@@ -449,16 +449,18 @@ function TradeInner() {
 
         {/* RIGHT — the chart, with the AI engine beneath it */}
         <div className="order-1 min-w-0 space-y-4 lg:order-2">
-          {/* chart — AI fills on THIS instrument animate on it */}
+          {/* chart — the engine's book drives this tape, and every fill it books
+              is annotated here, whichever instrument that fill was on */}
           <TradeChart
             inst={inst}
             aiTrade={
-              lastTrade && lastTrade.symbol === inst.symbol
+              lastTrade
                 ? {
                     id: lastTrade.id,
                     symbol: lastTrade.symbol,
                     dir: lastTrade.dir,
                     pnl: lastTrade.pnl,
+                    movePct: lastTrade.movePct,
                     outcome: lastTrade.outcome,
                     at: lastTrade.at,
                   }

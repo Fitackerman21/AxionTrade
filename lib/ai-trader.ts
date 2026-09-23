@@ -78,12 +78,22 @@ export function durationMs(id: DurationId): number {
   return durationDays(id) * 86400000;
 }
 
-/** Session-clock rates. 1× is true real time; the rest are time-lapse. */
+/**
+ * Session-clock rates. 1× is true real time; the rest are time-lapse.
+ *
+ * Every time-lapse tier was multiplied by five. The operator wanted a fill every
+ * few seconds instead of every forty, and wanted that without the plan being
+ * thinned out — so the *clock* was scaled rather than the work: the window, the
+ * step count, the signal and rationale attached to every fill, and the terminal
+ * profit band are all exactly what they were, they simply arrive five times
+ * sooner. The ids are the old ones so a session already saved in local storage
+ * keeps the rate it had; the label is what is actually displayed.
+ */
 export const SPEEDS = [
   { id: "1x", mult: 1, label: "Real time", hint: "1 day per day" },
-  { id: "60x", mult: 60, label: "60×", hint: "1 day per 24 min" },
-  { id: "600x", mult: 600, label: "600×", hint: "1 day per 2.4 min" },
-  { id: "3600x", mult: 3600, label: "3600×", hint: "1 day per 24 s" },
+  { id: "60x", mult: 300, label: "300×", hint: "1 day per 4 min" },
+  { id: "600x", mult: 3000, label: "3000×", hint: "1 day per 29 s" },
+  { id: "3600x", mult: 18000, label: "18000×", hint: "1 day per 5 s" },
 ] as const;
 export type SpeedId = (typeof SPEEDS)[number]["id"];
 
@@ -91,7 +101,7 @@ export function speedMult(id: SpeedId): number {
   return SPEEDS.find((s) => s.id === id)?.mult ?? 1;
 }
 
-/** Human description of the current clock rate, e.g. "1 day / 24 min". */
+/** Human description of the current clock rate, e.g. "1 day / 4 min". */
 export function sessionClockRate(s: AiSession): string {
   const dayWallMs = 86400000 / speedMult(s.speed);
   const minutes = Math.floor(dayWallMs / 60000);
