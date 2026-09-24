@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ArrowDownRight, ArrowUpRight, Bot } from "lucide-react";
 
 import { useLivePrices } from "@/components/live-prices";
+import { ENGINE_MAX_MOVE_PCT, engineConviction, engineDrive } from "@/components/trade-chart";
 import { sessionOpenPositions, type LiveContext } from "@/lib/ai-trader";
 import { useAiSession } from "@/lib/ai-session";
 import { formatPrice, type Instrument } from "@/lib/market-data";
@@ -15,17 +16,16 @@ import { formatPrice, type Instrument } from "@/lib/market-data";
  * when the call flips.
  *
  * The word is the AxAI engine's own stance, read from `useAiSession()`: BUY
- * while its book is long, SELL while it is short, LATE when it is flat or not
- * running. The percentage is the conviction behind its latest fill — the same
- * reading the chart pane thickens its stroke with, so the number means one
- * thing everywhere in the terminal.
+ * while its book is pushing up, SELL while it is pushing down, LATE when it is
+ * flat or not running. The percentage is the engine's *live* conviction — how
+ * hard the book is pushing right now, on the same reading the chart pane
+ * thickens its stroke with, so the number means one thing everywhere in the
+ * terminal. It moves with every engine tick rather than freezing on the last
+ * fill; the fill's own conviction is the `fill` meter beneath it.
  *
  * The manual Buy/Sell triggers stay: while the engine runs they queue a signal
  * for its next fill, exactly as they did before this card took the block.
  */
-
-/** The move at which a fill reads as full conviction — the pane's own ceiling. */
-const MAX_CONVICTION_MOVE_PCT = 9;
 
 type Side = "buy" | "sell" | "late";
 
@@ -87,17 +87,20 @@ export function EngineVerdict({
     return sessionOpenPositions(session, live, 6);
   }, [session, quotes, fng]);
 
-  const side: Side = !session || session.phase === "idle" || positions.length === 0
-    ? "late"
-    : positions[0].dir === "LONG"
-      ? "buy"
-      : "sell";
+  /** what the book is dictating right now — null while the engine holds nothing */
+  const drive = useMemo(() => engineDrive(positions), [positions]);
+  const liveConviction = useMemo(() => engineConviction(positions), [positions]);
+
+  const side: Side = !drive ? "late" : drive.dir === "LONG" ? "buy" : "sell";
 
   const word = side === "buy" ? "BUY" : side === "sell" ? "SELL" : "LATE";
   const tone = TONE[side];
+  const showPct = session !== null && session.phase !== "idle";
 
   /** the conviction behind the engine's latest fill, on the chart's own scale */
-  const conviction = lastTrade ? Math.min(1, Math.abs(lastTrade.movePct) / MAX_CONVICTION_MOVE_PCT) : 0;
+  const fillConviction = lastTrade
+    ? Math.min(1, Math.abs(lastTrade.movePct) / ENGINE_MAX_MOVE_PCT)
+    : 0;
   /** how far equity has walked toward the session's hard floor */
   const risk =
     session && session.principal > session.floorUsd
@@ -131,14 +134,19 @@ export function EngineVerdict({
           </motion.span>
           <span className="text-right">
             <span className={`font-mono text-3xl leading-none font-semibold tabular-nums ${tone.text}`}>
-              {lastTrade ? `${Math.round(conviction * 100)}%` : "—"}
+              {showPct ? `${Math.round(liveConviction * 100)}%` : "—"}
             </span>
-            <span className="mt-0.5 block text-[10px] text-muted">conviction</span>
+            <span className="mt-0.5 block text-[10px] text-muted">live conviction</span>
           </span>
         </div>
 
         <div className="mt-3 space-y-1.5 border-t border-border/60 pt-3">
-          <Meter label="conf" value={conviction} tone={tone.bar} caption={lastTrade ? `${(conviction * 100).toFixed(0)}%` : "—"} />
+          <Meter
+            label="fill"
+            value={fillConviction}
+            tone={tone.bar}
+            caption={lastTrade ? `${(fillConviction * 100).toFixed(0)}%` : "—"}
+          />
           <Meter label="risk" value={risk} tone="bg-loss" caption={session ? `${(risk * 100).toFixed(0)}%` : "—"} />
         </div>
 
