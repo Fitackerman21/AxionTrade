@@ -53,10 +53,34 @@ interface Mode {
   model: string;
 }
 
+/**
+ * One point on the chart. A live tick carries the side it was decided on and
+ * gets a dot; a context point is a real recorded close pulled from
+ * /api/candles so the pane has a price path on it before the loop has a
+ * history of its own.
+ */
+interface Sample {
+  mid: number;
+  side: TickSide | null;
+  tick: number | null;
+}
+
+/**
+ * Where the loop's mid came from. The app's own quote context gets crypto from
+ * a Coinbase websocket only, so when that socket is unavailable the whole app
+ * falls back to a frozen baseline constant — and a constant mid is a flat line.
+ * This page therefore quotes itself over REST and says which source answered.
+ */
+type FeedSource = "live" | "candles" | "baseline";
+
+const CONTEXT_POINTS = 12;
+
 /** Everything the render reads. Refs are never touched during render. */
 interface Frame {
   symbol: string;
   ticks: TickRecord[];
+  series: Sample[];
+  feed: FeedSource;
   stats: JevStats;
   mode: Mode;
   halted: boolean;
@@ -80,6 +104,28 @@ function spreadPctFor(kind: Instrument["kind"]): number {
       return 0.0004;
     default:
       return 0.0006;
+  }
+}
+
+/**
+ * A one-symbol quote straight from our own proxy. The shared quote context
+ * only carries crypto over a websocket, so this is the page's own price
+ * source: it answers for any symbol we list, live, without a socket.
+ */
+async function fetchMid(symbol: string): Promise<number | null> {
+  try {
+    const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbol)}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { quotes?: Array<{ symbol?: string; price?: number }> };
+    const hit = (data.quotes ?? []).find(
+      (q) => q.symbol?.toUpperCase() === symbol.toUpperCase(),
+    );
+    const price = hit?.price;
+    return typeof price === "number" && Number.isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
   }
 }
 
@@ -113,13 +159,13 @@ function useBoxSize<T extends HTMLElement>() {
 /* the prompt's drawChart() renders                                    */
 /* ------------------------------------------------------------------ */
 
-function JevChart({ ticks }: { ticks: TickRecord[] }) {
+function JevChart({ series }: { series: Sample[] }) {
   const [boxRef, box] = useBoxSize<HTMLDivElement>();
   const W = Math.max(300, box.w || 640);
   const H = Math.max(200, box.h || 260);
 
   const chart = useMemo(() => {
-    const pts = ticks.slice(-WINDOW_POINTS);
+    const pts = series.slice(-WINDOW_POINTS);
     const mids = pts.map((p) => p.mid);
     const lo = mids.length ? Math.min(...mids) : 0;
     const hi = mids.length ? Math.max(...mids) : 0;
@@ -144,12 +190,11 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
       return { v, y: Y(v) };
     });
 
-    const dots = pts.map((p, i) => ({
-      key: `${p.tick}-${i}`,
-      cx: X(i),
-      cy: Y(p.mid),
-      fill: SIDE_COLOUR[sideOf(p)],
-    }));
+    const dots: Array<{ key: string; cx: number; cy: number; fill: string }> = [];
+    pts.forEach((p, i) => {
+      // only the loop's own ticks get a dot: a context close carries no decision
+      if (p.side) dots.push({ key: `${p.tick}-${i}`, cx: X(i), cy: Y(p.mid), fill: SIDE_COLOUR[p.side] });
+    });
 
     const last = pts[pts.length - 1];
     return {
@@ -161,9 +206,9 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
       lastX: X(pts.length - 1),
       lastY: last ? Y(last.mid) : 0,
       lastMid: last ? last.mid : 0,
-      lastFill: last ? SIDE_COLOUR[sideOf(last)] : "#999",
+      lastFill: last && last.side ? SIDE_COLOUR[last.side] : "#0b0b10",
     };
-  }, [ticks, W, H]);
+  }, [series, W, H]);
 
   return (
     <div className={styles.chart} ref={boxRef}>
@@ -265,6 +310,8 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
   const priceRef = useRef<number>(inst.price);
   const ctxRef = useRef<LoopContext | null>(null);
   const ticksRef = useRef<TickRecord[]>([]);
+  const seriesRef = useRef<Sample[]>([]);
+  const feedRef = useRef<FeedSource>("baseline");
   const startedAtRef = useRef<number>(0);
   const modeRef = useRef<Mode>({ available: false, route: "MOCK", model: "mock-jev-0.1" });
   const noteRef = useRef<string | null>(null);
@@ -284,8 +331,40 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
 
   /* the live price is read at tick time, never during render */
   useEffect(() => {
-    if (quote) priceRef.current = quote.price;
+    if (quote) {
+      priceRef.current = quote.price;
+      feedRef.current = "live";
+    }
   }, [quote]);
+
+  /* Pre-roll: real recorded closes from our own candle proxy, so the pane has
+     a price path on it before the loop has any history. It is context, not a
+     decision — the points carry no fill dot — and it scrolls off as ticks land. */
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/candles?symbol=${symbol}&tf=1m`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { candles?: Array<{ close: number }> };
+        const closes = (data.candles ?? [])
+          .map((c) => c.close)
+          .filter((c) => Number.isFinite(c) && c > 0)
+          .slice(-CONTEXT_POINTS);
+        if (!alive || closes.length === 0) return;
+        seriesRef.current = closes.map((mid) => ({ mid, side: null, tick: null }));
+        if (feedRef.current !== "live") {
+          priceRef.current = closes[closes.length - 1];
+          feedRef.current = "candles";
+        }
+      } catch {
+        /* no context is survivable: the loop's own ticks still draw the line */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [symbol]);
 
   /* one probe for a decision key; without one the labelled mock runs the
      battery, and the page says MOCK rather than pretending otherwise */
@@ -322,6 +401,8 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
     return {
       symbol,
       ticks,
+      series: seriesRef.current,
+      feed: feedRef.current,
       stats: statsOf(ticks, startedAtRef.current || Date.now(), Date.now()),
       mode: modeRef.current,
       halted: haltedRef.current,
@@ -338,8 +419,18 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
   const doTick = useCallback(
     async (manual?: "buy" | "sell") => {
       const ctx = ctxRef.current;
-      const mid = priceRef.current;
       const client = clientRef.current;
+
+      // Quote ourselves over REST rather than trusting the shared context: the
+      // app's own crypto feed is websocket-only, and without it every tick
+      // would share one frozen price and the chart would draw a flat line.
+      const fresh = await fetchMid(symbol);
+      if (fresh !== null) {
+        priceRef.current = fresh;
+        feedRef.current = "live";
+      }
+      const mid = priceRef.current;
+
       if (!ctx || !client || !Number.isFinite(mid) || mid <= 0) {
         // say why rather than sitting silent
         noteRef.current = `cannot tick yet — ${!ctx ? "state engine not ready" : ""}${
@@ -412,6 +503,10 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
 
         ctxRef.current = out.ctx;
         ticksRef.current = [...ticksRef.current, out.record].slice(-LATEST_WINDOW);
+        seriesRef.current = [
+          ...seriesRef.current,
+          { mid: out.record.mid, side: sideOf(out.record), tick: out.record.tick },
+        ].slice(-WINDOW_POINTS);
 
         if (out.killed) {
           haltedRef.current = true;
@@ -454,6 +549,7 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
   const reset = useCallback(() => {
     ctxRef.current = openContext(symbol, priceRef.current);
     ticksRef.current = [];
+    seriesRef.current = seriesRef.current.filter((p) => p.side === null);
     startedAtRef.current = Date.now();
     haltedRef.current = false;
     apiErrorsRef.current = 0;
@@ -463,6 +559,7 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
   }, [buildFrame, symbol]);
 
   const ticks = useMemo(() => frame?.ticks ?? [], [frame]);
+  const series = useMemo(() => frame?.series ?? [], [frame]);
   const last = ticks[ticks.length - 1];
   const stats = frame?.stats;
   const side: TickSide = last ? sideOf(last) : "late";
@@ -660,7 +757,7 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
               </span>
             </div>
 
-            <JevChart ticks={ticks} />
+            <JevChart series={series} />
 
             {/* the heartbeat — if this reads zero, the loop is not ticking */}
             <div className={styles.status}>
@@ -683,7 +780,7 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
                 cadence <b>{TICK_SECONDS}s</b>
               </span>
               <span>
-                price feed <b>{quote ? "live" : "baseline"}</b>
+                price feed <b>{frame?.feed ?? "baseline"}</b>
               </span>
             </div>
 
@@ -696,8 +793,10 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
             <div className={styles.foot}>
               <span>one dot per tick · green buy · red sell · amber late/hold</span>
               <span>
-                {TICK_SECONDS}s ticks · one decision per tick · {ticks.length} of {WINDOW_POINTS} ticks
-                in the window
+                {TICK_SECONDS}s ticks · {ticks.length} live ticks + {
+                  series.filter((p) => p.side === null).length
+                }{" "}
+                context closes · {WINDOW_POINTS}-point window
               </span>
             </div>
           </section>
