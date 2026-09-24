@@ -5,8 +5,13 @@ import { animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { ArrowDownRight, ArrowUpRight, Bot } from "lucide-react";
 
 import { useLivePrices } from "@/components/live-prices";
-import { ENGINE_MAX_MOVE_PCT, engineConviction, engineDrive } from "@/components/trade-chart";
-import { sessionOpenPositions, type LiveContext } from "@/lib/ai-trader";
+import {
+  bookConviction,
+  bookSide,
+  FULL_CONVICTION_MOVE_PCT,
+  sessionOpenPositions,
+  type LiveContext,
+} from "@/lib/ai-trader";
 import { useAiSession } from "@/lib/ai-session";
 import { formatPrice, type Instrument } from "@/lib/market-data";
 
@@ -15,13 +20,16 @@ import { formatPrice, type Instrument } from "@/lib/market-data";
  * one big word — BUY, SELL or LATE — and the confidence behind it, animated
  * when the call flips.
  *
- * The word is the AxAI engine's own stance, read from `useAiSession()`: BUY
- * while its book is pushing up, SELL while it is pushing down, LATE when it is
- * flat or not running. The percentage is the engine's *live* conviction — how
- * hard the book is pushing right now, on the same reading the chart pane
- * thickens its stroke with, so the number means one thing everywhere in the
- * terminal. It moves with every engine tick rather than freezing on the last
- * fill; the fill's own conviction is the `fill` meter beneath it.
+ * The word is the AxAI engine's own bet, read from `useAiSession()`: BUY while
+ * its book is net long, SELL while it is net short, LATE when it holds nothing
+ * or is hedged to nothing. It has to come from the positions' direction rather
+ * than the price they carry — this engine encodes every losing step as a short,
+ * so a price-signed reading can only ever say long.
+ *
+ * The percentage is the engine's *live* conviction — how hard the book is
+ * pushing right now (`bookConviction`, unfloored so it actually moves) — and
+ * the `fill` meter beneath it carries the conviction of the last realized fill
+ * on the same scale.
  *
  * The manual Buy/Sell triggers stay: while the engine runs they queue a signal
  * for its next fill, exactly as they did before this card took the block.
@@ -87,11 +95,11 @@ export function EngineVerdict({
     return sessionOpenPositions(session, live, 6);
   }, [session, quotes, fng]);
 
-  /** what the book is dictating right now — null while the engine holds nothing */
-  const drive = useMemo(() => engineDrive(positions), [positions]);
-  const liveConviction = useMemo(() => engineConviction(positions), [positions]);
+  /** which way the book is committed — null while it holds nothing or is hedged */
+  const committed = useMemo(() => bookSide(positions), [positions]);
+  const liveConviction = useMemo(() => bookConviction(positions), [positions]);
 
-  const side: Side = !drive ? "late" : drive.dir === "LONG" ? "buy" : "sell";
+  const side: Side = committed === "LONG" ? "buy" : committed === "SHORT" ? "sell" : "late";
 
   const word = side === "buy" ? "BUY" : side === "sell" ? "SELL" : "LATE";
   const tone = TONE[side];
@@ -99,7 +107,7 @@ export function EngineVerdict({
 
   /** the conviction behind the engine's latest fill, on the chart's own scale */
   const fillConviction = lastTrade
-    ? Math.min(1, Math.abs(lastTrade.movePct) / ENGINE_MAX_MOVE_PCT)
+    ? Math.min(1, Math.abs(lastTrade.movePct) / FULL_CONVICTION_MOVE_PCT)
     : 0;
   /**
    * The headline number counts toward its new reading rather than snapping to

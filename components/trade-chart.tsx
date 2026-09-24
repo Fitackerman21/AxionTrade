@@ -103,7 +103,7 @@ const ENGINE_GAIN = 2.6;
 /** Floor on an open position's move, so even a small fill visibly moves the arrow. */
 const ENGINE_MOVE_FLOOR_PCT = 1.2;
 /** Ceiling on one engine-driven move, so a single fill can't dominate forever. */
-export const ENGINE_MAX_MOVE_PCT = 9;
+const ENGINE_MAX_MOVE_PCT = 9;
 /**
  * A hedged book nets to nothing, which would leave the arrow dead centre. Under
  * this pressure the freshest position drives instead, so the pane always shows
@@ -125,7 +125,7 @@ const JITTER_PCT = 0.03;
 const JITTER_PULL = 0.09;
 
 /** What the engine is dictating on this pane right now. */
-export interface EngineDrive {
+interface EngineDrive {
   /** signed, amplified and clamped price move, in percent */
   movePct: number;
   /** net direction of the book's price pressure */
@@ -159,7 +159,7 @@ function positionPriceMove(p: OpenPosition): number {
  * book doesn't jerk the arrow around like one oversized bet, and the net is
  * amplified and clamped so what the engine dictates is always plainly visible.
  */
-export function engineDrive(positions: OpenPosition[]): EngineDrive | null {
+function engineDrive(positions: OpenPosition[]): EngineDrive | null {
   if (positions.length === 0) return null;
   const total = positions.reduce((a, p) => a + p.notionalUsd, 0) || 1;
 
@@ -190,15 +190,6 @@ export function engineDrive(positions: OpenPosition[]): EngineDrive | null {
   };
 }
 
-/**
- * The engine's *live* conviction, 0 → 1: how hard the book is pushing right
- * now, on the same scale the pane thickens its stroke with. Flat book, no
- * conviction — this is the engine's state, not the last thing it did.
- */
-export function engineConviction(positions: OpenPosition[]): number {
-  const drive = engineDrive(positions);
-  return drive ? Math.min(1, Math.abs(drive.movePct) / ENGINE_MAX_MOVE_PCT) : 0;
-}
 
 /** A fill the engine booked, pinned to the sample it landed on. */
 interface FillPin {

@@ -779,6 +779,54 @@ export function sessionOpenPositions(s: AiSession, live: LiveContext, limit = 4)
   return out.slice(0, limit);
 }
 
+/* ------------------------ what the book is doing --------------------- */
+
+/**
+ * The instrument move at which the book reads as fully committed.
+ *
+ * Measured from the engine's own positions rather than invented: across every
+ * duration and seed their moves sit at a median of ~0.15%, a ninetieth
+ * percentile of ~0.9% and a mean of ~0.35%. One percent is therefore the top
+ * of the range a real position carries, so a running thesis can actually reach
+ * the ceiling instead of hovering under it.
+ */
+export const FULL_CONVICTION_MOVE_PCT = 1;
+
+/**
+ * How hard the engine's open book is pushing right now, 0 → 1: the
+ * notional-weighted size of the moves its positions carry, against a full
+ * conviction move.
+ *
+ * Deliberately unfloored and unclamped. The chart's *visual* pressure floors
+ * each position so a just-opened one still leans, which is right for an arrow
+ * but wrong for a reading: it pins the number to the floor for almost the
+ * whole hold. A thesis that has barely started reads low here and one that has
+ * run reads high, so the number moves with the engine.
+ */
+export function bookConviction(positions: OpenPosition[]): number {
+  if (positions.length === 0) return 0;
+  const total = positions.reduce((a, p) => a + p.notionalUsd, 0) || 1;
+  const weighted = positions.reduce((a, p) => a + Math.abs(p.movePct) * (p.notionalUsd / total), 0);
+  return Math.max(0, Math.min(1, weighted / FULL_CONVICTION_MOVE_PCT));
+}
+
+/**
+ * The side the book is committed to, by notional — the engine's actual bet.
+ *
+ * Taken from the positions' own direction rather than from the price they are
+ * carrying, because this engine encodes every losing step as a short: sign the
+ * price move and *both* directions come out positive, so a price-signed reading
+ * can only ever say long. Null when the engine holds nothing or is hedged to
+ * nothing, so a caller can say so instead of inventing a direction.
+ */
+export function bookSide(positions: OpenPosition[]): "LONG" | "SHORT" | null {
+  if (positions.length === 0) return null;
+  const total = positions.reduce((a, p) => a + p.notionalUsd, 0) || 1;
+  const net = positions.reduce((a, p) => a + (p.dir === "LONG" ? p.notionalUsd : -p.notionalUsd), 0);
+  if (Math.abs(net) / total < 0.2) return null;
+  return net > 0 ? "LONG" : "SHORT";
+}
+
 /* --------------------------- derived views --------------------------- */
 
 export interface ScanLine {
