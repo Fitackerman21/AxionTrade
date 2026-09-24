@@ -793,6 +793,16 @@ export function sessionOpenPositions(s: AiSession, live: LiveContext, limit = 4)
 export const FULL_CONVICTION_MOVE_PCT = 1;
 
 /**
+ * The conviction a decision must clear before the engine will act on it.
+ *
+ * This is the band's floor, not decoration: nothing below it is ever traded, so
+ * a reading that dipped under it while a position was open would contradict the
+ * decision the engine has already made. An open book is proof of a decision
+ * above the bar.
+ */
+export const CONVICTION_FLOOR = 0.5;
+
+/**
  * The most conviction a reading may ever show, 0 → 1.
  *
  * Deliberately short of certainty. No trade is a sure thing — the engine sizes
@@ -801,22 +811,26 @@ export const FULL_CONVICTION_MOVE_PCT = 1;
  */
 export const CONVICTION_CEILING = 0.96;
 
-/** One instrument move as a conviction reading, on the shared scale. */
+/**
+ * One instrument move as a conviction reading, on the shared scale.
+ *
+ * The scale is the engine's own decision band: a move that has barely started
+ * reads at the floor it had to clear to be traded at all, and a move that has
+ * fully run reads just short of certainty. Nothing is ever traded below the
+ * floor, so nothing is ever *reported* below it either.
+ */
 export function convictionForMove(movePct: number): number {
-  const raw = Math.abs(movePct) / FULL_CONVICTION_MOVE_PCT;
-  return Math.max(0, Math.min(CONVICTION_CEILING, raw));
+  const strength = Math.min(1, Math.abs(movePct) / FULL_CONVICTION_MOVE_PCT);
+  return CONVICTION_FLOOR + (CONVICTION_CEILING - CONVICTION_FLOOR) * strength;
 }
 
 /**
- * How hard the engine's open book is pushing right now, 0 → 1: the
- * notional-weighted size of the moves its positions carry, against a full
- * conviction move.
+ * The engine's live conviction, 0 → 1: the notional-weighted size of the moves
+ * its open book carries, read on the decision band above.
  *
- * Deliberately unfloored and unclamped. The chart's *visual* pressure floors
- * each position so a just-opened one still leans, which is right for an arrow
- * but wrong for a reading: it pins the number to the floor for almost the
- * whole hold. A thesis that has barely started reads low here and one that has
- * run reads high, so the number moves with the engine.
+ * Zero only when the book is empty — no position, no decision, no reading.
+ * Whenever there is a position it lands inside [floor, ceiling], because a
+ * position is itself proof the engine cleared the floor to open it.
  */
 export function bookConviction(positions: OpenPosition[]): number {
   if (positions.length === 0) return 0;

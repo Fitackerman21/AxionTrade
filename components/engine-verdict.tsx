@@ -26,10 +26,12 @@ import { formatPrice, type Instrument } from "@/lib/market-data";
  * than the price they carry — this engine encodes every losing step as a short,
  * so a price-signed reading can only ever say long.
  *
- * The percentage is the engine's *live* conviction — how hard the book is
- * pushing right now (`bookConviction`, unfloored so it actually moves) — and
- * the `fill` meter beneath it carries the conviction of the last realized fill
- * on the same scale.
+ * The percentage is the engine's *live* conviction (`bookConviction`) — how
+ * hard the book is pushing right now, read on the band the engine actually
+ * decides in: nothing below the floor is ever traded, so nothing is reported
+ * below it either, and nothing reaches certainty. The `fill` meter beneath it
+ * carries the last realized fill on the same scale. With no position there is
+ * no decision to report, so the card shows a dash rather than a zero.
  *
  * The manual Buy/Sell triggers stay: while the engine runs they queue a signal
  * for its next fill, exactly as they did before this card took the block.
@@ -103,7 +105,8 @@ export function EngineVerdict({
 
   const word = side === "buy" ? "BUY" : side === "sell" ? "SELL" : "LATE";
   const tone = TONE[side];
-  const showPct = session !== null && session.phase !== "idle";
+  /** a conviction reading only exists while the engine is actually in a trade */
+  const showPct = positions.length > 0;
 
   /** the conviction behind the engine's latest fill, on the chart's own scale */
   const fillConviction = lastTrade ? convictionForMove(lastTrade.movePct) : 0;

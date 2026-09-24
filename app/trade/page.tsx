@@ -290,6 +290,25 @@ function TradeInner() {
         </div>
       )}
 
+      {/* the engine's state, even when it is doing nothing. The running banner
+          only exists while a session runs, which left the page silent about the
+          engine on arrival and no way to reach the one control that starts it. */}
+      {!engineRunning && (
+        <div className="border-b border-border bg-surface/40 px-4 py-2">
+          <div className="mx-auto flex max-w-5xl items-center gap-2 text-[12px]">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-muted" />
+            <span className="min-w-0 flex-1 truncate text-muted">
+              {session
+                ? "AxAI has settled this session — its book is closed and the funds are back in your balance."
+                : "AxAI is idle. Hand it funds and it trades the whole window for you."}
+            </span>
+            <a href="#ai-terminal" className="shrink-0 font-semibold text-brand hover:underline">
+              {session ? "Review the engine →" : "Start the engine →"}
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* scrollable content — bottom nav clears via pb-28 */}
       <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 pt-4 pb-28 sm:px-6 lg:pb-10">
        <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[336px_minmax(0,1fr)] lg:items-start lg:gap-5">
@@ -442,6 +461,22 @@ function TradeInner() {
               the terminal doubles as a scanner for what AxAI is holding */}
           <EngineStaircase key={inst.symbol} inst={inst} onSelect={selectSymbol} />
 
+          {/* the engine's own surface — the hands on the wheel, directly under
+              the pane that shows what the wheel is doing. It used to sit below
+              every market panel, which put the only start button three screens
+              beneath the state it starts. */}
+          <div id="ai-terminal" className="scroll-mt-20">
+            <AiPanel />
+          </div>
+
+          {/* market reference — the furniture the engine does not read. Kept
+              below its surface rather than above it, and labelled as reference
+              so it is not mistaken for part of the engine. */}
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-[10.5px] font-semibold tracking-wide text-muted uppercase">Market reference</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
           {/* real statistics from exchange history */}
           <KeyStats inst={inst} />
 
@@ -461,11 +496,6 @@ function TradeInner() {
               setSheetOpen(true);
             }}
           />
-
-          {/* the autonomous engine terminal — merged in, nothing sacrificed */}
-          <div id="ai-terminal" className="scroll-mt-20">
-            <AiPanel />
-          </div>
         </div>
        </div>
       </main>
