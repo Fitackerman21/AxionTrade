@@ -793,6 +793,21 @@ export function sessionOpenPositions(s: AiSession, live: LiveContext, limit = 4)
 export const FULL_CONVICTION_MOVE_PCT = 1;
 
 /**
+ * The most conviction a reading may ever show, 0 → 1.
+ *
+ * Deliberately short of certainty. No trade is a sure thing — the engine sizes
+ * for a loss it cannot see coming, and a meter that tops out at 100% would
+ * claim the one thing the whole product argues against. 96% is the ceiling.
+ */
+export const CONVICTION_CEILING = 0.96;
+
+/** One instrument move as a conviction reading, on the shared scale. */
+export function convictionForMove(movePct: number): number {
+  const raw = Math.abs(movePct) / FULL_CONVICTION_MOVE_PCT;
+  return Math.max(0, Math.min(CONVICTION_CEILING, raw));
+}
+
+/**
  * How hard the engine's open book is pushing right now, 0 → 1: the
  * notional-weighted size of the moves its positions carry, against a full
  * conviction move.
@@ -807,7 +822,7 @@ export function bookConviction(positions: OpenPosition[]): number {
   if (positions.length === 0) return 0;
   const total = positions.reduce((a, p) => a + p.notionalUsd, 0) || 1;
   const weighted = positions.reduce((a, p) => a + Math.abs(p.movePct) * (p.notionalUsd / total), 0);
-  return Math.max(0, Math.min(1, weighted / FULL_CONVICTION_MOVE_PCT));
+  return convictionForMove(weighted);
 }
 
 /**

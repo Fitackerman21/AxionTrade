@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useReducedMotion } from "framer-motion";
 
 import { useLivePrices, useLiveQuote } from "@/components/live-prices";
 import { BookStrip, SessionTrack } from "@/components/trade-chart";
@@ -55,26 +54,6 @@ interface Step {
   side: StairSide | null;
 }
 
-/**
- * What the pane is currently drawn against, which trails what the data says.
- * Both the price range and the width the samples are spread over are eased, so
- * a new sample grows the last step into its level and widens the path instead
- * of snapping everything to a new scale in one frame.
- */
-interface View {
-  lo: number;
-  hi: number;
-  /** the newest price, easing toward the sample that just landed */
-  head: number;
-  /** how many steps the pane's width is divided between */
-  spread: number;
-}
-
-/** Fraction of the remaining distance covered per drawn frame. */
-const EASE = 0.22;
-/** Ceiling on redraws: 40 fps is smooth for a step line and leaves headroom. */
-const FRAME_MS = 25;
-
 /** Axis labels have to stay short enough to sit beside the tag at any scale. */
 function axisLabel(v: number, kind: Instrument["kind"]): string {
   if (kind === "forex") return v.toFixed(4);
@@ -122,134 +101,37 @@ function useBoxSize<T extends HTMLElement>() {
 
 function Staircase({ series, inst }: { series: Step[]; inst: Instrument }) {
   const [boxRef, box] = useBoxSize<HTMLDivElement>();
-  const reduce = !!useReducedMotion();
   const W = Math.max(240, box.w || 640);
   const H = Math.max(160, box.h || 320);
 
-  /** where the data says the pane should be drawn */
-  const target = useMemo<View | null>(() => {
-    const pts = series.slice(-WINDOW_POINTS);
-    if (pts.length === 0) return null;
-    const mids = pts.map((p) => p.mid);
-    const lowest = Math.min(...mids);
-    const highest = Math.max(...mids);
-    // a little air above and below, so the line never rides the frame
-    const pad = Math.max(highest - lowest, lowest * 0.0001) * 0.08;
-    return {
-      lo: lowest - pad,
-      hi: highest + pad,
-      head: pts[pts.length - 1].mid,
-      // spread over the samples actually held, not the 90 slots the window
-      // could hold: a fresh pane would otherwise cram its first minutes into a
-      // stub against the price axis
-      spread: Math.max(1, pts.length - 1),
-    };
-  }, [series]);
-
-  const [view, setView] = useState<View | null>(null);
-  /** what the last drawn frame used, and what the next one is easing toward */
-  const viewRef = useRef<View | null>(null);
-  const targetRef = useRef<View | null>(null);
-  const drawnRef = useRef<View | null>(null);
-
-  useEffect(() => {
-    targetRef.current = target;
-  }, [target]);
-
-  /**
-   * The easing loop. A ref rather than a state read on every frame, and it
-   * stops touching React the moment it has settled, so an idle pane costs a
-   * handful of subtractions per frame and no renders at all.
-   */
-  useEffect(() => {
-    let alive = true;
-    let raf = 0;
-    let last = 0;
-
-    const loop = (now: number) => {
-      if (!alive) return;
-      raf = requestAnimationFrame(loop);
-      if (now - last < FRAME_MS) return;
-      last = now;
-
-      const t = targetRef.current;
-      if (!t) return;
-      const cur = viewRef.current;
-      const k = reduce ? 1 : EASE;
-      const next: View = cur
-        ? {
-            lo: cur.lo + (t.lo - cur.lo) * k,
-            hi: cur.hi + (t.hi - cur.hi) * k,
-            head: cur.head + (t.head - cur.head) * k,
-            spread: cur.spread + (t.spread - cur.spread) * k,
-          }
-        : { ...t };
-
-      const span = Math.abs(t.hi - t.lo) || 1;
-      const settled =
-        Math.abs(next.lo - t.lo) < span * 0.0004 &&
-        Math.abs(next.hi - t.hi) < span * 0.0004 &&
-        Math.abs(next.head - t.head) < span * 0.0004 &&
-        Math.abs(next.spread - t.spread) < 0.01;
-
-      const goal = settled ? t : next;
-      viewRef.current = goal;
-
-      const drawn = drawnRef.current;
-      if (!drawn || drawn.lo !== goal.lo || drawn.hi !== goal.hi || drawn.head !== goal.head || drawn.spread !== goal.spread) {
-        drawnRef.current = goal;
-        setView(goal);
-      }
-    };
-
-    raf = requestAnimationFrame(loop);
-    return () => {
-      alive = false;
-      cancelAnimationFrame(raf);
-    };
-  }, [reduce]);
-
   const chart = useMemo(() => {
-    const empty = {
-      points: 0,
-      d: "",
-      grid: [] as Array<{ i: number; v: number; y: number }>,
-      dots: [] as Array<{ key: string; cx: number; cy: number; fill: string }>,
-      area: "",
-      lastX: 0,
-      lastY: 0,
-      lastMid: 0,
-      lastHasSide: false,
-      lastFill: "#2b3440",
-    };
     const pts = series.slice(-WINDOW_POINTS);
-    const v = view ?? target;
-    if (!v || pts.length === 0) return empty;
-
-    const span = Math.max(v.hi - v.lo, v.lo * 0.0001) || 1;
-    const X = (i: number) => (i * (W - PAD_RIGHT)) / v.spread;
-    const Y = (val: number) => PAD_TOP + (H - PAD_BOTTOM - PAD_TOP) * (1 - (val - v.lo) / span);
-
-    // the head carries the eased price, so the last vertical step grows into
-    // its level rather than snapping to it
     const mids = pts.map((p) => p.mid);
-    mids[mids.length - 1] = v.head;
+    const lo = mids.length ? Math.min(...mids) : 0;
+    const hi = mids.length ? Math.max(...mids) : 0;
+    const span = Math.max(hi - lo, lo * 0.0001) || 1;
+    // X spans the samples actually held, not the 90 slots the window could
+    // hold: a fresh pane has a handful of points, and cramming them into the
+    // last few pixels against the axis is what made the old pane unreadable.
+    const visible = Math.max(1, pts.length - 1);
+    const X = (i: number) => (i * (W - PAD_RIGHT)) / visible;
+    const Y = (v: number) => PAD_TOP + (H - PAD_BOTTOM - PAD_TOP) * (1 - (v - lo) / span);
 
     let d = "";
-    mids.forEach((mid, i) => {
+    pts.forEach((p, i) => {
       const x = X(i).toFixed(1);
-      const y = Y(mid).toFixed(1);
+      const y = Y(p.mid).toFixed(1);
       d += d ? ` H${x} V${y}` : `M${x} ${y}`;
     });
 
     const grid = [0, 1, 2, 3].map((i) => {
-      const val = v.lo + (span * i) / 3;
-      return { i, v: val, y: Y(val) };
+      const v = lo + (span * i) / 3;
+      return { i, v, y: Y(v) };
     });
 
     const dots: Array<{ key: string; cx: number; cy: number; fill: string }> = [];
     pts.forEach((p, i) => {
-      if (p.side) dots.push({ key: `${i}`, cx: X(i), cy: Y(mids[i]), fill: SIDE_COLOUR[p.side] });
+      if (p.side) dots.push({ key: `${i}`, cx: X(i), cy: Y(p.mid), fill: SIDE_COLOUR[p.side] });
     });
 
     const last = pts[pts.length - 1];
@@ -259,13 +141,13 @@ function Staircase({ series, inst }: { series: Step[]; inst: Instrument }) {
       grid,
       dots,
       area: pts.length > 1 ? `${d} V${H - PAD_BOTTOM} H0 Z` : "",
-      lastX: X(pts.length - 1),
-      lastY: Y(v.head),
-      lastMid: last.mid,
-      lastHasSide: !!last.side,
-      lastFill: last.side ? SIDE_COLOUR[last.side] : "#2b3440",
+      lastX: pts.length ? X(pts.length - 1) : 0,
+      lastY: last ? Y(last.mid) : 0,
+      lastMid: last ? last.mid : 0,
+      lastHasSide: !!(last && last.side),
+      lastFill: last && last.side ? SIDE_COLOUR[last.side] : "#2b3440",
     };
-  }, [series, view, target, W, H]);
+  }, [series, W, H]);
 
   const tag = axisLabel(chart.lastMid, inst.kind);
   const tagW = Math.max(70, tag.length * 7.2 + 18);
