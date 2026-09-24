@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useMemo } from "react";
+import { animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { ArrowDownRight, ArrowUpRight, Bot } from "lucide-react";
 
 import { useLivePrices } from "@/components/live-prices";
@@ -101,6 +101,19 @@ export function EngineVerdict({
   const fillConviction = lastTrade
     ? Math.min(1, Math.abs(lastTrade.movePct) / ENGINE_MAX_MOVE_PCT)
     : 0;
+  /**
+   * The headline number counts toward its new reading rather than snapping to
+   * it: a conviction that creeps up over a hold is the engine's story, and a
+   * number that jumps cut that story short. The motion value keeps the tween
+   * out of React, so the count costs no re-renders.
+   */
+  const convictionMv = useMotionValue(0);
+  const convictionText = useTransform(convictionMv, (v) => `${Math.round(v * 100)}%`);
+  useEffect(() => {
+    const controls = animate(convictionMv, liveConviction, { duration: 0.6, ease: "easeOut" });
+    return () => controls.stop();
+  }, [convictionMv, liveConviction]);
+
   /** how far equity has walked toward the session's hard floor */
   const risk =
     session && session.principal > session.floorUsd
@@ -132,10 +145,10 @@ export function EngineVerdict({
           >
             {word}
           </motion.span>
-          <span className="text-right">
-            <span className={`font-mono text-3xl leading-none font-semibold tabular-nums ${tone.text}`}>
-              {showPct ? `${Math.round(liveConviction * 100)}%` : "—"}
-            </span>
+          <span className="block text-right">
+            <motion.span className={`font-mono text-3xl leading-none font-semibold tabular-nums ${tone.text}`}>
+              {showPct ? convictionText : "—"}
+            </motion.span>
             <span className="mt-0.5 block text-[10px] text-muted">live conviction</span>
           </span>
         </div>
