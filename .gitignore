@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# the Part-Time Quant prompt /jev was ported from — theirs, not ours to republish
+jev-hft-system.md
