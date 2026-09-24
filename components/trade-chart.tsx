@@ -886,7 +886,7 @@ export function TradeChart({
  * Memoised because the pane above re-renders 25 times a second and this band
  * only moves when the engine actually books a fill.
  */
-const SessionTrack = memo(function SessionTrack({ session }: { session: AiSession | null }) {
+export const SessionTrack = memo(function SessionTrack({ session }: { session: AiSession | null }) {
   if (!session || session.phase === "idle") return null;
   const curve = sessionEquityCurve(session, 72);
 
@@ -965,7 +965,7 @@ const SessionTrack = memo(function SessionTrack({ session }: { session: AiSessio
 /* Book strip — every position driving the arrow                       */
 /* ------------------------------------------------------------------ */
 
-const BookStrip = memo(function BookStrip({
+export const BookStrip = memo(function BookStrip({
   positions,
   onSelect,
   current,

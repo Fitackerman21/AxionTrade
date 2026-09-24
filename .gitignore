@@ -42,3 +42,6 @@ next-env.d.ts
 
 # the Part-Time Quant prompt /jev was ported from — theirs, not ours to republish
 jev-hft-system.md
+
+# pre-consolidation copies of the trade page and terminal
+backup/

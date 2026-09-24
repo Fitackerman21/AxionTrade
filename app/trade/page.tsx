@@ -4,8 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
   Bell,
   Bot,
   Check,
@@ -29,8 +27,9 @@ import { InstrumentPicker } from "@/components/instrument-picker";
 import { LivePrice } from "@/components/live-price";
 import { useLiveQuote } from "@/components/live-prices";
 import { OrderTicket } from "@/components/order-ticket";
+import { EngineStaircase } from "@/components/engine-staircase";
+import { EngineVerdict } from "@/components/engine-verdict";
 import { KeyStats, OrderBookLadder, PositionSizer, TimeAndSales } from "@/components/trade-tools";
-import { TradeChart } from "@/components/trade-chart";
 import { Watchlist } from "@/components/watchlist";
 import { formatPct, formatPrice, INSTRUMENTS } from "@/lib/market-data";
 import { useAccount } from "@/lib/account-store";
@@ -149,7 +148,7 @@ function NotificationBell() {
 
 function TradeInner() {
   const authed = useRequireAuth();
-  const { session, lastTrade, signal } = useAiSession();
+  const { session, signal } = useAiSession();
   const { account } = useAccount();
   const [symbol, setSymbol] = useState("BTC");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -343,25 +342,14 @@ function TradeInner() {
           </div>
         </section>
 
-        {/* buy / sell — signal the engine when it runs, manual orders otherwise */}
-        <section className="grid grid-cols-2 gap-3">
-          <button
-            onClick={() => onManual("LONG")}
-            className="group flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-[#00e0aa] to-[#00a87a] py-4 text-base font-bold text-[#04120d] shadow-[0_12px_32px_-10px_rgba(0,200,150,0.65)] transition-transform active:scale-[0.98]"
-          >
-            {engineRunning ? <Bot className="h-5 w-5" /> : <ArrowUpRight className="h-5 w-5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />}
-            Buy
-            <span className="font-mono text-sm font-semibold opacity-75">{formatPrice(price, inst.kind)}</span>
-          </button>
-          <button
-            onClick={() => onManual("SHORT")}
-            className="group flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-[#ff5b73] to-[#d32f4b] py-4 text-base font-bold text-[#1a0509] shadow-[0_12px_32px_-10px_rgba(246,70,93,0.6)] transition-transform active:scale-[0.98]"
-          >
-            {engineRunning ? <Bot className="h-5 w-5" /> : <ArrowDownRight className="h-5 w-5 transition-transform group-hover:translate-x-0.5 group-hover:translate-y-0.5" />}
-            Sell
-            <span className="font-mono text-sm font-semibold opacity-75">{formatPrice(price, inst.kind)}</span>
-          </button>
-        </section>
+        {/* the engine's verdict — its word and conviction, with the manual
+            triggers it has always had */}
+        <EngineVerdict
+          inst={inst}
+          price={price}
+          engineRunning={engineRunning}
+          onManual={onManual}
+        />
 
         {/* live two-way quote */}
         <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border bg-border/60 text-center">
@@ -449,26 +437,10 @@ function TradeInner() {
 
         {/* RIGHT — the chart, with the AI engine beneath it */}
         <div className="order-1 min-w-0 space-y-4 lg:order-2">
-          {/* the pane — the engine's book drives the arrow, every fill it books
+          {/* the pane — the price steps across it, every fill the engine books
               is pinned on the trail, and the book strip hands a symbol back so
               the terminal doubles as a scanner for what AxAI is holding */}
-          <TradeChart
-            inst={inst}
-            onSelect={selectSymbol}
-            aiTrade={
-              lastTrade
-                ? {
-                    id: lastTrade.id,
-                    symbol: lastTrade.symbol,
-                    dir: lastTrade.dir,
-                    pnl: lastTrade.pnl,
-                    movePct: lastTrade.movePct,
-                    outcome: lastTrade.outcome,
-                    at: lastTrade.at,
-                  }
-                : null
-            }
-          />
+          <EngineStaircase key={inst.symbol} inst={inst} onSelect={selectSymbol} />
 
           {/* real statistics from exchange history */}
           <KeyStats inst={inst} />
