@@ -124,13 +124,17 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
     const lo = mids.length ? Math.min(...mids) : 0;
     const hi = mids.length ? Math.max(...mids) : 0;
     const span = Math.max(hi - lo, lo * 0.0001) || 1;
-    const X = (i: number) => (i * (W - PAD_RIGHT)) / (WINDOW_POINTS - 1);
+    // X spans the ticks actually in the window, not the 90 slots it could
+    // hold: the video's pane always looked full because its loop had been
+    // running for hours, while a fresh page has a couple of points that used
+    // to be crammed into the last few pixels against the axis.
+    const visible = Math.max(1, pts.length - 1);
+    const X = (i: number) => (i * (W - PAD_RIGHT)) / visible;
     const Y = (v: number) => 12 + (H - PAD_BOTTOM - 24) * (1 - (v - lo) / span);
-    const off = WINDOW_POINTS - pts.length;
 
     let d = "";
     pts.forEach((p, i) => {
-      const x = X(i + off).toFixed(1);
+      const x = X(i).toFixed(1);
       const y = Y(p.mid).toFixed(1);
       d += d ? ` H${x} V${y}` : `M${x} ${y}`;
     });
@@ -142,7 +146,7 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
 
     const dots = pts.map((p, i) => ({
       key: `${p.tick}-${i}`,
-      cx: X(i + off),
+      cx: X(i),
       cy: Y(p.mid),
       fill: SIDE_COLOUR[sideOf(p)],
     }));
@@ -153,8 +157,8 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
       d,
       grid,
       dots,
-      area: pts.length ? `${d} V${H - PAD_BOTTOM} H${X(off)} Z` : "",
-      lastX: X(WINDOW_POINTS - 1),
+      area: pts.length ? `${d} V${H - PAD_BOTTOM} H0 Z` : "",
+      lastX: X(pts.length - 1),
       lastY: last ? Y(last.mid) : 0,
       lastMid: last ? last.mid : 0,
       lastFill: last ? SIDE_COLOUR[sideOf(last)] : "#999",
@@ -184,7 +188,7 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
               x2={W - PAD_RIGHT}
               y1={g.y}
               y2={g.y}
-              stroke="rgba(11,11,16,.08)"
+              stroke="rgba(11,11,16,.16)"
               strokeDasharray="3 4"
             />
             <text className={styles.axis} x={W - PAD_RIGHT + 8} y={g.y + 4}>
@@ -196,7 +200,7 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
         {chart.points > 1 && (
           <>
             <path d={chart.area} fill="url(#jevArea)" />
-            <path d={chart.d} fill="none" stroke="#0b0b10" strokeWidth={1.6} />
+            <path d={chart.d} fill="none" stroke="#0b0b10" strokeWidth={2} />
           </>
         )}
 
@@ -692,7 +696,8 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
             <div className={styles.foot}>
               <span>one dot per tick · green buy · red sell · amber late/hold</span>
               <span>
-                {TICK_SECONDS}s ticks · one decision per tick · {ticks.length} in the window
+                {TICK_SECONDS}s ticks · one decision per tick · {ticks.length} of {WINDOW_POINTS} ticks
+                in the window
               </span>
             </div>
           </section>
