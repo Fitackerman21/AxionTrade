@@ -108,7 +108,14 @@ export function sessionClockRate(s: AiSession): string {
   return minutes >= 1 ? `1 day / ${minutes} min` : `1 day / ${Math.round(dayWallMs / 1000)} s`;
 }
 
-export const DEFAULT_SPEED: SpeedId = "60x";
+/**
+ * The rate a session starts at. The engine trades on its own clock and fills
+ * one plan step at a time, so the clock rate is what governs how often an
+ * operator actually sees a buy or sell: at 300× a fill lands every ~8s, at
+ * 3000× every ~0.8s. The faster default is the difference between watching a
+ * blotter and watching a tape.
+ */
+export const DEFAULT_SPEED: SpeedId = "600x";
 
 /** Profit milestones as % of principal (the operator watches them fire). */
 export const MILESTONE_PCTS = [25, 50, 75, 100, 150, 200, 250, 300] as const;
@@ -478,7 +485,11 @@ export interface LiveContext {
   fng: number | null;
 }
 
-/** A manual signal queued by the operator — executed on the engine's next fill. */
+/**
+ * An order the operator placed themselves. It rides the engine's next plan
+ * step, so it is sized and costed exactly like one of the engine's own fills —
+ * the difference is who asked for it.
+ */
 export interface TradeDirective {
   symbol: string;
   dir: "LONG" | "SHORT";
@@ -629,12 +640,93 @@ function fmtUsdShort(v: number): string {
  * played out — which, because the plan is sized exactly to the window, means
  * the window closed — or when equity pierces the loss threshold.
  */
+/**
+ * Take the engine's next plan step.
+ *
+ * One place, deliberately: an operator's order and the engine's own fill are
+ * the same event with the same sizing, cost and effect on equity. The only
+ * difference is who asked for it and where it is stamped.
+ *
+ * Mutates `next` and reports whether this fill tripped the de-risk level — the
+ * caller owns the narrative, so the event fires once per advance.
+ */
+function takeStep(
+  next: AiSession,
+  live: LiveContext,
+  directive: TradeDirective | null,
+  /** session-clock ms to stamp the fill at; the plan's schedule by default */
+  stampAt?: number
+): { derisked: boolean } {
+  const i = next.cursor;
+  const rec = buildTrade(next, i, next.equity, live, directive);
+
+  if (stampAt !== undefined) {
+    // stamped where it actually happened, so the blotter and the equity agree
+    // with the pane about when the trade was made
+    rec.at = stampAt;
+    rec.entryAt = Math.max(next.startAt, stampAt - stepMeta(next, i).lead * stepSimMs(next));
+  }
+
+  next.equity = +rec.equityAfter.toFixed(2);
+  next.peak = Math.max(next.peak, next.equity);
+  next.feesPaid = +(next.feesPaid + rec.fees).toFixed(2);
+  next.trades.push(rec);
+  next.cursor += 1;
+
+  fireMilestones(next, rec.equityAfter);
+  return { derisked: (next.peak - next.equity) / next.peak >= AI_CONFIG.maxDrawdownFromPeakPct };
+}
+
+/** The loss threshold is the ONLY automatic abort, in plan order or out of it. */
+function checkAbort(next: AiSession): AiSession {
+  if (next.equity <= next.floorUsd) {
+    next.outcome = "floor";
+    next.phase = "done";
+  } else if (next.cursor >= next.plan.length) {
+    // The window is complete only once the whole plan has been traded out.
+    next.outcome = "time";
+    next.phase = "done";
+  }
+  return next;
+}
+
+/**
+ * The operator's own order, taken on the spot.
+ *
+ * It rides the engine's next plan step — the same sizing, the same cost model,
+ * the same effect on the equity path — but takes it *now*, with the operator's
+ * instrument and direction, instead of waiting for the session clock to reach
+ * the step's boundary. That wait was the whole problem: a signal given between
+ * boundaries used to be dropped without ever being traded, and at the slow
+ * speeds a fill could be an hour of session time away.
+ */
+export function manualFill(
+  s: AiSession,
+  directive: TradeDirective,
+  live: LiveContext,
+  nowMs: number
+): AiSession {
+  if (s.phase !== "running" || s.cursor >= s.plan.length) return s;
+
+  const ticked = tickClock(s, nowMs);
+  const next: AiSession = { ...ticked, trades: ticked.trades.slice(), events: ticked.events.slice() };
+  takeStep(next, live, directive, sessionNow(next));
+  return checkAbort(next);
+}
+
+/**
+ * Advance the engine: credit session time, then reveal every fill the clock
+ * has reached (capped per call so catch-up streams rather than dumps).
+ *
+ * The engine NEVER stops on profit. It ends only when the whole plan has
+ * played out — which, because the plan is sized exactly to the window, means
+ * the window closed — or when equity pierces the loss threshold.
+ */
 export function advanceSession(
   s: AiSession,
   now: number,
   maxTrades: number,
-  live: LiveContext,
-  directive?: TradeDirective | null
+  live: LiveContext
 ): AiSession {
   if (s.phase !== "running") return s;
 
@@ -648,15 +740,7 @@ export function advanceSession(
   let derisked = false;
 
   for (let k = 0; k < due; k++) {
-    const i = next.cursor;
-    const rec = buildTrade(next, i, next.equity, live, k === 0 ? (directive ?? null) : null);
-    next.equity = +rec.equityAfter.toFixed(2);
-    next.peak = Math.max(next.peak, next.equity);
-    next.feesPaid = +(next.feesPaid + rec.fees).toFixed(2);
-    next.trades.push(rec);
-    next.cursor += 1;
-
-    fireMilestones(next, rec.equityAfter);
+    const taken = takeStep(next, live, null);
 
     // Loss threshold — the ONLY automatic abort.
     if (next.equity <= next.floorUsd) {
@@ -666,7 +750,7 @@ export function advanceSession(
     }
 
     // Drawdown de-risk: absorb the blow, keep trading with reduced size.
-    if ((next.peak - next.equity) / next.peak >= AI_CONFIG.maxDrawdownFromPeakPct && !derisked) {
+    if (taken.derisked && !derisked) {
       derisked = true;
       next.events = [
         ...next.events,
@@ -680,12 +764,7 @@ export function advanceSession(
     }
   }
 
-  // The window is complete only once the whole plan has been traded out.
-  if (next.cursor >= next.plan.length) {
-    next.outcome = "time";
-    next.phase = "done";
-  }
-  return next;
+  return checkAbort(next);
 }
 
 /* ------------------------- live open positions ------------------------ */

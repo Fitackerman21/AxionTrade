@@ -181,8 +181,8 @@ export function EngineVerdict({
 
         <p className="mt-2 text-[11px] text-muted">
           {engineRunning
-            ? "Buy/Sell queue a signal for AxAI's next fill."
-            : "Start the engine to hand it your signals, or trade directly."}
+            ? "Buy/Sell are taken by the engine on the spot, at the live price."
+            : "Start the engine to hand it your orders, or trade directly."}
         </p>
       </div>
     </section>

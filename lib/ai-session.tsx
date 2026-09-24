@@ -18,6 +18,7 @@ import {
   createSession,
   durationMs,
   haltSession,
+  manualFill,
   setSessionSpeed,
   sessionStats,
   type AiOutcome,
@@ -25,7 +26,6 @@ import {
   type DurationId,
   type LiveContext,
   type SpeedId,
-  type TradeDirective,
   type TradeEvent,
 } from "@/lib/ai-trader";
 
@@ -210,16 +210,13 @@ export function AiSessionProvider({ children }: { children: React.ReactNode }) {
   const phaseRef = useRef<"idle" | "running" | "done">("idle");
   phaseRef.current = session?.phase ?? "idle";
   const notifiedRef = useRef<Set<string>>(new Set());
-  const directiveRef = useRef<TradeDirective | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => {
       if (phaseRef.current !== "running") return;
       setSession((s) => {
         if (!s || s.phase !== "running") return s;
-        const d = directiveRef.current;
-        directiveRef.current = null;
-        return advanceSession(s, Date.now(), MAX_FILLS_PER_TICK, liveRef.current, d);
+        return advanceSession(s, Date.now(), MAX_FILLS_PER_TICK, liveRef.current);
       });
     }, TICK_MS);
     return () => clearInterval(t);
@@ -301,9 +298,15 @@ export function AiSessionProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  /** Queue a manual signal (from the Buy/Sell buttons) — executed on the next fill. */
+  /**
+   * Place the operator's order (from the Buy/Sell buttons). It is taken by the
+   * engine on the spot — the same plan step the engine would have filled next,
+   * but filled now, with the operator's instrument and direction.
+   */
   const signal = useCallback((symbol: string, dir: "LONG" | "SHORT") => {
-    directiveRef.current = { symbol, dir };
+    setSession((s) =>
+      s ? manualFill(s, { symbol, dir }, liveRef.current, Date.now()) : s
+    );
   }, []);
 
   /** Change the time-lapse rate, crediting elapsed session time at the old rate. */

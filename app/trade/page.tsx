@@ -200,11 +200,12 @@ function TradeInner() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Buy/Sell: while the engine runs they queue signals; otherwise manual orders
+  // Buy/Sell: while the engine runs it takes them on the spot; otherwise they
+  // open a manual order on the account
   const onManual = (dir: "LONG" | "SHORT") => {
     if (engineRunning) {
       signal(inst.symbol, dir);
-      setToast(`Signal sent — ${dir} ${inst.symbol} queued for AxAI's next fill`);
+      setToast(`Filled — AxAI went ${dir} ${inst.symbol} on the spot`);
     } else {
       setOrderNotional(undefined);
       setSheetOpen(true);
@@ -280,8 +281,8 @@ function TradeInner() {
             </span>
             <span className="min-w-0 flex-1 truncate text-foreground/90">
               <b>AxAI is trading autonomously.</b> Equity{" "}
-              <span className="font-mono tabular-nums">${session.equity.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span> — Buy/Sell
-              now queue signals for the engine.
+              <span className="font-mono tabular-nums">${session.equity.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span> — Buy/Sell are taken
+              on the spot, at the live price.
             </span>
             <a href="#ai-terminal" className="shrink-0 font-semibold text-brand hover:underline">
               Open engine →
