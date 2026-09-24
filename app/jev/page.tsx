@@ -66,6 +66,7 @@ interface Frame {
   cashUsd: number;
   inventory: number;
   fills: number;
+  ready: boolean;
 }
 
 /** The spreads the prompt's assets.py sets per asset class. */
@@ -162,7 +163,13 @@ function JevChart({ ticks }: { ticks: TickRecord[] }) {
 
   return (
     <div className={styles.chart} ref={boxRef}>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Mid price, one point per tick">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        role="img"
+        aria-label="Mid price, one point per tick"
+      >
         <defs>
           <linearGradient id="jevArea" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0" stopColor="rgba(10,140,255,.16)" />
@@ -320,6 +327,7 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
       cashUsd: ctx ? ctx.account.cash : STARTING_CASH_USD,
       inventory: ctx ? ctx.account.inventory : 0,
       fills: ctx ? ctx.account.fills.length : 0,
+      ready: ctx !== null && ticksRef.current !== null,
     };
   }, [symbol]);
 
@@ -328,7 +336,14 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
       const ctx = ctxRef.current;
       const mid = priceRef.current;
       const client = clientRef.current;
-      if (!ctx || !mid || !client) return;
+      if (!ctx || !client || !Number.isFinite(mid) || mid <= 0) {
+        // say why rather than sitting silent
+        noteRef.current = `cannot tick yet — ${!ctx ? "state engine not ready" : ""}${
+          !client ? " no decision client" : ""
+        }${!(Number.isFinite(mid) && mid > 0) ? ` bad price (${mid})` : ""}`.trim();
+        setFrame(buildFrame());
+        return;
+      }
       if (inFlightRef.current) return;
       if (haltedRef.current && !manual) return;
       inFlightRef.current = true;
@@ -406,6 +421,12 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
         }
 
         setFrame(buildFrame());
+      } catch (error) {
+        // never fail silently: whatever went wrong goes on the page
+        noteRef.current = `loop error: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        setFrame(buildFrame());
       } finally {
         inFlightRef.current = false;
       }
@@ -416,9 +437,11 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
   /* one tick every tick_seconds, plus a 1s read of the log — the same shape as
      the prompt's dashboard polling latest.json */
   useEffect(() => {
+    const firstTick = setTimeout(() => void doTick(), 400);
     const tickTimer = setInterval(() => void doTick(), TICK_SECONDS * 1000);
     const readTimer = setInterval(() => setFrame(buildFrame()), 1000);
     return () => {
+      clearTimeout(firstTick);
       clearInterval(tickTimer);
       clearInterval(readTimer);
     };
@@ -634,6 +657,31 @@ function JevLoop({ symbol, onSymbol }: { symbol: string; onSymbol: (s: string) =
             </div>
 
             <JevChart ticks={ticks} />
+
+            {/* the heartbeat — if this reads zero, the loop is not ticking */}
+            <div className={styles.status}>
+              <span>
+                loop <b>{halted ? "halted" : "running"}</b>
+              </span>
+              <span>
+                state <b>{frame?.ready ? "ready" : "starting"}</b>
+              </span>
+              <span>
+                ticks <b>{ticks.length}</b>
+              </span>
+              <span>
+                client <b>{isMock ? "mock" : decisionClient.toLowerCase()}</b>
+              </span>
+              <span>
+                fills <b>{frame?.fills ?? 0}</b>
+              </span>
+              <span>
+                cadence <b>{TICK_SECONDS}s</b>
+              </span>
+              <span>
+                price feed <b>{quote ? "live" : "baseline"}</b>
+              </span>
+            </div>
 
             <div className={styles.strip}>
               {bars.map((s, i) => (

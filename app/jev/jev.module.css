@@ -293,10 +293,11 @@
   min-height: 240px;
   position: relative;
 }
+/* the svg takes its own measured pixel size (attributes, not percentages), so
+   it can never collapse to nothing if the flex column gives it no height */
 .chart svg {
-  width: 100%;
-  height: 100%;
   display: block;
+  max-width: 100%;
   overflow: visible;
 }
 
@@ -523,6 +524,28 @@
   font-size: 11.5px;
   color: var(--muted);
   line-height: 1.6;
+}
+
+/* the heartbeat: proves on sight whether the loop is ticking */
+.status {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(11, 11, 16, 0.04);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.status b {
+  font-weight: 400;
+  color: var(--ink);
+}
+.status.err {
+  background: var(--red-soft);
+  color: var(--red);
 }
 .flatten {
   width: 100%;
