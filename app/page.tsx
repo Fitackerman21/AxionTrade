@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -133,7 +134,9 @@ export default function LoginPage() {
         {/* ------- left: pitch ------- */}
         <section>
           <motion.div variants={fadeUp} initial="hidden" animate="show" custom={0}>
-            <BrandWordmark />
+            <Link href="/home" className="inline-block transition-opacity hover:opacity-85">
+              <BrandWordmark />
+            </Link>
           </motion.div>
 
           <motion.h1
@@ -322,6 +325,9 @@ export default function LoginPage() {
         <span className="inline-flex items-center gap-1.5">
           <Globe className="h-3.5 w-3.5" /> Available in 180+ countries
         </span>
+        <Link href="/home" className="text-brand transition-colors hover:underline">
+          Product overview
+        </Link>
         <span>
           © {new Date().getFullYear()} AxionTrade · Not investment advice
         </span>
