@@ -5,10 +5,14 @@
  * Ten hardcoded personas (lib/community-chat.ts) replay a trading-day
  * conversation; the composer appends your own messages locally so the
  * outgoing bubble style is visible. No backend.
+ *
+ * Bubble spec follows Telegram Web (tweb) night mode: solid bubbles,
+ * sender name inside the bubble, time inline at the end of the text,
+ * avatar rendered only on the last message of a group and bottom-aligned,
+ * last bubble in a group gets the squared avatar-side corner.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import {
   Bot,
   CheckCheck,
@@ -51,7 +55,7 @@ function initials(name: string) {
 /** Deterministic 0/1 so sticker arrows stay stable across renders. */
 const up = (id: number) => id % 2 === 0;
 
-function Avatar({ p, size = 38 }: { p: ChatPersona; size?: number }) {
+function Avatar({ p, size = 34 }: { p: ChatPersona; size?: number }) {
   return (
     <span
       className="relative flex shrink-0 items-center justify-center rounded-full font-semibold text-[#071018]"
@@ -75,8 +79,10 @@ function TickerChip({ ticker, id }: { ticker: string; id: number }) {
   const isUp = up(id);
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${
-        isUp ? "border-gain/25 bg-gain/10 text-gain" : "border-loss/25 bg-loss/10 text-loss"
+      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
+        isUp
+          ? "bg-gain/15 text-gain"
+          : "bg-loss/15 text-loss"
       }`}
     >
       {isUp ? "▲" : "▼"} {ticker}
@@ -99,47 +105,60 @@ function Bubble({
   last: boolean;
   outgoing: boolean;
 }) {
+  // Telegram corner logic: 12px everywhere, except the avatar-side bottom
+  // corner of the last bubble in a group which is squared to 4px.
+  const radius = outgoing
+    ? last
+      ? "rounded-[12px] rounded-br-[4px]"
+      : "rounded-[12px]"
+    : last
+      ? "rounded-[12px] rounded-bl-[4px]"
+      : "rounded-[12px]";
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, ease: "easeOut" }}
-      className={`flex w-full items-end gap-2.5 ${outgoing ? "justify-end" : "justify-start"}`}
+    <div
+      className={`flex items-end gap-2 ${outgoing ? "justify-end pl-12" : "justify-start pr-12"}`}
     >
       {!outgoing && (
-        <span className="w-[38px] shrink-0">
+        <span className="w-[34px] shrink-0">
           {last && <Avatar p={sender} />}
         </span>
       )}
       <div
-        className={`glass max-w-[78%] rounded-2xl px-3.5 py-2 sm:max-w-[62%] ${
+        className={`max-w-[min(560px,82%)] px-3 py-1.5 ${radius} ${
           outgoing
-            ? `rounded-br-md ${first ? "rounded-tr-md" : "rounded-tr-2xl"}`
-            : `rounded-bl-md ${first ? "rounded-tl-md" : "rounded-tl-2xl"}`
+            ? "bg-[#2b5278] text-white"
+            : "bg-surface-2 text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.35)]"
         }`}
       >
         {!outgoing && first && (
-          <p className="text-[13px] leading-none font-semibold" style={{ color: sender.color }}>
+          <p className="text-[13.5px] leading-tight font-semibold" style={{ color: sender.color }}>
             {sender.name}
             {sender.bot && (
-              <span className="ml-1.5 rounded bg-brand/15 px-1 py-0.5 text-[10px] font-medium text-brand">
+              <span className="ml-1.5 rounded bg-brand/25 px-1 py-px align-middle text-[10px] font-medium text-brand">
                 AxAI
               </span>
             )}
           </p>
         )}
         {msg.ticker && (
-          <div className={first && !outgoing ? "mt-1.5" : "mt-1"}>
+          <div className="mt-1">
             <TickerChip ticker={msg.ticker} id={msg.id} />
           </div>
         )}
-        <p className="mt-1 text-[14.5px] leading-snug break-words text-foreground">{msg.text}</p>
-        <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-muted">
-          {time}
-          {outgoing && <CheckCheck className="h-3.5 w-3.5 text-brand" />}
+        <p className="text-[14.5px] leading-[1.35] break-words">
+          {msg.text}
+          <span
+            className={`ml-2 inline-block translate-y-0.5 text-[11px] whitespace-nowrap ${
+              outgoing ? "text-white/60" : "text-muted"
+            }`}
+          >
+            {time}
+            {outgoing && <CheckCheck className="ml-0.5 inline h-3.5 w-3.5 align-[-2px] text-white/70" />}
+          </span>
         </p>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -157,26 +176,12 @@ function MemberRow({ p }: { p: ChatPersona }) {
   );
 }
 
-interface ReplayMessage {
-  id: number;
-  from: string;
-  text: string;
-  ticker?: string;
-  /** absolute minute-of-day */
-  t: number;
-}
-
 export function CommunityChat() {
-  const [extra, setExtra] = useState<ReplayMessage[]>([]);
+  const [extra, setExtra] = useState<{ id: number; from: string; text: string; t: number }[]>([]);
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const base = REPLAY;
-
-  const all = useMemo(() => {
-    const lastT = base[base.length - 1]?.t ?? 8 * 60;
-    return [...base, ...extra.map((m, i) => ({ ...m, t: lastT + 1 + i * 2 }))];
-  }, [base, extra]);
+  const all = [...REPLAY, ...extra];
 
   // start pinned to the newest message
   useEffect(() => {
@@ -187,20 +192,21 @@ export function CommunityChat() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
-    setExtra((x) => [...x, { id: 1000 + x.length, from: YOU.id, text, t: 0 }]);
+    const lastT = REPLAY[REPLAY.length - 1]?.t ?? 8 * 60;
+    setExtra((x) => [...x, { id: 1000 + x.length, from: YOU.id, text, t: lastT + 1 + x.length * 2 }]);
     setDraft("");
   };
 
   return (
     <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-2 sm:px-4">
-      <div className="glass flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-surface/95 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.65)] backdrop-blur">
         {/* ---------- header ---------- */}
-        <header className="flex items-center gap-3 border-b border-border/70 px-4 py-3">
+        <header className="flex items-center gap-3 border-b border-border/70 bg-surface px-4 py-2.5">
           <span
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
             style={{ background: "linear-gradient(135deg, #2e90fa, #00c896)" }}
           >
-            <BrandMark size={30} />
+            <BrandMark size={28} />
           </span>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-[15px] font-semibold text-foreground">Axion Community</h1>
@@ -226,10 +232,10 @@ export function CommunityChat() {
           {/* ---------- messages ---------- */}
           <div
             ref={scrollRef}
-            className="bg-grid relative min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-4 sm:px-5"
+            className="bg-grid relative min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5"
           >
-            <div className="mb-4 flex justify-center">
-              <span className="rounded-full border border-border bg-surface/80 px-3 py-1 text-[11px] font-medium text-muted backdrop-blur">
+            <div className="mb-3 flex justify-center">
+              <span className="rounded-full bg-surface-2/90 px-3 py-1 text-[11px] font-medium text-muted">
                 Today
               </span>
             </div>
@@ -243,21 +249,22 @@ export function CommunityChat() {
               const last = !next || next.from !== m.from || next.t - m.t > 5;
               const time = `${String(Math.floor(m.t / 60) % 24).padStart(2, "0")}:${String(m.t % 60).padStart(2, "0")}`;
               return (
-                <Bubble
-                  key={m.id}
-                  msg={m}
-                  sender={sender}
-                  time={time}
-                  first={first}
-                  last={last}
-                  outgoing={outgoing}
-                />
+                <div key={m.id} className={first ? "mt-3" : "mt-[2px]"}>
+                  <Bubble
+                    msg={m}
+                    sender={sender}
+                    time={time}
+                    first={first}
+                    last={last}
+                    outgoing={outgoing}
+                  />
+                </div>
               );
             })}
           </div>
 
           {/* ---------- members rail ---------- */}
-          <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto border-l border-border/70 px-2 py-3 xl:flex">
+          <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto border-l border-border/70 bg-surface/60 px-2 py-3 xl:flex">
             <p className="px-2 pb-2 text-[11px] font-semibold tracking-wide text-muted uppercase">
               Members
             </p>
@@ -269,7 +276,7 @@ export function CommunityChat() {
         </div>
 
         {/* ---------- composer ---------- */}
-        <footer className="flex items-center gap-2 border-t border-border/70 px-3 py-3 sm:px-4">
+        <footer className="flex items-center gap-1.5 border-t border-border/70 bg-surface px-3 py-2.5 sm:px-4">
           <button
             type="button"
             aria-label="Emoji"
@@ -289,13 +296,13 @@ export function CommunityChat() {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
             placeholder="Message the community…"
-            className="h-11 min-w-0 flex-1 rounded-full border border-border bg-surface/70 px-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted/70 focus:border-brand/60"
+            className="h-10 min-w-0 flex-1 rounded-full border border-border bg-background/60 px-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted/70 focus:border-brand/60"
           />
           <button
             type="button"
             aria-label={draft ? "Send" : "Voice message"}
             onClick={draft.trim() ? send : undefined}
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
               draft.trim()
                 ? "bg-gradient-to-r from-brand to-gain text-[#071018] shadow-[0_6px_20px_-6px_rgba(46,144,250,0.6)]"
                 : "text-muted hover:bg-surface-2 hover:text-foreground"
