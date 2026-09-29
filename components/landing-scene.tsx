@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Hero scene for the landing page — AxionTrade-flavoured port of the
+ * Hero scene for the landing page — Axion-flavoured port of the
  * AlgoSensei reference: a slow-orbiting dot-grid floor, a wireframe sphere,
  * rising particles and a floating brand accent. Everything is unlit
  * (meshBasicMaterial) so no environment HDR is needed, and the palette comes
@@ -143,7 +143,7 @@ function RisingParticles() {
   );
 }
 
-/** Floating brand accent — the dot from the AxionTrade mark, gently bobbing. */
+/** Floating brand accent — the dot from the Axion mark, gently bobbing. */
 function BrandAccent() {
   return (
     <Float speed={2} rotationIntensity={0.4} floatIntensity={1.2}>

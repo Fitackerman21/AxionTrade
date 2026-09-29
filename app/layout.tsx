@@ -9,9 +9,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AxionTrade — Trade every market. One terminal.",
+  title: "Axion — Trade every market. One terminal.",
   description:
-    "Professional multi-asset trading terminal: stocks, ETFs, crypto, FX and commodities with real-time pricing.",
+    "Professional multi-asset trading terminal: stocks, ETFs, crypto, FX and commodities with real-time pricing and the AxAI automated trading engine.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

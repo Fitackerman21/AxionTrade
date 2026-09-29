@@ -1,30 +1,61 @@
+import Image from "next/image";
+
+/**
+ * Brand assets are generated from the uploaded axion.png lockup by
+ * tools/make-logo-assets.mjs (dark ink recoloured for the dark UI):
+ *   /brand/axion-mark-sm.png   glyph crop, light ink, 128px wide
+ *   /brand/axion-lockup.png    full lockup, light ink, 890x660
+ *   /brand/axion-lockup-white.png  full lockup, white ink
+ *   /brand/meta.json           crop geometry
+ * The site brand is "Axion" — just Axion.
+ */
+
+const MARK_ASPECT = 643 / 451; // w/h of the glyph crop
+const LOCKUP_ASPECT = 890 / 660; // w/h of the full lockup
+
 export function BrandMark({ size = 36 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden>
-      <defs>
-        <linearGradient id="axion-g" x1="6" y1="6" x2="42" y2="42" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#2e90fa" />
-          <stop offset="1" stopColor="#00c896" />
-        </linearGradient>
-      </defs>
-      <rect x="2" y="2" width="44" height="44" rx="12" fill="url(#axion-g)" opacity="0.14" />
-      <rect x="2.5" y="2.5" width="43" height="43" rx="11.5" stroke="url(#axion-g)" strokeWidth="1.5" opacity="0.55" />
-      {/* A forming an upward arrow — trade axis going up */}
-      <path d="M12 34 L24 12 L36 34" stroke="url(#axion-g)" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M17.5 27.5 H30.5" stroke="url(#axion-g)" strokeWidth="3" strokeLinecap="round" opacity="0.85" />
-      <circle cx="36" cy="16" r="3.4" fill="#00c896" />
-    </svg>
+    <Image
+      src="/brand/axion-mark-sm.png"
+      alt=""
+      aria-hidden
+      width={Math.round(size * MARK_ASPECT)}
+      height={size}
+      priority={false}
+      className="shrink-0"
+    />
   );
 }
 
 export function BrandWordmark({ compact = false }: { compact?: boolean }) {
   return (
     <span className="inline-flex items-center gap-2.5">
-      <BrandMark size={compact ? 28 : 34} />
+      <BrandMark size={compact ? 24 : 28} />
       <span className={`font-semibold tracking-tight ${compact ? "text-lg" : "text-xl"}`}>
-        <span className="text-foreground">Axion</span>
-        <span className="text-gradient">Trade</span>
+        <span className="text-gradient">Axion</span>
       </span>
     </span>
+  );
+}
+
+/** Full lockup (glyph + "Axion" wordmark) for hero-scale display. */
+export function BrandLockup({
+  className = "",
+  white = false,
+  priority = false,
+}: {
+  className?: string;
+  white?: boolean;
+  priority?: boolean;
+}) {
+  return (
+    <Image
+      src={white ? "/brand/axion-lockup-white.png" : "/brand/axion-lockup.png"}
+      alt="Axion"
+      width={Math.round(660 * LOCKUP_ASPECT)}
+      height={660}
+      priority={priority}
+      className={className}
+    />
   );
 }

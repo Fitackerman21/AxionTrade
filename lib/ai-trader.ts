@@ -1,5 +1,5 @@
 /**
- * AxionTrade AI trading simulation engine — v3.
+ * Axion AI trading simulation engine — v3.
  *
  * TIME MODEL
  * ----------

@@ -3,7 +3,7 @@
  * (Lewis Jackson / Part-Time Quant — the "I Gave JEV Control of a Trading
  * Bot" video). The prompt scaffolds a Python Claude Code skill that runs a
  * 24/7 paper-trading loop; this file is the same loop with the same split,
- * so the /jev page can run it in the browser against AxionTrade's own
+ * so the /jev page can run it in the browser against Axion's own
  * price feed.
  *
  * The split, unchanged: code computes the state (this file), a decision

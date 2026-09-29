@@ -3,8 +3,8 @@
 /**
  * Landing page client shell — structure inspired by the AlgoSensei reference
  * (full-bleed 3D hero, centred wordmark, CTA row, bottom link rail) with
- * AxionTrade branding, tokens and copy. Lives at /home; `/` stays the
- * sign-in entry.
+ * Axion branding, tokens and copy. Lives at /home; `/` is the auth gate
+ * and the sign-in screen sits at /signin.
  */
 
 import Link from "next/link";
@@ -12,7 +12,7 @@ import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { ArrowRight, Bot, Globe2, LineChart, ShieldCheck, Zap } from "lucide-react";
 
-import { BrandWordmark } from "@/components/brand";
+import { BrandLockup, BrandWordmark } from "@/components/brand";
 import { TickerStrip } from "@/components/ticker-strip";
 
 /** three.js is heavy and browser-only — split it into its own client bundle. */
@@ -28,7 +28,7 @@ const FEATURES = [
   {
     icon: Bot,
     title: "AxAI engine",
-    text: "A simulated algo desk that plans, fills and scores every move — live in the terminal.",
+    text: "An automated algo desk that plans, fills and scores every move — live in the terminal.",
     href: "/trade",
   },
   {
@@ -46,7 +46,7 @@ const FEATURES = [
   {
     icon: ShieldCheck,
     title: "Paper-first by design",
-    text: "Simulated fills, transparent fees and risk meters — learn the loop before real money.",
+    text: "Automated fills, transparent fees and risk meters — learn the loop before real money.",
     href: "/trade",
   },
 ];
@@ -90,12 +90,12 @@ export default function HomeClient() {
           <BrandWordmark />
         </Link>
         <div className="flex items-center gap-2">
-          <Link
-            href="/"
-            className="hidden rounded-xl border border-border bg-surface/60 px-4 py-2 text-sm font-medium text-foreground backdrop-blur transition-colors hover:border-muted/40 hover:bg-surface sm:inline-flex"
-          >
-            Sign in
-          </Link>
+        <Link
+          href="/signin"
+          className="hidden rounded-xl border border-border bg-surface/60 px-4 py-2 text-sm font-medium text-foreground backdrop-blur transition-colors hover:border-muted/40 hover:bg-surface sm:inline-flex"
+        >
+          Sign in
+        </Link>
           <Link
             href="/trade"
             className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-brand to-gain px-4 py-2 text-sm font-semibold text-[#071018] shadow-[0_8px_28px_-8px_rgba(46,144,250,0.55)] transition-transform active:scale-[0.985]"
@@ -116,7 +116,7 @@ export default function HomeClient() {
         <motion.div variants={fadeUp} initial="hidden" animate="show" custom={0}>
           <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3.5 py-1.5 text-xs font-medium text-muted backdrop-blur">
             <LineChart className="h-3.5 w-3.5 text-gain" />
-            AxAI engine · simulated trading, live pricing
+            AxAI engine · automated trading, live pricing
           </span>
         </motion.div>
 
@@ -127,8 +127,7 @@ export default function HomeClient() {
           custom={1}
           className="mt-6 max-w-3xl text-5xl font-semibold leading-[1.04] tracking-tight sm:text-6xl md:text-7xl"
         >
-          <span className="text-gradient">Axion</span>
-          <span className="text-foreground">Trade</span>
+          <BrandLockup white priority className="mx-auto h-44 w-auto sm:h-56 md:h-64" />
         </motion.h1>
 
         <motion.p
@@ -150,10 +149,10 @@ export default function HomeClient() {
           className="mt-9 flex flex-col items-center gap-3 sm:flex-row"
         >
           <Link
-            href="/"
+            href="/signin"
             className="group inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand to-gain px-7 text-[15px] font-semibold text-[#071018] shadow-[0_8px_28px_-8px_rgba(46,144,250,0.55)] transition-transform active:scale-[0.985]"
           >
-            Get started
+            Join community
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </Link>
           <Link
@@ -222,7 +221,7 @@ export default function HomeClient() {
           ))}
           <span className="mx-1 h-4 w-px bg-border" />
           <Link
-            href="/"
+            href="/signin"
             className="rounded-full px-3.5 py-1.5 text-[13px] font-medium text-brand transition-colors hover:bg-surface-2"
           >
             Sign in
@@ -231,7 +230,7 @@ export default function HomeClient() {
       </nav>
 
       <footer className="relative z-10 border-t border-border/60 px-6 py-4 text-center text-xs text-muted">
-        © {new Date().getFullYear()} AxionTrade · Simulated trading — not investment advice
+        © {new Date().getFullYear()} Axion · Automated trading — not investment advice
       </footer>
     </main>
   );

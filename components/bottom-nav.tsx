@@ -10,7 +10,7 @@ import { useAiSession } from "@/lib/ai-session";
  * Mobile bottom navigation. Five distinct destinations, rendered from the same
  * list as the drawer and the desktop rail — Trade sits third so the raised
  * button lands dead centre. The raised button carries an AI badge because
- * trading on AxionTrade is autonomous.
+ * trading on Axion is autonomous.
  */
 export function BottomNav({ active }: { active?: NavKey }) {
   const { session } = useAiSession();
