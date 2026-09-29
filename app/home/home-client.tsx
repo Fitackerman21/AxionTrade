@@ -149,7 +149,7 @@ export default function HomeClient() {
           className="mt-9 flex flex-col items-center gap-3 sm:flex-row"
         >
           <Link
-            href="/signin"
+            href="/community"
             className="group inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand to-gain px-7 text-[15px] font-semibold text-[#071018] shadow-[0_8px_28px_-8px_rgba(46,144,250,0.55)] transition-transform active:scale-[0.985]"
           >
             Join community
