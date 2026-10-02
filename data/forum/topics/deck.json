@@ -1,0 +1,74 @@
+[
+  {
+    "id": "gold-coiling",
+    "title": "gold coiling into the dollar's next move",
+    "sides": {
+      "a": "the range breaks up and the metals complex runs",
+      "b": "flows are already leaving and the range breaks down first"
+    },
+    "friction": {
+      "a": "Flows lag price, they always have.",
+      "b": "A breakout without flows is just a longer wick."
+    }
+  },
+  {
+    "id": "semis-drawdown",
+    "title": "semis after the earnings spillover",
+    "sides": {
+      "a": "the drawdown is a gift, the AI capex story is intact",
+      "b": "the story is priced and the leadership has rolled over"
+    },
+    "friction": {
+      "a": "You are short the only secular growth story on the tape.",
+      "b": "You are buying a narrative with a rolled-over chart."
+    }
+  },
+  {
+    "id": "nfp-sizing",
+    "title": "half size into the print",
+    "sides": {
+      "a": "size down, the print decides, we reload after",
+      "b": "the event is the opportunity and half size misses it"
+    },
+    "friction": {
+      "a": "Know your gap tolerance before you need it.",
+      "b": "Risk desks exist to be ignored occasionally."
+    }
+  },
+  {
+    "id": "bot-vs-discretion",
+    "title": "the AxAI engine against the room",
+    "sides": {
+      "a": "systematic beats discretion and the equity curve says so",
+      "b": "the engine has no context and will give it all back one day"
+    },
+    "friction": {
+      "a": "The curve is the argument, not the vibe.",
+      "b": "Every curve looks invincible until the regime it was fitted to ends."
+    }
+  },
+  {
+    "id": "btc-regime",
+    "title": "BTC grinding while the room sleeps",
+    "sides": {
+      "a": "structure is still long, hold and stop touching it",
+      "b": "thin overnight grinds are where the exit liquidity lives"
+    },
+    "friction": {
+      "a": "You cannot fade a market that only goes up at 3am.",
+      "b": "Volume tells the truth, price tells the story."
+    }
+  },
+  {
+    "id": "execution-slippage",
+    "title": "slippage and fills on the paper book",
+    "sides": {
+      "a": "paper fills should charge slippage or they teach nothing",
+      "b": "slippage modelling is theatre at our size"
+    },
+    "friction": {
+      "a": "You are learning habits the venue will not reward.",
+      "b": "You are optimising for a size you do not trade."
+    }
+  }
+]

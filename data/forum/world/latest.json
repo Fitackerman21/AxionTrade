@@ -1,0 +1,35 @@
+{
+  "version": "2026-10-02T21:00:00Z#p0-fixture",
+  "digest": "Risk-off day. Semis led the drawdown, the EURUSD limit is still unfilled, gold is coiling above 2,400.",
+  "highlights": [
+    {
+      "text": "Session update: 6 fills, book net long, aggregate conviction 68%. Equity +1.9% on the cycle.",
+      "topicId": "semis-drawdown",
+      "side": "a"
+    },
+    {
+      "text": "Fill logged: LONG XAU at 2,391.4, conviction 74%. Stop structure is in the terminal.",
+      "topicId": "gold-coiling",
+      "side": "a"
+    },
+    {
+      "text": "Risk desk reminder: it is NFP week. Half size until Friday regardless of the setup.",
+      "topicId": "nfp-sizing",
+      "side": "b"
+    },
+    {
+      "text": "BTC book conviction 62% — not enough to press, enough to hold.",
+      "topicId": "btc-regime",
+      "side": "b"
+    }
+  ],
+  "account": { "value": 128450.22, "dayPnl": -1240.55, "dayPnlPct": -0.96 },
+  "positions": [
+    { "symbol": "NVDA", "qty": 120, "avg": 178.4, "last": 171.2, "upnl": -864, "upnlPct": -4.04 },
+    { "symbol": "XAU", "qty": 40, "avg": 2391.4, "last": 2404.1, "upnl": 508, "upnlPct": 0.53 }
+  ],
+  "platform": {
+    "changelog": ["paper fills now include slippage"],
+    "knownIssues": ["chart gaps on a 4h reload"]
+  }
+}

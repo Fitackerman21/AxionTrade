@@ -1,0 +1,36 @@
+{
+  "roomId": "axion-forum",
+  "permissions": {
+    "allow": {
+      "human": ["jev", "mara", "sol", "dmitri"],
+      "jev": ["mara", "dmitri", "sol", "priya"],
+      "mara": ["jev", "toko", "kofi", "lena"],
+      "dmitri": ["priya", "lena", "nadia"],
+      "sol": ["toko", "kofi", "mara"],
+      "toko": ["mara", "sol", "kofi"],
+      "priya": ["dmitri", "lena", "nadia"],
+      "kofi": ["mara", "toko", "raul"],
+      "lena": ["priya", "raul", "dmitri"],
+      "raul": ["mara", "lena", "sol"],
+      "nadia": ["mara", "priya", "raul"]
+    },
+    "deny": {},
+    "allowSelfReply": false
+  },
+  "scheduling": {
+    "minTurnsBetweenPosts": 2,
+    "maxConsecutivePosts": 1,
+    "gapSec": [45, 180],
+    "worldEventEveryTurns": 5,
+    "frictionStreakTurns": 3,
+    "topicRotationTurns": 12
+  },
+  "agenda": {
+    "enginePersona": "jev",
+    "stageDirections": [
+      "Nothing on the desk covers that yet. Book stands — next review at the close.",
+      "Passing on that one. Nobody is cleared to trade it.",
+      "Noted, no position change. Back to the levels."
+    ]
+  }
+}

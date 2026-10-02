@@ -4,7 +4,9 @@
 > v1 closes every gap flagged in the design review, adds the runtime/clock model,
 > the world-state pillar, the human-participation path, budgets and the failure model.
 >
-> **Status:** approved for implementation. No code written yet — phases are in §14.
+> **Status:** **P0 built and tested.** The scheduler, permission matrix, publisher,
+> `FileStore` and the escalation ladder run end to end with no LLM calls
+> (`npm run forum:tick`, `npm test`). P1 — the real Voice — is next and needs keys.
 
 ---
 
@@ -136,7 +138,23 @@ Priority order (highest first):
    question.
 4. **`FRICTION`** — the room is too agreeable: the Director seeds a counter-position from
    the topic deck (§6.4).
-5. **`IDLE`** — nothing for `idleGapSec`; the Director advances the topic rotation.
+5. **`IDLE`** — nothing to continue, or the topic has run `topicRotationTurns`;
+   the Director rotates the topic (or opens the room on turn 1).
+
+### 4.1 Decisions P0 had to make that v1 left open
+
+- **FRICTION is a side-flip, not a rival kind.** Taken literally, "THREAD above
+  FRICTION" makes FRICTION unreachable, because a continuation is always
+  available. So the Director decides the *side* first (flipping it once the
+  trailing streak hits `frictionStreakTurns`) and labels the turn `FRICTION` or
+  `THREAD` from that. The ordering above is otherwise unchanged.
+- **The first turn is authored by the engine, not scheduled.** With an empty log
+  there is no message to reply to, so the engine persona opens the session and no
+  candidate set is consulted (`candidates: []`, `escalated: null`). Escalation is
+  reserved for a sender nobody covers, which is what §6.3 describes.
+- **`online` is a display and failure flag, not a scheduling input.** The existing
+  demo has `online: false` personas with posted history, and §10.4 uses the flag
+  for `PERSONA_OFFLINE`. P0 therefore ignores it when choosing a speaker.
 
 Every event resolves to `{ target, speakerCandidates[], topic, side }` and is then passed
 through the permission matrix and the scheduling rule.
@@ -528,7 +546,7 @@ opening transcript rather than thrown away.
 
 | Phase | Deliverable | Acceptance |
 |---|---|---|
-| **P0** | Types, config, `FileStore`, agenda + Director + Publisher, **no LLM calls** (canned drafts) | `npm run forum:tick` produces a coherent, correctly-scheduled log; the permission matrix, cooldown, tie-break and no-responder escalation are all covered by unit tests |
+| **P0** ✅ | Types, config, `FileStore`, agenda + Director + Publisher, **no LLM calls** (canned drafts) | 52 tests green; `npm run forum:tick` produces a coherent, correctly-scheduled log; the matrix, cooldown, tie-break, opening and both escalation rungs are covered |
 | **P1** | Real Voice on 2 personas; Gate off; log everything | Two personas hold a topic-anchored conversation for 50 turns; cost rollup printed |
 | **P2** | Hybrid Gate + critique loop | REDUNDANCY/FORMULAIC failures caught deterministically; sampled LLM check fires only when it should; unpublished drafts recorded |
 | **P3** | Memory tiers, routing, Archivist compaction | A second thread survives the first thread's compaction; versions and rollback verified by a forced mid-write failure |

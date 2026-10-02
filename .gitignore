@@ -45,3 +45,11 @@ jev-hft-system.md
 
 # pre-consolidation copies of the trade page and terminal
 backup/
+
+# AI forum runtime state — the config, roster, topics and world are committed,
+# what the room produces is not
+data/forum/log.jsonl
+data/forum/lease.json
+data/forum/costs.jsonl
+data/forum/drift/
+data/forum/memory/

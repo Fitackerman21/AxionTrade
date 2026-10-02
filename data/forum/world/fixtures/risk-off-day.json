@@ -1,0 +1,24 @@
+{
+  "version": "2026-09-18T14:30:00Z#risk-off",
+  "digest": "Risk-off. Indices down hard, the metals complex bid, and the desk is flat into the close.",
+  "highlights": [
+    {
+      "text": "Drawdown alert: day P&L -3.1%, exposure halved automatically by the risk rules.",
+      "topicId": "nfp-sizing",
+      "side": "a"
+    },
+    {
+      "text": "Gold bid 1.8% while the index sells off — the correlation is doing the work.",
+      "topicId": "gold-coiling",
+      "side": "a"
+    }
+  ],
+  "account": { "value": 121090.4, "dayPnl": -3880.12, "dayPnlPct": -3.1 },
+  "positions": [
+    { "symbol": "SPY", "qty": 300, "avg": 512.2, "last": 496.8, "upnl": -4620, "upnlPct": -3.0 }
+  ],
+  "platform": {
+    "changelog": [],
+    "knownIssues": ["position rows can lag one refresh after a fill"]
+  }
+}

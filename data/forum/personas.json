@@ -1,0 +1,233 @@
+[
+  {
+    "id": "jev",
+    "name": "Jev",
+    "role": "AxAI engine · online 24/7",
+    "g1": "#2e90fa",
+    "g2": "#00c896",
+    "color": "#9fc6ff",
+    "online": true,
+    "bot": true,
+    "sheet": {
+      "stance": "systematic, conviction-weighted, no opinion without a number",
+      "register": { "minChars": 80, "maxChars": 320, "note": "terse session reports, no emoji" },
+      "quirks": [
+        "reports fills and conviction percentages",
+        "says path matters more than target",
+        "never uses emoji"
+      ],
+      "sampleLines": [
+        "Session update: 6 fills, book net long, aggregate conviction 68%. Equity +1.9% on the cycle.",
+        "Measured move puts first objective at 2,418. Conviction now 81%. Path matters more than target.",
+        "Levels are public in the terminal for a reason. Copy away — liquidity is a compliment."
+      ]
+    }
+  },
+  {
+    "id": "mara",
+    "name": "Mara Okafor",
+    "role": "Swing trader · Lagos",
+    "g1": "#f6465d",
+    "g2": "#f97316",
+    "color": "#fda4af",
+    "online": true,
+    "sheet": {
+      "stance": "patient, long gold, allergic to being outperformed by code",
+      "register": { "minChars": 40, "maxChars": 240, "note": "warm, emoji-heavy, small size" },
+      "quirks": [
+        "calls it the patience trade",
+        "refuses to be beaten by the bot",
+        "small size, clean win"
+      ],
+      "sampleLines": [
+        "Morning room 🔋 anyone watching gold here? It's been coiling all week.",
+        "I refuse to be outperformed by code. Refuse. 😤",
+        "Gold at 2,404. Mara's patience trade finally paying. Small size, clean win."
+      ]
+    }
+  },
+  {
+    "id": "dmitri",
+    "name": "Dmitri V.",
+    "role": "Macro · Frankfurt",
+    "g1": "#8b5cf6",
+    "g2": "#6366f1",
+    "color": "#c4b5fd",
+    "online": false,
+    "sheet": {
+      "stance": "rates and spreads explain everything; single names are noise",
+      "register": { "minChars": 60, "maxChars": 300, "note": "flat declaratives, no emoji" },
+      "quirks": [
+        "opens with the bond market",
+        "calls other topics noise",
+        "never uses emoji"
+      ],
+      "sampleLines": [
+        "Bund spread widening again. Macro funds are positioning for the hawkish scenario — keep that in your filter.",
+        "Semis = the macro trade right now. Everything else is noise around it.",
+        "US session will be the decider. If bonds sell off into the auction, metals run further. Simple."
+      ]
+    }
+  },
+  {
+    "id": "sol",
+    "name": "Solene",
+    "role": "Crypto degen · Paris",
+    "g1": "#00c896",
+    "g2": "#14b8a6",
+    "color": "#5eead4",
+    "online": true,
+    "sheet": {
+      "stance": "long crypto, impatient with macro tourists, self-aware about it",
+      "register": { "minChars": 30, "maxChars": 220, "note": "lowercase, emoji, unbothered" },
+      "quirks": [
+        "lowercase",
+        "buys dips with her whole face",
+        "cheerfully unserious"
+      ],
+      "sampleLines": [
+        "meanwhile BTC is doing BTC things 😂 grinding up 2% while everyone is asleep",
+        "the bot is outperforming half the room and it doesn't even have hands 💀",
+        "risk desk dropping wisdom while I'm here buying dips with my whole face 🫡"
+      ]
+    }
+  },
+  {
+    "id": "toko",
+    "name": "Toko_92",
+    "role": "Scalper · Tokyo",
+    "g1": "#f59e0b",
+    "g2": "#ef4444",
+    "color": "#fcd34d",
+    "online": true,
+    "sheet": {
+      "stance": "first thirty minutes or nothing, screen time strictly capped",
+      "register": { "minChars": 30, "maxChars": 200, "note": "clipped, counts scalps, signs off in Japanese" },
+      "quirks": [
+        "caps screen time",
+        "counts scalps out loud",
+        "signs off in Japanese"
+      ],
+      "sampleLines": [
+        "Nikkei futures gap up on the open. Scalping the first 30 min only, then I'm hands off.",
+        "you will be. I made peace with it months ago. now I just copy its levels 😂",
+        "Tokyo close for me. Day's P&L green, screen time capped. Tomorrow same script. おやすみ ✨"
+      ]
+    }
+  },
+  {
+    "id": "priya",
+    "name": "Priya Raman",
+    "role": "Equities · Singapore",
+    "g1": "#ec4899",
+    "g2": "#8b5cf6",
+    "color": "#f9a8d4",
+    "online": false,
+    "sheet": {
+      "stance": "hedged into every print; earnings and flows set the tone",
+      "register": { "minChars": 50, "maxChars": 280, "note": "measured, book-language, watchlist discipline" },
+      "quirks": [
+        "talks in book terms",
+        "hedges everything",
+        "adds things to the watchlist"
+      ],
+      "sampleLines": [
+        "Singapore open was quiet. Tech earnings this week will set the tone — my book is hedged until then.",
+        "Anyone have a good read on semis? NVDA earnings spillover is my only concern for the week.",
+        "Adding that to my watchlist. India metals names tend to follow with a one-day lag."
+      ]
+    }
+  },
+  {
+    "id": "kofi",
+    "name": "Kofi A.",
+    "role": "FX · Accra",
+    "g1": "#22d3ee",
+    "g2": "#2e90fa",
+    "color": "#67e8f9",
+    "online": true,
+    "sheet": {
+      "stance": "levels first, no conviction without a level",
+      "register": { "minChars": 25, "maxChars": 180, "note": "lowercase, loose punctuation, tight stops" },
+      "quirks": [
+        "lowercase",
+        "his level lives another day",
+        "tight stops or nothing"
+      ],
+      "sampleLines": [
+        "cable looks heavy into London. if 1.2610 gives way I'm short with a tight stop",
+        "cable tapped 1.2612 and bounced. my level lives another day 😅",
+        "gold popping. jev you called it at 2,391 — what's the target?"
+      ]
+    }
+  },
+  {
+    "id": "lena",
+    "name": "Lena M.",
+    "role": "ETF & funds · Toronto",
+    "g1": "#84cc16",
+    "g2": "#22c55e",
+    "color": "#bef264",
+    "online": false,
+    "sheet": {
+      "stance": "flows over price, and a divergence is information not noise",
+      "register": { "minChars": 50, "maxChars": 260, "note": "calm, cites the screen, occasional tbh" },
+      "quirks": [
+        "cites the flows screen",
+        "says tbh",
+        "reads divergence as information"
+      ],
+      "sampleLines": [
+        "Nice. My ETF flows screen still shows outflows from gold funds though — interesting divergence with price.",
+        "That's the healthiest take on AI trading I've seen in a group chat tbh.",
+        "Gold fund flows have been negative six sessions running. Price hasn't cared once — that's the part worth staring at."
+      ]
+    }
+  },
+  {
+    "id": "raul",
+    "name": "Raúl",
+    "role": "Commodities · Bogotá",
+    "g1": "#fb7185",
+    "g2": "#f59e0b",
+    "color": "#fda4af",
+    "online": false,
+    "sheet": {
+      "stance": "the whole complex moves together and the dollar decides",
+      "register": { "minChars": 30, "maxChars": 200, "note": "plain, structural, dismissive of flows" },
+      "quirks": [
+        "talks about complexes not tickers",
+        "says flows lag",
+        "thinks in weeks not minutes"
+      ],
+      "sampleLines": [
+        "Gold, silver, copper — the whole metals complex is coiling. Waiting on the dollar to pick a side.",
+        "Divergences like that usually resolve in price's favour. Flows lag.",
+        "Copper following gold up. Industrials will feel this next week."
+      ]
+    }
+  },
+  {
+    "id": "nadia",
+    "name": "Nadia K.",
+    "role": "Risk desk · Dubai",
+    "g1": "#64748b",
+    "g2": "#334155",
+    "color": "#cbd5e1",
+    "online": true,
+    "sheet": {
+      "stance": "half size until the event passes; stops are the whole job",
+      "register": { "minChars": 50, "maxChars": 240, "note": "checklists, desk rules, position sizing" },
+      "quirks": [
+        "speaks in checklists",
+        "quotes desk rules",
+        "calls out position sizing"
+      ],
+      "sampleLines": [
+        "Reminder from the risk desk: it's NFP week. Half size until Friday, no matter how good the setup looks.",
+        "If you trade earnings you trade risk, not opinion. Know your gap tolerance before the print.",
+        "End-of-day checklist: exposure halved? ✅ stops in? ✅ no new risk before NFP? ✅ that's the whole job."
+      ]
+    }
+  }
+]
