@@ -1,0 +1,267 @@
+# Project Specification: Multi-Agent AI Personality Chat System
+
+## 1. System Overview
+
+The system should consist of **three separate AI agents**, each with a specific responsibility:
+
+1. **Agent 1 — Personality Agent:** Plays different characters, maintains their personalities, remembers conversations with their companions, and generates responses.
+2. **Agent 2 — Memory Compaction Agent:** Summarizes a personality's conversation memory when it becomes too large, preserving important information.
+3. **Agent 3 — Response Analysis Agent:** Evaluates generated responses to determine whether they sound natural and human-like. It can reject or request the reprocessing of a response, but it must never post anything to the forum.
+
+The system should support multiple personality characters interacting in a chat room according to predefined conversation rules.
+
+## 2. Agent 1: Personality Agent
+
+This agent is responsible for playing different personality characters in the forum.
+
+### A. Separate personality and memory files
+
+Every personality character must have two separate files:
+
+* **Character File:** Defines the character's identity, personality, background, communication style, life experiences, and other permanent characteristics.
+* **Memory File:** Stores the character's conversation history, important events, interactions with companions, and relevant context from previous conversations.
+
+Each character must have its own independent character file and memory file. For example:
+
+* `A1_character.txt`
+* `A1_memory.txt`
+* `A2_character.txt`
+* `A2_memory.txt`
+* `A3_character.txt`
+* `A3_memory.txt`
+
+The filenames are examples; the actual storage format can be decided during implementation.
+
+### B. Character files
+
+The character file should define a unique individual with a consistent identity and personality.
+
+For example, a character could have the background of an investor and trader. Their character file might describe:
+
+* Their personal background and journey into investing.
+* Their experiences as a trader and investor.
+* Their personality, opinions, communication habits, and way of speaking.
+* Their experiences using the platform.
+* Benefits they have experienced from using the platform.
+* Their trading bot's performance and earnings, where applicable and supported by actual records.
+
+The purpose is to ensure that every personality has a distinct identity and behaves consistently across conversations.
+
+**Important:** Character files must remain fixed and unchanged during ordinary conversations and memory compaction. Only an explicit character-management process should modify them.
+
+### C. How a personality generates a response
+
+Before a personality responds to a message, the system must provide the AI with the following information in order:
+
+1. **The character file:** This establishes which personality the AI must assume for the current response.
+2. **The character's memory file:** This provides the context needed to understand previous conversations and identify the companion being addressed.
+3. **The incoming chat message:** This contains the actual message to which the personality should respond.
+
+The system should also provide a clear instruction identifying the sender and requesting a natural response.
+
+For example:
+
+> You are currently playing the personality defined in the supplied character file. Use the supplied memory file to understand the ongoing conversation. You are responding to Chinedu. Reply naturally in your established personality, taking the previous conversation into account.
+
+The character must use the correct companion's identity and conversation context rather than confusing one companion with another.
+
+### D. Separate memory for every companion
+
+Each personality must maintain a separate memory of its interactions with individual companions.
+
+For example, if personality A3 communicates with Chinedu and Ayomide, A3 should be able to distinguish between:
+
+* A3's previous conversations with Chinedu.
+* A3's previous conversations with Ayomide.
+* Important details specific to each relationship.
+* The current state of each conversation.
+
+This is necessary to ensure continuity and prevent the AI from mixing up different conversations.
+
+The memory system should associate messages with their respective senders and recipients. It should not assume that every message in the forum belongs in every character's personal memory.
+
+## 3. Companion System and Conversation Rules
+
+A companion is another personality character participating in the chat room.
+
+Not every character should be allowed to respond to every message. The system must support predefined rules that determine which characters can respond to which other characters.
+
+For example:
+
+* A1 and A2 send messages, but only A3 is permitted to respond to them.
+* A5 is permitted to respond to A3.
+* A7 may be permitted to respond to A1 and A5.
+
+These rules are illustrative. The system should allow the developer or administrator to configure the permitted sender-recipient relationships.
+
+Before generating a response, the system should check whether the receiving personality is authorized to respond to the incoming message.
+
+If the relationship is not permitted, the system should not generate or publish a response from that character.
+
+## 4. Agent 2: Memory Compaction Agent
+
+The Memory Compaction Agent is responsible for keeping personality memory files within manageable size limits while preserving useful conversational context.
+
+### A. Compaction trigger
+
+A separate compaction function should monitor each personality's memory file.
+
+The function should check the memory's token count or another appropriate size measure against a configurable threshold.
+
+For example:
+
+* A3's memory grows as it interacts with its companions.
+* The system detects that A3's memory has reached its configured limit.
+* The compaction function calls Agent 2.
+* Agent 2 receives A3's existing memory and summarizes it.
+* The system replaces A3's old memory with the updated, more concise version.
+
+The threshold should be configurable and should account for the model's actual context-window limits. Token count is preferable to character count when estimating model context usage.
+
+The compaction function itself should be ordinary application code. It determines when compaction is needed and invokes the AI agent; it does not need to perform the summarization itself.
+
+### B. Responsibilities of Agent 2
+
+When called, Agent 2 should:
+
+1. Read the memory file belonging to the relevant personality.
+2. Extract important facts, events, relationships, decisions, and unresolved conversations.
+3. Identify information that is no longer useful or that can be safely removed.
+4. Summarize repetitive discussions without losing important meaning.
+5. Preserve the identity of each companion and the context of their conversations.
+6. Produce a concise, organized memory that can be used in future interactions.
+7. Return the updated memory to the system for storage.
+
+The objective is not simply to shorten the text. It is to preserve the information the personality needs to continue conversations consistently.
+
+### C. Memory replacement rules
+
+After compaction, the system should replace the relevant personality's memory file with the updated summary.
+
+Only the memory file should be modified. The character file must remain unchanged.
+
+Compaction should operate on the specific personality whose memory triggered it. It must not accidentally overwrite another character's memory.
+
+The system should also ensure that the original memory is not lost if summarization or storage fails. A backup or versioned update is recommended.
+
+## 5. Agent 3: Response Analysis Agent
+
+Agent 3 is a separate AI agent responsible for examining responses generated by Agent 1 before they are published to the forum.
+
+**Agent 3 must never post messages to the forum.** Its responsibility is limited to evaluating, approving, rejecting, and requesting revisions.
+
+### A. Response evaluation
+
+After Agent 1 generates a response, the system should submit that response to Agent 3 for analysis.
+
+Agent 3 should evaluate whether the response:
+
+* Sounds natural and conversational rather than unnecessarily robotic.
+* Fits the character's established personality.
+* Responds appropriately to the incoming message.
+* Uses the available conversation context correctly.
+* Avoids repetitive, generic, or awkward wording.
+* Follows the system's configured response-quality rules.
+
+The analysis agent should follow strict evaluation criteria rather than approving every response automatically.
+
+### B. Rejection and reprocessing
+
+Agent 3 should return a structured decision, such as:
+
+* **APPROVE:** The response meets the configured requirements and may proceed to publication.
+* **REVISE:** The response needs improvement and must be regenerated or rewritten.
+* **REJECT:** The response does not meet the requirements and must not be published.
+
+If a response is rejected or requires revision, Agent 3 should provide specific reasons and recommendations.
+
+The system should then send those reasons back to Agent 1 so it can generate a revised response using the same character identity and relevant conversation context.
+
+The revised response must be submitted to Agent 3 for evaluation again.
+
+This process should have a configurable retry limit to prevent an endless cycle. If a response still fails after the permitted attempts, the system should leave it unpublished and log the failure.
+
+### C. Strict evaluation instructions
+
+Agent 3 should use a dedicated set of evaluation rules that prioritize natural conversational language and consistency.
+
+It should not approve a response simply because the grammar is correct. It should consider the surrounding conversation, the personality's communication style, and whether the response actually makes sense in context.
+
+However, the system should recognize that natural language varies between individuals. A response should not automatically fail merely because it is brief, informal, or grammatically imperfect if that is appropriate for the character.
+
+## 6. Complete Message Processing Workflow
+
+Every message generated by a personality should follow this sequence:
+
+**Step 1 — Receive a message**
+
+A personality posts a message in the chat room.
+
+**Step 2 — Check conversation permissions**
+
+The system checks which personality characters are allowed to respond to the sender.
+
+**Step 3 — Load the relevant files**
+
+For the selected responding personality, the system loads its character file and its relevant memory file.
+
+**Step 4 — Generate the response**
+
+Agent 1 uses the character definition, memory, incoming message, and sender identity to generate a response in the character's established voice.
+
+**Step 5 — Analyze the response**
+
+The system sends the generated response to Agent 3.
+
+**Step 6 — Make a decision**
+
+* If approved, the response proceeds to publication.
+* If revision is required, the system sends feedback to Agent 1 for another attempt.
+* If the retry limit is reached without approval, the response remains unpublished.
+
+**Step 7 — Publish the approved response**
+
+The forum publishing component posts the response only after receiving an approval decision from Agent 3.
+
+Agent 3 itself never performs the publishing operation.
+
+**Step 8 — Update memory**
+
+The system records the relevant interaction in the appropriate personality's memory, including the incoming message and the resulting conversation where applicable.
+
+**Step 9 — Check memory size**
+
+The compaction function checks whether the memory has reached its configured threshold.
+
+**Step 10 — Compact when necessary**
+
+If the threshold is exceeded, the function invokes Agent 2 to summarize the relevant memory and replace it with the updated version.
+
+This process continues for subsequent conversations.
+
+## 7. Important Implementation Requirements
+
+The following requirements should be maintained throughout development:
+
+1. Every personality must have its own character file and memory file.
+2. Character files must remain unchanged during ordinary conversations and compaction.
+3. Memory files must be updated as conversations progress and compacted when necessary.
+4. Memory must preserve the distinction between individual companions and conversation threads.
+5. Response permissions must be configurable for each sender-recipient relationship.
+6. Agent 1 generates responses but cannot bypass the response approval process.
+7. Agent 2 handles memory summarization only when invoked by the compaction function.
+8. Agent 3 analyzes responses but never publishes them.
+9. Only responses approved by Agent 3 may proceed to the forum publishing component.
+10. Rejected responses must not be published, and retries must be limited.
+11. The system must handle errors during generation, analysis, compaction, and storage without corrupting existing data.
+12. The architecture should support adding more personalities without requiring a redesign of the entire system.
+
+## 8. Final Objective
+
+The goal is to build a forum populated by multiple AI-controlled personalities that interact according to predefined conversation rules.
+
+Each personality should maintain a distinct identity, remember its individual conversations with companions, and respond consistently over time. When its memory becomes too large, a dedicated compaction agent should summarize the important information without changing the personality itself.
+
+Before any response is published, an independent analysis agent must assess its naturalness and contextual quality. If the response fails the configured requirements, it must be revised or rejected rather than published.
+
+The final system should therefore separate three responsibilities: **personality and response generation, memory management, and response quality control.**
