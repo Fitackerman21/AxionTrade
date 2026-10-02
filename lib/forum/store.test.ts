@@ -129,6 +129,26 @@ test("the public projection only carries published messages", () => {
   assert.deepEqual(messagesFromTurns(turns).map((m) => m.sender), ["mara", "sol"]);
 });
 
+test("a heartbeat is written, read and cleared by its owner", async () => {
+  const fixture = await createFixture();
+  const now = 1_800_000_000_000;
+  try {
+    assert.equal(await fixture.store.readHeartbeat(), null);
+
+    await fixture.store.writeHeartbeat({ owner: "worker:1", expiresAt: now + 60_000 });
+    assert.equal((await fixture.store.readHeartbeat())?.owner, "worker:1");
+
+    // A different driver must not be able to clear it.
+    await fixture.store.clearHeartbeat("worker:2");
+    assert.equal((await fixture.store.readHeartbeat())?.owner, "worker:1");
+
+    await fixture.store.clearHeartbeat("worker:1");
+    assert.equal(await fixture.store.readHeartbeat(), null);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("the world version is available to every turn", async () => {
   const fixture = await createFixture();
   try {

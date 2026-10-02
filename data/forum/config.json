@@ -32,5 +32,10 @@
       "Passing on that one. Nobody is cleared to trade it.",
       "Noted, no position change. Back to the levels."
     ]
+  },
+  "runtime": {
+    "catchUpMaxTurns": 12,
+    "staleAfterMin": 90,
+    "heartbeatTtlSec": 60
   }
 }

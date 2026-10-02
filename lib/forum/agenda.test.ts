@@ -3,12 +3,23 @@ import { test } from "node:test";
 
 import { nextEvent } from "./agenda";
 import type { AgendaContext } from "./agenda";
-import { makeTurn, TEST_CONFIG, TEST_PERSONAS, TEST_TOPICS, TEST_WORLD } from "./test-utils";
+import {
+  makeTurn,
+  TEST_BASE,
+  TEST_CONFIG,
+  TEST_NOW,
+  TEST_PERSONAS,
+  TEST_TOPICS,
+  TEST_WORLD,
+} from "./test-utils";
 import type { ForumConfig } from "./types";
+
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
 function context(overrides: Partial<AgendaContext> = {}): AgendaContext {
   return {
     seq: 2,
+    now: TEST_NOW,
     turns: [],
     config: TEST_CONFIG,
     topics: TEST_TOPICS,
@@ -38,8 +49,34 @@ test("a world tick hands the floor to the engine persona", () => {
 
   assert.equal(event.kind, "WORLD");
   assert.equal(event.sender, TEST_CONFIG.agenda.enginePersona);
-  assert.equal(event.fromEngine, true);
+  assert.equal(event.authoredBy, "engine");
   assert.equal(event.topic.id, TEST_WORLD.highlights[0].topicId);
+});
+
+test("a long absence is recapped, not replayed", () => {
+  const turns = [makeTurn(1, { sender: "mara", topicId: gold })];
+  const now = TEST_BASE + 1000 + TWO_HOURS_MS;
+  const event = nextEvent(context({ seq: 2, turns, now }));
+
+  assert.equal(event.kind, "RECAP");
+  assert.equal(event.authoredBy, "engine");
+  assert.equal(event.sender, TEST_CONFIG.agenda.enginePersona);
+  assert.equal(event.quoted, TEST_WORLD.digest);
+  assert.match(event.reason, /minutes behind/);
+});
+
+test("a gap shorter than the stale threshold carries on normally", () => {
+  const turns = [makeTurn(1, { sender: "mara", topicId: gold })];
+  const now = TEST_BASE + 1000 + 5 * 60 * 1000;
+
+  assert.equal(nextEvent(context({ seq: 2, turns, now })).kind, "THREAD");
+});
+
+test("a person speaking outranks even a recap", () => {
+  const turns = [makeTurn(1, { sender: "human", text: "still there?" })];
+  const now = TEST_BASE + 1000 + TWO_HOURS_MS;
+
+  assert.equal(nextEvent(context({ seq: 2, turns, now })).kind, "HUMAN");
 });
 
 test("world ticks rotate through the highlights", () => {
@@ -95,6 +132,7 @@ test("a topic that has run its course rotates", () => {
 
   assert.equal(event.kind, "IDLE");
   assert.equal(event.topic.id, semis);
+  assert.equal(event.authoredBy, "engine");
   assert.match(event.reason, /rotating/);
 });
 
@@ -104,5 +142,5 @@ test("an empty room opens on the first topic", () => {
   assert.equal(event.kind, "IDLE");
   assert.equal(event.topic.id, gold);
   assert.equal(event.sender, TEST_CONFIG.agenda.enginePersona);
-  assert.equal(event.fromEngine, true);
+  assert.equal(event.authoredBy, "engine");
 });

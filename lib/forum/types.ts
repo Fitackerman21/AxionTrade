@@ -106,10 +106,32 @@ export interface ForumConfig {
     enginePersona: PersonaId;
     stageDirections: string[];
   };
+  runtime: {
+    /** most turns a single catch-up burst may generate */
+    catchUpMaxTurns: number;
+    /** a gap longer than this is not replayed, it is recapped (spec §3.2) */
+    staleAfterMin: number;
+    /** how long a worker's heartbeat stays valid without being refreshed */
+    heartbeatTtlSec: number;
+  };
+}
+
+/** Is a worker alive right now? */
+export type RoomMode = "live" | "lazy";
+
+/**
+ * Written by the worker each loop and cleared on shutdown, so readers can tell
+ * a live room from one that is merely being woken by a page visit. Separate from
+ * the turn lease on purpose: the lease guards a single turn, the heartbeat says
+ * whether a driver exists at all.
+ */
+export interface Heartbeat {
+  owner: string;
+  expiresAt: number;
 }
 
 /** The agenda kinds, in precedence order (spec §4). */
-export type EventKind = "HUMAN" | "WORLD" | "FRICTION" | "THREAD" | "IDLE";
+export type EventKind = "HUMAN" | "RECAP" | "WORLD" | "FRICTION" | "THREAD" | "IDLE";
 
 export interface AgendaEvent {
   kind: EventKind;
@@ -121,8 +143,12 @@ export interface AgendaEvent {
   side: Side;
   /** the incoming text being responded to, when there is one */
   quoted?: string;
-  /** true when this is the engine persona reporting rather than a persona asking */
-  fromEngine?: boolean;
+  /**
+   * Who writes this turn's message. `engine` means the room is being addressed
+   * *by* the engine persona (an opening, a world report, a recap) rather than
+   * someone responding to a companion — so no candidate set is consulted.
+   */
+  authoredBy: "engine" | "responder";
 }
 
 export interface ForumMessage {

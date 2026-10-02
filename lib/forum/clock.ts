@@ -1,0 +1,36 @@
+/**
+ * Pacing maths for both drivers (spec §3.2).
+ *
+ * Jitter is derived from the room id and the turn number rather than
+ * Math.random(), so the gap between turns is reproducible too. That matters
+ * because catch-up has to reason about how many turns *should* exist by now, and
+ * a changing estimate would make "turns owed" jump around between page loads.
+ */
+
+import { hashString } from "./rng";
+
+export function meanGapMs(range: readonly [number, number]): number {
+  const [min, max] = range;
+  return ((Math.max(0, min) + Math.max(Math.max(0, min), max)) / 2) * 1000;
+}
+
+/** A jittered gap inside the configured range, stable for a given turn. */
+export function gapMsFor(roomId: string, seq: number, range: readonly [number, number]): number {
+  const minMs = Math.max(0, range[0]) * 1000;
+  const maxMs = Math.max(minMs, range[1] * 1000);
+  const span = maxMs - minMs;
+  if (span === 0) return minMs;
+  return minMs + (hashString(`${roomId}:gap:${seq}`) % (span + 1));
+}
+
+/** How many turns the room is behind by, given a gap and its intended cadence. */
+export function turnsOwed(gapMs: number, range: readonly [number, number]): number {
+  const gap = meanGapMs(range);
+  if (gap <= 0 || gapMs <= 0) return 0;
+  return Math.floor(gapMs / gap);
+}
+
+/** When the next turn is due, for the UI's "thinking…" indicator. */
+export function nextTurnAt(lastTurnAt: number, range: readonly [number, number]): number {
+  return lastTurnAt + meanGapMs(range);
+}

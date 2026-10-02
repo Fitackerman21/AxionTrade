@@ -189,6 +189,14 @@ export function CommunityChat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [all.length]);
 
+  // Opening the community page wakes the real room: when no worker is driving it,
+  // reading /api/forum/messages runs a bounded catch-up so the conversation comes
+  // forward instead of having stopped hours ago. The transcript below is still the
+  // scripted replay — the live view is the cut-over step.
+  useEffect(() => {
+    void fetch("/api/forum/messages", { cache: "no-store" }).catch(() => undefined);
+  }, []);
+
   const send = () => {
     const text = draft.trim();
     if (!text) return;

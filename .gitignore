@@ -50,6 +50,7 @@ backup/
 # what the room produces is not
 data/forum/log.jsonl
 data/forum/lease.json
+data/forum/heartbeat.json
 data/forum/costs.jsonl
 data/forum/drift/
 data/forum/memory/

@@ -22,6 +22,8 @@ import type {
 
 export interface AgendaContext {
   seq: number;
+  /** wall clock for this turn — the agenda uses it to notice a stale gap */
+  now: number;
   turns: readonly TurnRecord[];
   config: ForumConfig;
   topics: readonly Topic[];
@@ -95,7 +97,7 @@ function nextTopic(posts: readonly PostedTurn[], topics: readonly Topic[]): Topi
 }
 
 export function nextEvent(ctx: AgendaContext): AgendaEvent {
-  const { seq, config, topics, world, personas, turns } = ctx;
+  const { seq, now, config, topics, world, personas, turns } = ctx;
   const posts = postedTurns(turns);
   const newest = posts[posts.length - 1];
   const engine = config.agenda.enginePersona;
@@ -109,10 +111,26 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       topic: topicFor(newest.message.topicId, topics),
       side: newest.message.side,
       quoted: newest.message.text,
+      authoredBy: "responder",
     };
   }
 
-  // 2. WORLD — something happened; the engine reports it and the room reacts.
+  // 2. RECAP — the room was away long enough that replaying the gap would be a
+  // burst of nonsense, so it acknowledges the gap in a single turn (spec §3.2).
+  const staleAfterMs = Math.max(0, config.runtime.staleAfterMin) * 60_000;
+  if (newest && staleAfterMs > 0 && now - newest.message.t >= staleAfterMs) {
+    return {
+      kind: "RECAP",
+      reason: `the room was ${Math.round((now - newest.message.t) / 60_000)} minutes behind`,
+      sender: engine,
+      topic: topicFor(newest.message.topicId, topics),
+      side: newest.message.side,
+      quoted: world.digest,
+      authoredBy: "engine",
+    };
+  }
+
+  // 3. WORLD — something happened; the engine reports it and the room reacts.
   const every = Math.max(1, config.scheduling.worldEventEveryTurns);
   if (world.highlights.length > 0 && seq % every === 0) {
     const index = (Math.floor(seq / every) - 1) % world.highlights.length;
@@ -125,7 +143,7 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       topic: topicFor(highlight.topicId, topics),
       side: highlight.side ?? "a",
       quoted: highlight.text,
-      fromEngine: true,
+      authoredBy: "engine",
     };
   }
 
@@ -150,11 +168,13 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
         topic,
         side,
         quoted: flipping ? topic.friction[side] : newest.message.text,
+        authoredBy: "responder",
       };
     }
   }
 
-  // 5. IDLE — nothing to continue, or the topic has run its course.
+  // 5. IDLE — nothing to continue, or the topic has run its course. The engine
+  // leads the room, so it opens and changes the subject itself.
   const opening = posts.length === 0;
   return {
     kind: "IDLE",
@@ -165,6 +185,6 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
     topic: nextTopic(posts, topics),
     side: "a",
     quoted: world.digest,
-    fromEngine: true,
+    authoredBy: "engine",
   };
 }

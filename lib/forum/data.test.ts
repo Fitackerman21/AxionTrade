@@ -111,6 +111,7 @@ test("canned drafts stay inside every persona's register", async () => {
           topic,
           side,
           quoted: "so where does that leave the book?",
+          authoredBy: "responder",
         };
         const text = cannedDraft({ persona, event, world, seq: 3, attempt: 1 });
         const { minChars, maxChars } = persona.sheet.register;

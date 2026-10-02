@@ -16,6 +16,7 @@ import path from "node:path";
 import type {
   ForumConfig,
   ForumMessage,
+  Heartbeat,
   Lease,
   Persona,
   Side,
@@ -39,6 +40,10 @@ export interface ForumStore {
   acquireLease(owner: string, ttlMs: number, now: number): Promise<boolean>;
   releaseLease(owner: string, now: number): Promise<void>;
   readLease(): Promise<Lease | null>;
+  /** Liveness of a worker driver, distinct from the per-turn lease. */
+  readHeartbeat(): Promise<Heartbeat | null>;
+  writeHeartbeat(beat: Heartbeat): Promise<void>;
+  clearHeartbeat(owner: string): Promise<void>;
 }
 
 export interface HumanMessageArgs {
@@ -241,4 +246,37 @@ export class FileStore implements ForumStore {
       await unlink(this.file("lease.json")).catch(() => undefined);
     }
   }
+
+  async readHeartbeat(): Promise<Heartbeat | null> {
+    try {
+      return JSON.parse(await readFile(this.file("heartbeat.json"), "utf8")) as Heartbeat;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeHeartbeat(beat: Heartbeat): Promise<void> {
+    await mkdir(this.root, { recursive: true });
+    await writeFile(this.file("heartbeat.json"), JSON.stringify(beat), "utf8");
+  }
+
+  async clearHeartbeat(owner: string): Promise<void> {
+    const held = await this.readHeartbeat();
+    if (held?.owner === owner) {
+      await unlink(this.file("heartbeat.json")).catch(() => undefined);
+    }
+  }
+}
+
+export const DEFAULT_FORUM_ROOT = "data/forum";
+
+/** Where the room lives. FORUM_ROOT lets an always-on box point somewhere else. */
+export function forumRoot(): string {
+  const configured = process.env.FORUM_ROOT;
+  return configured ? path.resolve(configured) : path.join(process.cwd(), DEFAULT_FORUM_ROOT);
+}
+
+/** The store the app and the tools use unless told otherwise. */
+export function openForumStore(root: string = forumRoot()): FileStore {
+  return new FileStore(root);
 }

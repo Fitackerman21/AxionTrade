@@ -136,7 +136,18 @@ export const TEST_CONFIG: ForumConfig = {
     enginePersona: "jev",
     stageDirections: ["Nothing on the desk covers that yet."],
   },
+  runtime: {
+    catchUpMaxTurns: 12,
+    staleAfterMin: 90,
+    heartbeatTtlSec: 60,
+  },
 };
+
+/** A fixed wall clock for the tests, so gaps and staleness are exact. */
+export const TEST_BASE = 1_800_000_000_000;
+
+/** Just after any seeded turn, but nowhere near the staleness threshold. */
+export const TEST_NOW = TEST_BASE + 60_000;
 
 export interface Fixture {
   store: FileStore;
@@ -180,8 +191,6 @@ export function dataStore(): FileStore {
   return new FileStore(path.join(process.cwd(), "data", "forum"));
 }
 
-const turnClock = 1_000_000;
-
 /** Build a log entry for the pure agenda/schedule tests. */
 export function makeTurn(
   seq: number,
@@ -197,7 +206,7 @@ export function makeTurn(
 ): TurnRecord {
   const topicId = spec.topicId ?? TEST_TOPICS[0].id;
   const side = spec.side ?? "a";
-  const t = turnClock + seq * 1000;
+  const t = TEST_BASE + seq * 1000;
 
   return {
     seq,

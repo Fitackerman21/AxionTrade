@@ -3,10 +3,19 @@ import { test } from "node:test";
 
 import { advance } from "./advance";
 import { publish } from "./publisher";
-import { createFixture, makeTurn, TEST_CONFIG, TEST_PERSONAS, TEST_TOPICS, TEST_WORLD } from "./test-utils";
+import {
+  createFixture,
+  makeTurn,
+  TEST_BASE,
+  TEST_CONFIG,
+  TEST_PERSONAS,
+  TEST_TOPICS,
+  TEST_WORLD,
+} from "./test-utils";
 import type { ForumConfig } from "./types";
 
-const BASE = 1_800_000_000_000;
+/** A minute after the seeded turns, so nothing looks stale and time moves forward. */
+const BASE = TEST_BASE + 60_000;
 
 function withPermissions(permissions: Partial<ForumConfig["permissions"]>): ForumConfig {
   return { ...TEST_CONFIG, permissions: { ...TEST_CONFIG.permissions, ...permissions } };

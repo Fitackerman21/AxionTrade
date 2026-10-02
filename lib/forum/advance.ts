@@ -37,7 +37,8 @@ export interface AdvanceOptions {
   recentTurns?: number;
 }
 
-function processId(): number {
+/** Used for lease ownership; 0 where there is no process to name. */
+export function processId(): number {
   return typeof process !== "undefined" && typeof process.pid === "number" ? process.pid : 0;
 }
 
@@ -85,7 +86,7 @@ export async function advance(
     ]);
 
     const seq = (last?.seq ?? 0) + 1;
-    const event = nextEvent({ seq, turns, config, topics, world, personas });
+    const event = nextEvent({ seq, now, turns, config, topics, world, personas });
 
     const permissions = respondersFor(event.sender, config, personas);
     const recency = recencyFromTurns(turns, last?.seq ?? 0);
@@ -111,16 +112,23 @@ export async function advance(
     let chosen = choice.chosen;
     let system = false;
     let text: string;
-    // An opening turn is not a reply, so it has no candidates to review.
+    // Engine-authored turns are not replies, so they have no candidates to review.
     let candidatesForRecord = candidates;
 
-    if (last === null) {
-      // The room has never spoken. The engine opens the session itself rather
-      // than replying to a message that does not exist yet.
+    if (event.authoredBy === "engine") {
+      // The engine addresses the room itself: it opens the session, reports world
+      // state, and recaps a stale gap. Nothing to schedule, so the matrix is not
+      // consulted — an opening is not a reply to a message that does not exist.
+      const opening = event.kind === "IDLE" && last === null;
       chosen = enginePersona.id;
       candidatesForRecord = [];
-      choice = { chosen: enginePersona.id, ordered: [], reason: "opening the room", relaxedCooldown: false };
-      notes.push("opening the room");
+      choice = {
+        chosen: enginePersona.id,
+        ordered: [],
+        reason: opening ? "opening the room" : event.reason,
+        relaxedCooldown: false,
+      };
+      notes.push(opening ? "opening the room" : `engine ${event.kind.toLowerCase()}`);
       text = cannedDraft({ persona: enginePersona, event, world, seq, attempt: 1 });
     } else if (chosen === null) {
       // Rung 2: the engine persona stage-directs, so the room never dead-ends.
@@ -159,8 +167,8 @@ export async function advance(
         seq,
         t: now,
         sender: chosen,
-        // The opening turn addresses the room; everything else answers someone.
-        primaryRecipient: last === null ? "room" : event.sender,
+        // The engine addresses the room; a responder answers someone specific.
+        primaryRecipient: event.authoredBy === "engine" ? "room" : event.sender,
         text,
         topicId: event.topic.id,
         side: event.side,

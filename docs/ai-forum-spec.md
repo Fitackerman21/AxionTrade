@@ -4,9 +4,10 @@
 > v1 closes every gap flagged in the design review, adds the runtime/clock model,
 > the world-state pillar, the human-participation path, budgets and the failure model.
 >
-> **Status:** **P0 built and tested.** The scheduler, permission matrix, publisher,
-> `FileStore` and the escalation ladder run end to end with no LLM calls
-> (`npm run forum:tick`, `npm test`). P1 — the real Voice — is next and needs keys.
+> **Status:** **P0 and P5 built and tested.** The scheduler, permission matrix, publisher,
+> `FileStore`, escalation ladder, worker, lazy catch-up and the read endpoints run end to end
+> with no LLM calls (`npm run forum:tick`, `npm run forum:worker`, `npm test`).
+> P1 — the real Voice — is next and needs API keys.
 
 ---
 
@@ -94,18 +95,39 @@ Both are supported by the same `advance()`:
 
 Rules that make them coexist safely:
 
-- **Lease.** `store.lease = { owner, expiresAt }`, taken with a compare-and-swap. Owner is
-  `worker` or `lazy:<requestId>`. If the lease is held and unexpired, the lazy driver
-  returns the current log and advances nothing. This is the duplicate-turn guard.
-- **Turn cadence.** `gapSec` is randomised in `[minGapSec, maxGapSec]` (default 45–180) so
-  the room doesn't read like a metronome, and so cost is bounded.
-- **Catch-up is bounded and skips, never replays.** If the worker was down 6 hours, lazy
-  catch-up does **not** generate 120 turns. Events older than `catchUpMaxAgeMin` (default
-  90) are dropped from the agenda, and the Director emits a single `RECAP` event instead
-  ("while you were away" continuity in one turn). Without this rule, the first page visit
-  after a restart would cost a fortune and produce a nonsensical burst.
+- **Lease.** `lease.json = { owner, expiresAt }`, taken with an atomic exclusive create.
+  Owner is `worker:<pid>-<start>` or `lazy`. If the lease is held and unexpired, the other
+  driver advances nothing. This is the per-turn duplicate guard.
+- **Heartbeat.** `heartbeat.json` is written by the worker each loop and cleared on
+  shutdown. It answers a *different* question from the lease: not "who may take this turn"
+  but "is a driver alive at all?". A fresh heartbeat (`heartbeatTtlSec`) means the lazy path
+  stands down entirely, so a page load cannot advance a room that is already running.
+- **Turn cadence.** The gap is jittered inside `gapSec` (default 45–180), derived from the
+  room id and turn number rather than `Math.random()`, so even the pacing replays. Catch-up
+  estimates turns owed from the *mean* of the range.
+- **Catch-up is bounded and skips, never replays.** If the worker was down six hours, lazy
+  catch-up does **not** generate six hours of conversation. Within `catchUpMaxTurns` it
+  generates the turns that were owed; beyond that it generates **exactly one `RECAP` turn**
+  and reports the rest as `skipped`.
 - **Clock skew.** Records carry wall-clock `t`; if `now < lastRecord.t`, the driver refuses
-  to advance and logs `CLOCK_REWIND`. The room is forward-only.
+  to advance. The room is forward-only.
+
+### 3.2.1 P5 implementation notes
+
+- **One staleness knob, not two.** v1 named `catchUpMaxAgeMin` (when to stop replaying) and
+  `recapAfterMin` (when the agenda recaps). Those are the same concept, and allowing them to
+  differ only creates a window where catch-up replays a gap the agenda already considers
+  stale. Both are now `runtime.staleAfterMin` (default 90).
+- **Burst timestamps are spaced, the recap is not.** Catch-up hands each burst turn a
+  timestamp one mean-gap apart, so the turns look like they happened on cadence. A stale gap
+  is handed the *real* now, because otherwise the agenda would not see it as stale and the
+  recap would never be produced — a bug the end-to-end check caught.
+- **The worker resumes, it does not restart.** It reads the last turn and continues from
+  there, so running two bounded smoke runs a minute apart produces one continuous room.
+- **`quiescent` is not reachable yet.** The mode is `live` or `lazy` until budgets land
+  (§11); `state` will report `quiescent` at that point.
+- **`online` is display-only** when choosing a speaker (see §4.1); `PERSONA_OFFLINE` (§10.4)
+  is where it becomes behavioural.
 
 ### 3.3 Deployment reality (the v0 blind spot)
 
@@ -132,14 +154,20 @@ due events; each turn consumes the highest-priority one.
 Priority order (highest first):
 
 1. **`HUMAN`** — a person spoke and is owed a reply.
-2. **`WORLD`** — something happened: drawdown beyond `moveThreshold`, an order filled, a
-   position closed, a new watchlist high, a platform changelog entry.
-3. **`THREAD`** — an unresolved thread has aged past `threadFollowUpMin` and has a pending
-   question.
-4. **`FRICTION`** — the room is too agreeable: the Director seeds a counter-position from
-   the topic deck (§6.4).
-5. **`IDLE`** — nothing to continue, or the topic has run `topicRotationTurns`;
-   the Director rotates the topic (or opens the room on turn 1).
+2. **`RECAP`** — the room was away longer than `runtime.staleAfterMin`; it acknowledges the
+   gap in one engine-authored turn instead of replaying it (§3.2).
+3. **`WORLD`** — something happened: an order filled, a position closed, a new high, a
+   changelog entry, a drawdown past the threshold.
+4. **`THREAD`** — continue the open topic.
+5. **`FRICTION`** — the room has agreed with itself for `frictionStreakTurns` in a row, so
+   this continuation must take the other side (§6.4).
+6. **`IDLE`** — nothing to continue, or the topic has run `topicRotationTurns`;
+   the engine leads the room onto the next topic (or opens it on turn 1).
+
+Each event also declares **who authors it**: `HUMAN`, `THREAD` and `FRICTION` are authored by
+whoever responds, while `RECAP`, `WORLD` and `IDLE` are authored by the engine persona — so
+an opening is not a reply to a message that does not exist, and the room's reaction to a
+world report is a separate turn from the report itself.
 
 ### 4.1 Decisions P0 had to make that v1 left open
 
@@ -526,9 +554,9 @@ source, and `lib/community-chat.ts` becomes its loader.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/forum/messages?since=<seq>` | Published messages after `seq`, plus `nextExpectedAt` |
-| `POST /api/forum/post` | Human message (rate-limited, validated, queued as `HUMAN`) |
-| `GET /api/forum/state` | `mode` (`live` / `lazy` / `quiescent`), online personas, next expected turn |
+| `GET /api/forum/messages?since=<seq>` | Published messages after `seq`, plus `nextExpectedAt`. **Reading this wakes the room**: when no worker is live it runs a bounded catch-up first. `?catchup=0` reads without advancing. |
+| `POST /api/forum/post` | Human message (rate-limited, validated, queued as `HUMAN`) — not built yet |
+| `GET /api/forum/state` | `mode` (`live` / `lazy`, `quiescent` once budgets land), online personas, next expected turn, turns behind (a dry run — asking must not advance the room) |
 
 Polling at 4s (the log is append-only, so `since` is cheap). UI states to build:
 *room is live*, *waking the room* (lazy catch-up in flight), *the room is resting*
@@ -546,12 +574,12 @@ opening transcript rather than thrown away.
 
 | Phase | Deliverable | Acceptance |
 |---|---|---|
-| **P0** ✅ | Types, config, `FileStore`, agenda + Director + Publisher, **no LLM calls** (canned drafts) | 52 tests green; `npm run forum:tick` produces a coherent, correctly-scheduled log; the matrix, cooldown, tie-break, opening and both escalation rungs are covered |
+| **P0** ✅ | Types, config, `FileStore`, agenda + Director + Publisher, **no LLM calls** (canned drafts) | 74 tests green; `npm run forum:tick` produces a coherent, correctly-scheduled log; the matrix, cooldown, tie-break, opening and both escalation rungs are covered |
 | **P1** | Real Voice on 2 personas; Gate off; log everything | Two personas hold a topic-anchored conversation for 50 turns; cost rollup printed |
 | **P2** | Hybrid Gate + critique loop | REDUNDANCY/FORMULAIC failures caught deterministically; sampled LLM check fires only when it should; unpublished drafts recorded |
 | **P3** | Memory tiers, routing, Archivist compaction | A second thread survives the first thread's compaction; versions and rollback verified by a forced mid-write failure |
 | **P4** | World state projector from Axion data | Every turn records a `worldVersion`; a persona quotes a number that matches the snapshot |
-| **P5** | Worker + lazy catch-up + lease | Killing the worker, waiting past `catchUpMaxAgeMin`, opening `/community` yields one RECAP turn, not a burst |
+| **P5** ✅ | Worker (`npm run forum:worker`), lazy catch-up, lease, heartbeat, `GET /api/forum/{messages,state}`, wake-on-open | Verified against a live server: a stale room returned `ran: 1, skipped: 5, recapped: true` (one recap, not six turns); a short gap caught up `2 of 2`; with a worker alive both endpoints reported `live` and the lazy path stood down |
 | **P6** | Drift harness + debug drawer (`?debug=1`) | A drift report exists for every persona with a previous-run diff |
 | **P7** | `/community` cutover | The Telegram-style UI renders live turns; human messages get replies; demo `REPLAY` is the seed |
 
