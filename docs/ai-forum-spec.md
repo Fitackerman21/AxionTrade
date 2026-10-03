@@ -469,6 +469,45 @@ project that bias is fatal.
   a room whose personas speak `qwen/*` and whose judge is `qwen/qwen3.8-27b` skips the LLM
   half on every turn. The Gate needs a non-Qwen family (§15).
 
+### 8.6 Choosing the judge (surveyed, 2026-10)
+
+Every free text model on OpenRouter was run against the real judge prompt with **two** drafts:
+one the judge should reject, and one it should approve (`voiceMatch` is the item that matters).
+A model is only usable if it separates the two, returns one reason per failed item, and
+answers in a sane time. A model that rejects both is worse than useless — it empties the room.
+
+| Model (`…:free`) | Family | Latency | Per-item reasons | Separates |
+|---|---|---|---|---|
+| `qwen/qwen3.8-27b` | qwen | 1.0–10.9s | yes | yes — but same family as the Voice, so the guard blocks it |
+| `inclusionai/ling-3.0-flash-sante` | inclusionai | ~1.1s | yes | **yes** ← chosen |
+| `dots-studio/dots-3-note-preview` | dots-studio | ~2.9s | yes | yes |
+| `poolside/laguna-s-2.1` | poolside | ~3.9s | yes | yes |
+| `cohere/north-mini-code` | cohere | ~1.0–1.8s | yes | **no** — rejects the good draft too |
+| `apodex/apodex-1.1-mini` | apodex | ~1.5s | yes | **no** — rejects the good draft too |
+| `nvidia/nemotron-3.5-lightning` | nvidia | 0.8–28s | **no** — keys every reason `"item"` | partly |
+| `nvidia/nemotron-3-super-120b-a12b` | nvidia | ~1.1s | **no** — keys every reason `"item"` | — |
+| `nvidia/nemotron-3-ultra-550b-a55b` | nvidia | ~12s | yes | — |
+| `liquid/lfm-2.5-2.6b` | liquid | ~2.9s | **no** | — |
+| `google/gemma-4-31b-it`, `-26b-a4b-it` | google | — | — | **429 on every attempt** |
+| `thinkingmachines/inkling`, `-small` | thinkingmachines | — | — | **403: agentic harnesses only** |
+
+`config.json` therefore sets `gate.model` to `inclusionai/ling-3.0-flash-sante:free` — the
+fastest model that both follows the schema and separates good from bad. Runner-ups:
+`dots-studio/dots-3-note-preview`, `poolside/laguna-s-2.1`.
+
+Three things this survey settled that reading the model list would not have:
+
+- **Fixating on the biggest/fastest name is wrong.** Two models that looked ideal on paper
+  (`cohere/north-mini-code`, `apodex-1.1-mini`) rejected the *good* draft as hard as the bad
+  one. Only testing separates those from a real judge.
+- **Schema compliance is a real failure mode.** The Nemotrons return valid JSON with every
+  reason collapsed under a single key named `"item"`, so the parser finds no reason for the
+  failed item and the §8.4 critique loop silently loses its feedback.
+- **Availability, not quality, is the free tier's binding constraint.** Gemma 429'd on every
+  attempt, Inkling is 403 (agentic harnesses only), one Nemotron call took 28s, and the *same*
+  model varied 1.0s → 10.9s between two calls. A fallback chain of 2–3 judges is the next
+  hardening step; a single model is a single point of failure.
+
 ---
 
 ## 9. Human participation
@@ -638,10 +677,11 @@ Keys now exist: two OpenRouter keys are configured locally (`OPENROUTER_API_KEY`
 verified spare in `OPENROUTER_API_KEY_2`), and all three confirmed slots — Voice, Gate and
 Archivist — are pointed at `qwen/qwen3.8-27b` on OpenRouter for now.
 
-**Conflict to settle at P1:** running *everything* as Qwen makes the Gate's LLM half dead on
-arrival — the judge would share the Voice's family and be skipped by the self-preference
-guard. Either the Gate gets a non-Qwen judge (recommended, and the reason §8.2 exists), or
-the guard is consciously relaxed. Deciding this is the first thing P1 needs.
+**Settled (§8.6):** the Gate does *not* run Qwen. Running everything as Qwen leaves the Gate's
+LLM half dead on arrival, because the judge would share the Voice's family and the
+self-preference guard would skip it on every turn. The judge is
+`inclusionai/ling-3.0-flash-sante:free` — a different family, ~1.1s, and the only kind of
+model that survived the good/bad separation test.
 
 ---
 
