@@ -141,6 +141,21 @@ export const TEST_CONFIG: ForumConfig = {
     staleAfterMin: 90,
     heartbeatTtlSec: 60,
   },
+  // Off by default so the scheduling/P0 tests exercise the Director, not the Gate.
+  // Gate tests override this with a real config.
+  gate: {
+    mode: "off",
+    maxAttempts: 3,
+    sampleRate: 1,
+    warmupTurns: 25,
+    redundancyWindow: 8,
+    redundancyThreshold: 0.82,
+    openerWindow: 20,
+    numberTolerance: 0.02,
+    requireAddressee: true,
+    bannedPhrases: [],
+    timeoutMs: 4000,
+  },
 };
 
 /** A fixed wall clock for the tests, so gaps and staleness are exact. */

@@ -44,9 +44,11 @@ export function recencyFromTurns(
 
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     const turn = turns[i];
-    const sender = turn?.message?.sender;
-    // Turns with no message (human hand-offs, stage directions marked null) are
-    // neutral: they neither extend nor break a streak.
+    // An UNPUBLISHED turn names who failed the Gate, so the room can hand the next
+    // turn to someone else (spec §8.4). Other message-less turns — human hand-offs,
+    // stage directions — stay neutral: they neither extend nor break a streak.
+    const sender =
+      turn?.message?.sender ?? (turn?.decision === "UNPUBLISHED" ? turn.chosen : null);
     if (!turn || !sender) continue;
 
     if (!(sender in turnsSinceLastPost)) {
@@ -74,6 +76,9 @@ export function recencyFromTurns(
  * 1. drop the last speaker once they hit `maxConsecutivePosts`
  * 2. drop anyone still inside `minTurnsBetweenPosts`
  * 3. quietest first, ties broken by a seed keyed on (room, turn)
+ *
+ * `recencyFromTurns` counts an UNPUBLISHED turn as its chosen speaker having just
+ * posted, which is how the Director swaps speakers after a Gate rejection (§8.4).
  *
  * The spec's step 2 would dead-end the room whenever every candidate was on
  * cooldown, so the cooldown relaxes to the longest-waiting candidate instead and

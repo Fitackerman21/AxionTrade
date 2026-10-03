@@ -39,10 +39,19 @@ export interface PersonaSheet {
   quirks: string[];
   /** 3+ real lines used as the voice anchor (spec §8.2 voiceMatch) */
   sampleLines: string[];
+  /**
+   * Claims this persona must never make (spec §8.1 CONTINUITY). Plain substrings,
+   * matched case-insensitively — e.g. "we are long semis" for a desk that is short.
+   */
+  forbiddenClaims?: string[];
 }
 
 export interface Persona extends PersonaDisplay {
   sheet: PersonaSheet;
+  /** the Voice's model id (spec §15); set in P1 when the real Voice lands */
+  model?: string;
+  /** used when the primary provider is down (spec §10.3) */
+  fallbackModel?: string;
 }
 
 export interface Topic {
@@ -77,6 +86,37 @@ export interface WorldState {
     upnlPct: number;
   }>;
   platform?: { changelog: string[]; knownIssues: string[] };
+}
+
+/**
+ * The Gate's tunables (spec §8, §11). Present in config.json so the room's
+ * strictness is data, not code.
+ */
+export interface GateConfig {
+  /** "off" skips the Gate entirely; "deterministic" runs only the cheap checks */
+  mode: "off" | "deterministic" | "hybrid";
+  /** drafts allowed per turn before the turn is recorded as UNPUBLISHED (§8.4) */
+  maxAttempts: number;
+  /** share of turns that get an LLM check once a persona is warm (§8.3) */
+  sampleRate: number;
+  /** a persona's first N turns are always checked (§8.3) */
+  warmupTurns: number;
+  /** how many recent messages REDUNDANCY compares against (§8.1) */
+  redundancyWindow: number;
+  /** 5-gram Jaccard above this fails REDUNDANCY (§8.1) */
+  redundancyThreshold: number;
+  /** how many recent messages FORMULAIC compares openers against (§8.1) */
+  openerWindow: number;
+  /** relative tolerance for numbers attached to tickers (§8.1) */
+  numberTolerance: number;
+  /** require a responder to share a content token with the message it answers (§8.1) */
+  requireAddressee: boolean;
+  /** phrases that always fail FORMULAIC (§8.1) */
+  bannedPhrases: string[];
+  /** judge model id for the LLM half; when unset (or no key) only deterministic runs */
+  model?: string;
+  /** how long to wait for the judge before falling back to deterministic (§10.2) */
+  timeoutMs: number;
 }
 
 export interface ForumConfig {
@@ -114,6 +154,8 @@ export interface ForumConfig {
     /** how long a worker's heartbeat stays valid without being refreshed */
     heartbeatTtlSec: number;
   };
+  /** Optional so a room written before P2 still loads; defaults come from gate.ts */
+  gate?: GateConfig;
 }
 
 /** Is a worker alive right now? */
@@ -165,14 +207,39 @@ export interface ForumMessage {
   system: boolean;
 }
 
-export type Decision = "APPROVE" | "SKIP";
+/**
+ * The final state of a recorded turn. `UNPUBLISHED` is the v0 requirement that a
+ * rejected draft is never shown — it is logged for review, with no message.
+ */
+export type Decision = "APPROVE" | "SKIP" | "UNPUBLISHED";
+
+/** One Gate verdict on one draft (spec §8.3). */
+export type AttemptDecision = "APPROVE" | "REVISE" | "REJECT";
 
 export interface Attempt {
   n: number;
-  decision: Decision;
-  /** deterministic failure codes from the Gate (spec §8.1) */
+  decision: AttemptDecision;
+  /** gate codes — deterministic (§8.1) or rubric item names (§8.2) */
   codes: string[];
   detail?: string;
+  /** per-item reasons the LLM check returned, when it ran */
+  reasons?: Record<string, string>;
+}
+
+/** One model call's cost, recorded on the turn that caused it (spec §11). */
+export interface TurnUsage {
+  provider: string;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  estCost: number;
+}
+
+/** What the Gate actually did on this turn — auditable without the trace (spec §13.1). */
+export interface TurnGate {
+  mode: "off" | "deterministic" | "llm";
+  model?: string;
+  sampled: boolean;
 }
 
 /** One line of log.jsonl. This is the whole room state (spec §13.1). */
@@ -192,6 +259,10 @@ export interface TurnRecord {
   message: ForumMessage | null;
   /** (persona, companion) threads this turn wrote to, per spec §7.4 */
   memoryWrites: string[];
+  /** the gate's own record of what it did (spec §13.1) */
+  gate?: TurnGate;
+  /** token/cost accounting for the calls this turn made (spec §11) */
+  usage?: TurnUsage[];
   worldVersion: string;
   note: string | null;
   durationMs: number;

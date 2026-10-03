@@ -37,5 +37,23 @@
     "catchUpMaxTurns": 12,
     "staleAfterMin": 90,
     "heartbeatTtlSec": 60
+  },
+  "gate": {
+    "mode": "deterministic",
+    "maxAttempts": 3,
+    "sampleRate": 0.25,
+    "warmupTurns": 25,
+    "redundancyWindow": 8,
+    "redundancyThreshold": 0.82,
+    "openerWindow": 20,
+    "numberTolerance": 0.02,
+    "requireAddressee": true,
+    "bannedPhrases": [
+      "as an AI language model",
+      "I hope this helps",
+      "Certainly!"
+    ],
+    "model": "qwen/qwen3.8-27b",
+    "timeoutMs": 15000
   }
 }

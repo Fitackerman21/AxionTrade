@@ -5,25 +5,38 @@
  * path on /community calls it too. The lease and the monotonic `seq` are what
  * let both drivers exist without racing.
  *
- * P0 runs with canned drafts: no LLM calls, no Gate, no memory writes. Those
- * arrive in P1–P3, behind the same three seams (drafts, publisher, store).
+ * P0/P5 run with canned drafts: no LLM Voice. P2 adds the Gate, which reviews
+ * responder drafts and can leave a turn recorded-but-unpublished (spec §8.4).
+ * Memory writes still arrive in P3, behind the same seams.
  */
 
 import { nextEvent } from "./agenda";
 import { cannedDraft } from "./drafts";
+import { resolveGateConfig, runGate } from "./gate";
+import type { GateVerdict } from "./gate";
 import { respondersFor } from "./permissions";
-import { buildMessage, publish } from "./publisher";
+import { buildMessage, publish, publishUnpublished } from "./publisher";
+import { resolveJudgeProvider } from "./provider";
+import type { ChatProvider } from "./provider";
 import { recencyFromTurns, pickSpeaker } from "./schedule";
 import { hashPick } from "./rng";
 import type { ForumStore } from "./store";
-import type { AgendaEvent, TurnRecord, WorldState } from "./types";
+import type {
+  AgendaEvent,
+  Attempt,
+  Decision,
+  TurnGate,
+  TurnRecord,
+  TurnUsage,
+  WorldState,
+} from "./types";
 
 /** How much history the agenda and scheduler get to look at. */
 export const RECENT_TURNS_WINDOW = 40;
 /** Long enough to cover a slow turn, short enough to recover from a crash. */
 export const LEASE_TTL_MS = 30_000;
 
-export type AdvanceStatus = "published" | "lease-held" | "clock-rewind";
+export type AdvanceStatus = "published" | "unpublished" | "lease-held" | "clock-rewind";
 
 export interface AdvanceResult {
   status: AdvanceStatus;
@@ -35,6 +48,8 @@ export interface AdvanceOptions {
   now?: number;
   driver?: string;
   recentTurns?: number;
+  /** inject the Gate's judge; by default it is resolved from config + env (§8.2) */
+  judge?: ChatProvider;
 }
 
 /** Used for lease ownership; 0 where there is no process to name. */
@@ -111,7 +126,7 @@ export async function advance(
     const notes: string[] = [];
     let chosen = choice.chosen;
     let system = false;
-    let text: string;
+    let text = "";
     // Engine-authored turns are not replies, so they have no candidates to review.
     let candidatesForRecord = candidates;
 
@@ -145,6 +160,72 @@ export async function advance(
       if (choice.relaxedCooldown) notes.push("every candidate was on cooldown");
     }
 
+    // The Gate reviews responder drafts (spec §8). Engine turns — openings, world
+    // reports, recaps and stage directions — are the room's own control voice and
+    // bypass it: an empty room is worse than an un-reviewed control line.
+    const gateConfig = resolveGateConfig(config.gate);
+    const chosenPersona = personas.find((p) => p.id === chosen);
+    const gated = gateConfig.mode !== "off" && event.authoredBy === "responder" && !system;
+
+    const attempts: Attempt[] = [];
+    const gateNotes: string[] = [];
+    const usage: TurnUsage[] = [];
+    let decision: Decision = "APPROVE";
+    let gate: TurnGate | undefined;
+
+    if (gated && chosenPersona) {
+      const judge = options.judge ?? resolveJudgeProvider(gateConfig);
+      // Warm-up sampling counts the persona's completed turns, which needs the whole
+      // log rather than the recent window (spec §8.3). Only hybrid mode pays for it.
+      const priorPosts =
+        gateConfig.mode === "hybrid"
+          ? (await store.readTurns(Number.POSITIVE_INFINITY)).filter(
+              (turn) => turn.chosen === chosenPersona.id && turn.message,
+            ).length
+          : 0;
+      const threadStart = !turns.some(
+        (turn) =>
+          turn.message?.sender === chosenPersona.id && turn.message.topicId === event.topic.id,
+      );
+
+      let verdict: GateVerdict | null = null;
+      for (let n = 1; n <= gateConfig.maxAttempts; n += 1) {
+        text = cannedDraft({ persona: chosenPersona, event, world, seq, attempt: n });
+        verdict = await runGate({
+          context: { persona: chosenPersona, text, event, world, turns, seq },
+          config: gateConfig,
+          priorPosts,
+          attempt: n,
+          voiceModel: chosenPersona.model,
+          judge,
+          threadStart,
+        });
+        attempts.push({
+          n,
+          decision: verdict.decision,
+          codes: verdict.codes,
+          detail: verdict.detail ?? undefined,
+          reasons: verdict.reasons,
+        });
+        gateNotes.push(...verdict.notes);
+        if (verdict.usage) usage.push(verdict.usage);
+        if (verdict.decision === "APPROVE") break;
+      }
+
+      const gateMode: TurnGate["mode"] =
+        verdict?.mode === "llm" ? "llm" : gateConfig.mode === "off" ? "off" : "deterministic";
+      gate = { mode: gateMode, model: verdict?.judgeModel, sampled: verdict?.sampled ?? false };
+
+      if (verdict && verdict.decision !== "APPROVE") {
+        // Spec §8.4: the draft is not published. The record keeps the full trace, and
+        // the scheduler avoids this speaker on the next turn, so the room keeps moving.
+        decision = "UNPUBLISHED";
+        notes.push(
+          `gate exhausted after ${gateConfig.maxAttempts} attempts (${verdict.codes.join(", ")}); thread stalled`,
+        );
+      }
+    }
+
     const record: TurnRecord = {
       seq,
       t: now,
@@ -161,27 +242,44 @@ export async function advance(
       ordered: choice.ordered,
       chosen,
       escalated,
-      decision: "APPROVE",
-      attempts: [],
-      message: buildMessage({
-        seq,
-        t: now,
-        sender: chosen,
-        // The engine addresses the room; a responder answers someone specific.
-        primaryRecipient: event.authoredBy === "engine" ? "room" : event.sender,
-        text,
-        topicId: event.topic.id,
-        side: event.side,
-        system,
-      }),
+      decision,
+      attempts,
+      message:
+        decision === "APPROVE"
+          ? buildMessage({
+              seq,
+              t: now,
+              sender: chosen,
+              // The engine addresses the room; a responder answers someone specific.
+              primaryRecipient: event.authoredBy === "engine" ? "room" : event.sender,
+              text,
+              topicId: event.topic.id,
+              side: event.side,
+              system,
+            })
+          : null,
       memoryWrites: [],
+      gate,
+      usage: usage.length > 0 ? usage : undefined,
       worldVersion: world.version,
-      note: `${notes.filter(Boolean).join("; ")}; P0: gate and memory disabled`,
+      note: [
+        notes.filter(Boolean).join("; "),
+        gateNotes.length > 0 ? `gate: ${[...new Set(gateNotes)].join(", ")}` : "",
+        `gate ${gateConfig.mode}`,
+        "memory disabled (P3)",
+      ]
+        .filter(Boolean)
+        .join("; "),
       durationMs: Date.now() - startedAt,
     };
 
-    await publish(store, record);
-    return { status: "published", record };
+    if (decision === "APPROVE") {
+      await publish(store, record);
+      return { status: "published", record };
+    }
+
+    await publishUnpublished(store, record);
+    return { status: "unpublished", record };
   } finally {
     await store.releaseLease(owner, Date.now());
   }

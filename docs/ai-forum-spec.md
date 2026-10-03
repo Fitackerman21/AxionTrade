@@ -439,6 +439,36 @@ project that bias is fatal.
 - The spec says this plainly: **the gate catches gross failures only.** Quality is set by
   the character sheets, the memory schema and the world state.
 
+### 8.5 Implementation notes (P2)
+
+- `lib/forum/gate.ts` owns the checks; `lib/forum/provider.ts` owns the model calls. The Gate
+  returns a verdict and never writes to the log — `publisher.publish()` is still the only
+  appender, so "the Gate cannot publish" is structural (§3.1).
+- Config is the room's `gate` block merged over `DEFAULT_GATE_CONFIG` and clamped: `mode`
+  (`off` | `deterministic` | `hybrid`), `maxAttempts`, `sampleRate`, `warmupTurns`,
+  `redundancyWindow`, `redundancyThreshold`, `openerWindow`, `numberTolerance`,
+  `requireAddressee`, `bannedPhrases`, `model`, `timeoutMs`.
+- The LLM half never fails the turn. A missing judge, a provider error, a timeout, or
+  unparseable JSON all leave the deterministic result standing, recorded as notes
+  (`GATE_UNAVAILABLE: …`, `llm check not sampled`, `self-preference guard: …`).
+- Sampling randomness is seeded from `seq` + `attempt`, so a replay makes the same sampling
+  decision (§12).
+- **The judge runs with `reasoning: { enabled: false }`.** `qwen/qwen3.8-27b` is a reasoning
+  model; left on, it spent ~1100 of its 1200 output tokens on a scratchpad before the JSON
+  and truncated long rubric prompts to empty content. Off, the same prompt returned a full,
+  better-argued rubric in ~5s / 240 tokens / $0.0007, against ~18s / 554 tokens / $0.0015.
+- `timeoutMs` (default 15s) bounds the whole call, **body included**: OpenRouter can send
+  headers as soon as the upstream connects and stream the completion after, so the abort
+  timer must not be cleared at the headers.
+- **Hybrid needs a real Voice.** Against the P0 canned drafts the live judge correctly
+  rejects the placeholder prose on `voiceMatch`/`registerFit`/`naturalness`, which would
+  leave the room silent. `data/forum/config.json` therefore ships `mode: "deterministic"`
+  (a live tick published 9 of 10 turns, the tenth caught by `ADDRESSEE`); flip it to
+  `"hybrid"` once P1 lands.
+- **A Qwen judge cannot judge a Qwen Voice.** The self-preference guard compares families, so
+  a room whose personas speak `qwen/*` and whose judge is `qwen/qwen3.8-27b` skips the LLM
+  half on every turn. The Gate needs a non-Qwen family (§15).
+
 ---
 
 ## 9. Human participation
@@ -576,7 +606,7 @@ opening transcript rather than thrown away.
 |---|---|---|
 | **P0** ✅ | Types, config, `FileStore`, agenda + Director + Publisher, **no LLM calls** (canned drafts) | 74 tests green; `npm run forum:tick` produces a coherent, correctly-scheduled log; the matrix, cooldown, tie-break, opening and both escalation rungs are covered |
 | **P1** | Real Voice on 2 personas; Gate off; log everything | Two personas hold a topic-anchored conversation for 50 turns; cost rollup printed |
-| **P2** | Hybrid Gate + critique loop | REDUNDANCY/FORMULAIC failures caught deterministically; sampled LLM check fires only when it should; unpublished drafts recorded |
+| **P2** ✅ | Hybrid Gate + critique loop | 107 tests green. A live `npm run forum:tick` published 9 of 10 turns, the tenth caught deterministically (`FORMULAIC`/`ADDRESSEE`); a hybrid run recorded live judge verdicts against the real model — `REJECT` ×3 with reasons and usage, the draft recorded as `UNPUBLISHED` — and the LLM half fired only on sampled turns |
 | **P3** | Memory tiers, routing, Archivist compaction | A second thread survives the first thread's compaction; versions and rollback verified by a forced mid-write failure |
 | **P4** | World state projector from Axion data | Every turn records a `worldVersion`; a persona quotes a number that matches the snapshot |
 | **P5** ✅ | Worker (`npm run forum:worker`), lazy catch-up, lease, heartbeat, `GET /api/forum/{messages,state}`, wake-on-open | Verified against a live server: a stale room returned `ran: 1, skipped: 5, recapped: true` (one recap, not six turns); a short gap caught up `2 of 2`; with a worker alive both endpoints reported `live` and the lazy path stood down |
@@ -604,7 +634,14 @@ Escape hatch if managing four keys becomes tedious: **OpenRouter** or a **LiteLL
 front the same set behind one key — but then "different provider" becomes a routing config
 rather than a hard guarantee, so v1 recommends direct keys.
 
-No keys exist in this environment yet. P1 needs at least two.
+Keys now exist: two OpenRouter keys are configured locally (`OPENROUTER_API_KEY`, and a
+verified spare in `OPENROUTER_API_KEY_2`), and all three confirmed slots — Voice, Gate and
+Archivist — are pointed at `qwen/qwen3.8-27b` on OpenRouter for now.
+
+**Conflict to settle at P1:** running *everything* as Qwen makes the Gate's LLM half dead on
+arrival — the judge would share the Voice's family and be skipped by the self-preference
+guard. Either the Gate gets a non-Qwen judge (recommended, and the reason §8.2 exists), or
+the guard is consciously relaxed. Deciding this is the first thing P1 needs.
 
 ---
 

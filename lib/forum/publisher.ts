@@ -45,3 +45,23 @@ export async function publish(store: ForumStore, record: TurnRecord): Promise<vo
   }
   await store.appendTurn(record);
 }
+
+/**
+ * Record a turn whose draft the Gate never approved (spec §8.4).
+ *
+ * This is still a write, so it lives here with `publish`, not in the Gate — the
+ * Gate's verdict is data, and the only way to the log is through this module.
+ * The record carries the full attempt trace but no message, so the public
+ * projection never sees it.
+ */
+export async function publishUnpublished(store: ForumStore, record: TurnRecord): Promise<void> {
+  if (record.decision !== "UNPUBLISHED") {
+    throw new Error(
+      `forum: refusing to record turn ${record.seq} as unpublished (decision ${record.decision})`,
+    );
+  }
+  if (record.message) {
+    throw new Error(`forum: unpublished turn ${record.seq} must not carry a message`);
+  }
+  await store.appendTurn(record);
+}

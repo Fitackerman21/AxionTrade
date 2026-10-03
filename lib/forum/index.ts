@@ -10,7 +10,39 @@ export type { CatchUpOptions, CatchUpReport } from "./catchup";
 export { runWorker } from "./worker";
 export type { WorkerHandle, WorkerOptions, WorkerTurnEvent } from "./worker";
 export { gapMsFor, meanGapMs, nextTurnAt, turnsOwed } from "./clock";
-export { buildMessage, publish } from "./publisher";
+export { buildMessage, publish, publishUnpublished } from "./publisher";
+export {
+  DEFAULT_GATE_CONFIG,
+  GATE_CODES,
+  RUBRIC_ITEMS,
+  buildJudgePrompt,
+  parseRubric,
+  resolveGateConfig,
+  rubricFailures,
+  runDeterministicChecks,
+  runGate,
+  shouldSampleLlm,
+} from "./gate";
+export type {
+  GateCode,
+  GateContext,
+  GateFailure,
+  GateRunOptions,
+  GateVerdict,
+  JudgePrompt,
+  LlmRubric,
+  RubricItem,
+} from "./gate";
+export {
+  OPENROUTER_URL,
+  OpenRouterProvider,
+  ProviderError,
+  modelFamily,
+  openRouterKey,
+  resolveJudgeProvider,
+  sameFamily,
+} from "./provider";
+export type { ChatMessage, ChatProvider, ChatRequest, ChatResponse, ChatUsage } from "./provider";
 export { nextEvent } from "./agenda";
 export type { AgendaContext } from "./agenda";
 export { pickSpeaker, recencyFromTurns } from "./schedule";

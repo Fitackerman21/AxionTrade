@@ -133,8 +133,9 @@ export async function catchUp(
     statuses.push(result.status);
     if (result.record) ran += 1;
 
-    // Somebody else took over mid-burst (or the clock moved). Stop quietly.
-    if (result.status !== "published") break;
+    // Somebody else took over mid-burst (or the clock moved). Stop quietly. An
+    // UNPUBLISHED turn still produced a record, so the burst keeps going.
+    if (result.record === null) break;
   }
 
   return { mode, owed, ran, skipped, recapped: stale, statuses, reason };
