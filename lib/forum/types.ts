@@ -115,6 +115,11 @@ export interface GateConfig {
   bannedPhrases: string[];
   /** judge model id for the LLM half; when unset (or no key) only deterministic runs */
   model?: string;
+  /**
+   * Ordered judge models, tried in turn when one is rate-limited, blocked or times
+   * out (§8.6). Supersedes `model`, which is kept so an older room still loads.
+   */
+  models?: string[];
   /** how long to wait for the judge before falling back to deterministic (§10.2) */
   timeoutMs: number;
 }

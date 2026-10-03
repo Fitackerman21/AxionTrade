@@ -34,11 +34,14 @@ export type {
   RubricItem,
 } from "./gate";
 export {
+  FallbackProvider,
   OPENROUTER_URL,
   OpenRouterProvider,
   ProviderError,
+  judgeModels,
   modelFamily,
   openRouterKey,
+  openRouterKeys,
   resolveJudgeProvider,
   sameFamily,
 } from "./provider";

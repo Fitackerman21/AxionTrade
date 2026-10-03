@@ -53,7 +53,11 @@
       "I hope this helps",
       "Certainly!"
     ],
-    "model": "inclusionai/ling-3.0-flash-sante:free",
+    "models": [
+      "inclusionai/ling-3.0-flash-sante:free",
+      "dots-studio/dots-3-note-preview:free",
+      "poolside/laguna-s-2.1:free"
+    ],
     "timeoutMs": 15000
   }
 }

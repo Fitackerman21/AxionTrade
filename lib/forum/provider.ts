@@ -259,14 +259,100 @@ export function openRouterKey(): string | undefined {
   return key ? key : undefined;
 }
 
+/** Matches the primary key and every suffixed spare: `_2`, `_LING`, `_DOTS`. */
+const KEY_NAME = /^OPENROUTER_API_KEY(_[A-Z0-9_]+)?$/;
+
 /**
- * Build the judge provider from config + env (spec §8.2, §15). Returns undefined
- * when there is no key or no model, which makes the Gate fall back to its
- * deterministic checks instead of failing the turn.
+ * Every OpenRouter key in the environment, in a stable order.
+ *
+ * Keys are interchangeable — none is scoped to a model — so a room holding
+ * several is buying rate-limit headroom rather than extra capability, and the
+ * Gate spends them in rotation to keep a busy hour under the free tier's cap
+ * (§8.6). Never logged.
  */
-export function resolveJudgeProvider(gate: { model?: string }): ChatProvider | undefined {
-  const apiKey = openRouterKey();
-  const model = gate.model?.trim();
-  if (!apiKey || !model) return undefined;
-  return new OpenRouterProvider({ apiKey, model });
+export function openRouterKeys(): string[] {
+  return Object.keys(process.env)
+    .filter((name) => KEY_NAME.test(name))
+    .sort()
+    .map((name) => process.env[name]?.trim())
+    .filter((value): value is string => Boolean(value));
+}
+
+/**
+ * One logical judge over several models (§8.6).
+ *
+ * Tries each member in order and returns the first answer. This is deliberately
+ * *failover*, not a panel: exactly one model judges, and the caller cannot tell
+ * which. Free tiers fail by availability — 429s, timeouts, provider outages —
+ * which is what this absorbs.
+ *
+ * It is not an ensemble for two reasons. Combining verdicts would mean combining
+ * `confidence`, which each model calibrates for itself, so `0.85` from one and
+ * `0.95` from another are not comparable and any aggregate would be invented. And
+ * calling all members at once multiplies the rate-limit pressure that causes the
+ * failures this exists to survive.
+ */
+export class FallbackProvider implements ChatProvider {
+  readonly id = "fallback";
+  readonly model: string;
+  readonly family: string;
+  private readonly members: readonly ChatProvider[];
+
+  constructor(members: readonly ChatProvider[]) {
+    if (members.length === 0) throw new Error("fallback: at least one provider is required");
+    this.members = members;
+    this.model = members[0]!.model;
+    this.family = members[0]!.family;
+  }
+
+  async chat(request: ChatRequest): Promise<ChatResponse> {
+    const failures: string[] = [];
+    for (const member of this.members) {
+      try {
+        return await member.chat(request);
+      } catch (error) {
+        failures.push(`${member.model} (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+    throw new ProviderError(
+      `all ${this.members.length} judges failed — ${failures.join("; ")}`,
+      0,
+    );
+  }
+}
+
+/** The judge models a room asks for, preferring the ordered `models` list. */
+export function judgeModels(gate: { model?: string; models?: string[] }): string[] {
+  const listed = Array.isArray(gate.models) ? gate.models : [];
+  const cleaned = listed.map((model) => model?.trim()).filter((model): model is string => Boolean(model));
+  if (cleaned.length > 0) return cleaned;
+  const single = gate.model?.trim();
+  return single ? [single] : [];
+}
+
+/**
+ * Build the judge from config + env (spec §8.2, §8.6, §15). Returns undefined when
+ * there is no key or no model, which makes the Gate fall back to its deterministic
+ * checks instead of failing the turn.
+ *
+ * Models sharing the voice's family are dropped here rather than left to the guard
+ * in `runGate`, so a room whose *first* choice is its own family still gets judged
+ * by the next one instead of losing the LLM half outright.
+ */
+export function resolveJudgeProvider(
+  gate: { model?: string; models?: string[] },
+  voiceModel?: string,
+): ChatProvider | undefined {
+  const keys = openRouterKeys();
+  if (keys.length === 0) return undefined;
+
+  const models = judgeModels(gate).filter(
+    (model) => !voiceModel || !sameFamily(voiceModel, model),
+  );
+  if (models.length === 0) return undefined;
+
+  const providers = models.map(
+    (model, index) => new OpenRouterProvider({ apiKey: keys[index % keys.length]!, model }),
+  );
+  return providers.length === 1 ? providers[0]! : new FallbackProvider(providers);
 }

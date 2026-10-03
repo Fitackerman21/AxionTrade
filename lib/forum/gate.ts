@@ -595,7 +595,11 @@ export async function runGate(options: GateRunOptions): Promise<GateVerdict> {
   if (!sampled) return pass(["llm check not sampled"]);
 
   const judge = options.judge;
-  if (!judge) return pass(["llm check requested but no judge is configured"]);
+  // Accurate for both causes: no key/model at all, or every candidate dropped for
+  // sharing the voice's family at resolution time (§8.7).
+  if (!judge) {
+    return pass(["llm check requested but no judge is available (unconfigured, or all candidates share the voice's family)"]);
+  }
 
   // Self-preference guard (§8.2): a model must never judge its own family.
   if (options.voiceModel && sameFamily(options.voiceModel, judge.model)) {

@@ -4,14 +4,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  FallbackProvider,
   JSON_INSTRUCTION,
   OpenRouterProvider,
   ProviderError,
   modelFamily,
   openRouterKey,
+  openRouterKeys,
   resolveJudgeProvider,
   sameFamily,
 } from "./provider";
+import type { ChatProvider } from "./provider";
 
 function fetchReturning(body: unknown, status = 200): typeof fetch {
   const text = typeof body === "string" ? body : JSON.stringify(body);
@@ -151,6 +154,123 @@ test("the timeout covers the response body, not just the headers", async () => {
     (error: unknown) =>
       error instanceof ProviderError && /timed out after 20ms/.test(error.message),
   );
+});
+
+/* --------------------------------------------------------------- the judge chain */
+
+/** Snapshot and restore every OPENROUTER_API_KEY* variable, so tests stay hermetic. */
+function withKeys(keys: Record<string, string>, fn: () => void): void {
+  const live = Object.keys(process.env).filter((name) => name.startsWith("OPENROUTER_API_KEY"));
+  const saved = live.map((name) => [name, process.env[name]!] as const);
+
+  for (const name of live) delete process.env[name];
+  for (const [name, value] of Object.entries(keys)) process.env[name] = value;
+  try {
+    fn();
+  } finally {
+    for (const name of Object.keys(process.env)) {
+      if (name.startsWith("OPENROUTER_API_KEY")) delete process.env[name];
+    }
+    for (const [name, value] of saved) process.env[name] = value;
+  }
+}
+
+test("every configured key is collected, and nothing else is", () => {
+  withKeys(
+    { OPENROUTER_API_KEY: "primary", OPENROUTER_API_KEY_2: "spare", OPENROUTER_API_KEY_LING: "ling" },
+    () => {
+      assert.deepEqual(openRouterKeys(), ["primary", "spare", "ling"]);
+
+      process.env.OPENROUTER_KEYS = "nope";
+      try {
+        assert.equal(openRouterKeys().includes("nope"), false, "a near-miss name is not a key");
+      } finally {
+        delete process.env.OPENROUTER_KEYS;
+      }
+    },
+  );
+});
+
+test("several judge models condense into one judge", () => {
+  withKeys({ OPENROUTER_API_KEY: "k1", OPENROUTER_API_KEY_2: "k2" }, () => {
+    const judge = resolveJudgeProvider({
+      models: ["inclusionai/ling-3.0-flash-sante:free", "dots-studio/dots-3-note-preview:free"],
+    });
+    assert.equal(judge?.id, "fallback");
+    assert.equal(judge?.model, "inclusionai/ling-3.0-flash-sante:free");
+    assert.equal(judge?.family, "inclusionai");
+  });
+});
+
+test("the ordered list wins over the legacy single model", () => {
+  withKeys({ OPENROUTER_API_KEY: "k1" }, () => {
+    const judge = resolveJudgeProvider({
+      model: "qwen/qwen3.8-27b",
+      models: ["dots-studio/dots-3:x"],
+    });
+    assert.equal(judge?.model, "dots-studio/dots-3:x");
+    assert.equal(judge?.id, "openrouter", "a single model needs no chain");
+  });
+});
+
+test("a judge from the voice's own family is skipped, never used", () => {
+  withKeys({ OPENROUTER_API_KEY: "k1" }, () => {
+    const judge = resolveJudgeProvider(
+      { models: ["qwen/qwen3.8-27b", "inclusionai/ling:x"] },
+      "qwen/qwen3.8-27b",
+    );
+    assert.equal(judge?.model, "inclusionai/ling:x", "the chain falls through to another family");
+
+    assert.equal(
+      resolveJudgeProvider({ models: ["qwen/a", "qwen/b"] }, "qwen/qwen3.8-27b"),
+      undefined,
+      "no judge is better than a self-judging one",
+    );
+  });
+});
+
+test("a fallback judge answers with the first member that works", async () => {
+  const calls: string[] = [];
+  const member = (model: string, fail: boolean): ChatProvider => ({
+    id: "fake",
+    model,
+    family: modelFamily(model),
+    chat: async () => {
+      calls.push(model);
+      if (fail) throw new ProviderError("rate limited", 429);
+      return { text: "{}", model, usage: { tokensIn: 1, tokensOut: 1, cost: 0 } };
+    },
+  });
+
+  const chain = new FallbackProvider([member("a/x", true), member("b/y", false), member("c/z", false)]);
+  const response = await chain.chat(REQUEST);
+
+  assert.equal(response.model, "b/y");
+  assert.deepEqual(calls, ["a/x", "b/y"], "members after the first success are never called");
+});
+
+test("a fallback judge names every failure when no member answers", async () => {
+  const failing = (model: string): ChatProvider => ({
+    id: "fake",
+    model,
+    family: modelFamily(model),
+    chat: async () => {
+      throw new ProviderError("upstream failed", 502);
+    },
+  });
+
+  await assert.rejects(
+    () => new FallbackProvider([failing("a/x"), failing("b/y")]).chat(REQUEST),
+    (error: unknown) =>
+      error instanceof ProviderError &&
+      /all 2 judges failed/.test(error.message) &&
+      error.message.includes("a/x") &&
+      error.message.includes("b/y"),
+  );
+});
+
+test("a fallback judge with no members is a construction error", () => {
+  assert.throws(() => new FallbackProvider([]), /at least one provider/);
 });
 
 test("the judge provider is only built when a key and model are both present", () => {

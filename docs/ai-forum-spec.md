@@ -505,8 +505,39 @@ Three things this survey settled that reading the model list would not have:
   failed item and the §8.4 critique loop silently loses its feedback.
 - **Availability, not quality, is the free tier's binding constraint.** Gemma 429'd on every
   attempt, Inkling is 403 (agentic harnesses only), one Nemotron call took 28s, and the *same*
-  model varied 1.0s → 10.9s between two calls. A fallback chain of 2–3 judges is the next
-  hardening step; a single model is a single point of failure.
+  model varied 1.0s → 10.9s between two calls. A single model is a single point of failure, so
+  the room runs a chain (§8.7).
+
+### 8.7 The judge chain (failover, not a panel)
+
+Several models serve **one** function. `gate.models` is an ordered list; the Gate builds a
+single `ChatProvider` over it (`FallbackProvider`) and tries each in turn, so exactly one model
+judges and the caller cannot tell which. The model recorded on the turn is the one that
+actually answered.
+
+This is deliberately failover, not an ensemble:
+
+- Combining verdicts would mean combining `confidence`, which each model calibrates for
+  itself — `0.85` from one and `0.95` from another are not comparable, so any aggregate would
+  be invented, and §8.3's mapping is written for **one** rubric.
+- Calling every judge at once multiplies the rate-limit pressure that *causes* the failures
+  the chain exists to survive. Failover spends one call while things are healthy, and only
+  reaches for the next when one genuinely fails.
+
+**Keys are interchangeable, not capabilities.** The three keys were created "for" specific
+models, but each one works for any model (verified: the Ling key calls Qwen and Laguna), so a
+room holding several is buying *rate-limit headroom*, not extra access. `openRouterKeys()`
+collects every `OPENROUTER_API_KEY*` variable and the chain spends them in rotation, so adding
+a spare needs no code change.
+
+**The family guard runs at resolution, not only inside the Gate.** Candidates sharing the
+voice's family are dropped while the chain is built, so a room whose *first* choice is its own
+family still gets judged by the next one instead of losing the LLM half outright. If every
+candidate is the voice's family there is no judge, and the deterministic result stands.
+
+Verified live: the configured chain returned `REJECT` in ~1.2s through Ling; a chain whose
+first member was a non-existent model fell over and still answered through Ling; and an
+all-Qwen chain resolved to no judge, leaving the deterministic result standing.
 
 ---
 
@@ -677,11 +708,14 @@ Keys now exist: two OpenRouter keys are configured locally (`OPENROUTER_API_KEY`
 verified spare in `OPENROUTER_API_KEY_2`), and all three confirmed slots — Voice, Gate and
 Archivist — are pointed at `qwen/qwen3.8-27b` on OpenRouter for now.
 
-**Settled (§8.6):** the Gate does *not* run Qwen. Running everything as Qwen leaves the Gate's
-LLM half dead on arrival, because the judge would share the Voice's family and the
-self-preference guard would skip it on every turn. The judge is
-`inclusionai/ling-3.0-flash-sante:free` — a different family, ~1.1s, and the only kind of
-model that survived the good/bad separation test.
+**Settled (§8.6, §8.7):** the Gate does *not* run Qwen. Running everything as Qwen leaves the
+Gate's LLM half dead on arrival, because the judge would share the Voice's family and the
+self-preference guard would skip it on every turn.
+
+Five keys are configured — two Qwen (`OPENROUTER_API_KEY`, `_2`) for the Voices, and three for
+the Gate chain (`_LING`, `_DOTS`, `_LAGUNA`). None is model-scoped; they are quota, not
+capability. The Gate's order is `ling-3.0-flash-sante` → `dots-3-note-preview` →
+`laguna-s-2.1`, all three of which survived the good/bad separation test.
 
 ---
 

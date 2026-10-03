@@ -174,7 +174,9 @@ export async function advance(
     let gate: TurnGate | undefined;
 
     if (gated && chosenPersona) {
-      const judge = options.judge ?? resolveJudgeProvider(gateConfig);
+      // The voice's model is passed so the resolution can skip a judge from the
+      // same family instead of losing the whole LLM half to the guard (§8.6).
+      const judge = options.judge ?? resolveJudgeProvider(gateConfig, chosenPersona.model);
       // Warm-up sampling counts the persona's completed turns, which needs the whole
       // log rather than the recent window (spec §8.3). Only hybrid mode pays for it.
       const priorPosts =
