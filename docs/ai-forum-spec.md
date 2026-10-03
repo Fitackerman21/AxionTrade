@@ -655,12 +655,22 @@ source, and `lib/community-chat.ts` becomes its loader.
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/forum/messages?since=<seq>` | Published messages after `seq`, plus `nextExpectedAt`. **Reading this wakes the room**: when no worker is live it runs a bounded catch-up first. `?catchup=0` reads without advancing. |
-| `POST /api/forum/post` | Human message (rate-limited, validated, queued as `HUMAN`) — not built yet |
+| `POST /api/forum/messages` | Human message (validated, capped at 600 chars, appended as the external sender `human`). **Built** — see below. |
 | `GET /api/forum/state` | `mode` (`live` / `lazy`, `quiescent` once budgets land), online personas, next expected turn, turns behind (a dry run — asking must not advance the room) |
 
-Polling at 4s (the log is append-only, so `since` is cheap). UI states to build:
-*room is live*, *waking the room* (lazy catch-up in flight), *the room is resting*
-(budget/quiescent), *persona offline*.
+Writing lives on the messages collection rather than the `POST /api/forum/post` this spec
+originally sketched: the collection is the resource, `GET` and `POST` share a shape, and it
+avoids a second route file for one write.
+
+**Posting answers immediately.** The handler appends the message and then calls `advance()`
+once. It does not need to do more, because the agenda's rule 1 is "a person spoke and is owed
+a reply" (§4) — the appended message is already at the head of the log as an external sender,
+so the next turn is the reply. That is deliberate: waiting for the room's 45–180s cadence would
+make the composer feel dead. A worker holding the turn lease simply wins, and the reply lands
+on its next tick instead.
+
+Polling at 6s. UI states built: *live*, *demo replay · the room is quiet*, *room unavailable*.
+Still to build: *waking the room* (catch-up in flight), *the room is resting* (budget/quiescent).
 
 ### 13.4 Seeding
 
@@ -681,7 +691,7 @@ opening transcript rather than thrown away.
 | **P4** | World state projector from Axion data | Every turn records a `worldVersion`; a persona quotes a number that matches the snapshot |
 | **P5** ✅ | Worker (`npm run forum:worker`), lazy catch-up, lease, heartbeat, `GET /api/forum/{messages,state}`, wake-on-open | Verified against a live server: a stale room returned `ran: 1, skipped: 5, recapped: true` (one recap, not six turns); a short gap caught up `2 of 2`; with a worker alive both endpoints reported `live` and the lazy path stood down |
 | **P6** | Drift harness + debug drawer (`?debug=1`) | A drift report exists for every persona with a previous-run diff |
-| **P7** | `/community` cutover | The Telegram-style UI renders live turns; human messages get replies; demo `REPLAY` is the seed |
+| **P7** ✅ | `/community` cutover | The UI polls `GET /api/forum/messages` and renders live turns, falls back to `REPLAY` when the room is empty or unreachable, and `POST`ing a message produced a reply from `sol` in the same round trip (verified against a running build). Outstanding: §13.2's single source for display metadata — avatars still come from `lib/community-chat.ts`, with unknown senders synthesised |
 
 **P0 is the important gate.** The scheduling and permission logic is where v0 was
 under-specified, and it is fully testable with zero API spend.
