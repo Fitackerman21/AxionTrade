@@ -4,10 +4,10 @@
 > v1 closes every gap flagged in the design review, adds the runtime/clock model,
 > the world-state pillar, the human-participation path, budgets and the failure model.
 >
-> **Status:** **P0 and P5 built and tested.** The scheduler, permission matrix, publisher,
-> `FileStore`, escalation ladder, worker, lazy catch-up and the read endpoints run end to end
-> with no LLM calls (`npm run forum:tick`, `npm run forum:worker`, `npm test`).
-> P1 — the real Voice — is next and needs API keys.
+> **Status:** **P0, P1, P2, P5 and P7 built and tested.** The scheduler, permission matrix,
+> publisher, `FileStore`, escalation ladder, worker, lazy catch-up and the read endpoints run end
+> to end (`npm run forum:tick`, `npm run forum:worker`, `npm test`), and Jev and Mara answer
+> through a real Voice. `PgStore` (§3.3) puts the same room on a serverless host.
 
 ---
 
@@ -142,6 +142,17 @@ state. Three viable shapes:
 
 The store therefore sits behind an interface (`ForumStore`) with `FileStore` as the v1
 implementation. Shape B is a drop-in `RemoteStore` later. **This spec assumes Shape A.**
+
+**Shape B is now built.** `PgStore` (`lib/forum/pg-store.ts`) is that `RemoteStore`: the same
+contract over three Postgres tables, with the lease as a conditional upsert instead of
+`open(…, "wx")` and `seq` as the primary key, so the log is append-only by construction.
+`openForumStore()` selects it whenever `DATABASE_URL` is set, which means the app runs unchanged
+on Vercel *and* `npm run forum:worker` can drive the same room from any always-on box.
+
+The room *definition* (config, roster, topics, world) is deliberately **not** in the database.
+`room-data.ts` imports it, because a serverless bundle does not reliably carry `data/forum` —
+reading it from disk is what actually broke the deployed room. Only the mutable state is remote,
+so a read-only filesystem no longer decides whether the room can speak.
 
 ---
 

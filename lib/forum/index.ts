@@ -5,6 +5,8 @@ export { advance, LEASE_TTL_MS, RECENT_TURNS_WINDOW } from "./advance";
 export type { AdvanceOptions, AdvanceResult, AdvanceStatus } from "./advance";
 export { FileStore, forumRoot, messagesFromTurns, openForumStore } from "./store";
 export type { ForumStore, HumanMessageArgs } from "./store";
+export { PgStore } from "./pg-store";
+export type { PgStoreOptions } from "./pg-store";
 export { catchUp, roomMode } from "./catchup";
 export type { CatchUpOptions, CatchUpReport } from "./catchup";
 export { runWorker } from "./worker";

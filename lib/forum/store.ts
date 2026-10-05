@@ -13,6 +13,8 @@
 import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { humanMessageRecord } from "./human";
+import { PgStore } from "./pg-store";
 import type {
   ForumConfig,
   ForumMessage,
@@ -165,44 +167,7 @@ export class FileStore implements ForumStore {
   async appendHumanMessage(args: HumanMessageArgs): Promise<TurnRecord> {
     const last = await this.readLastTurn();
     const seq = (last?.seq ?? 0) + 1;
-    const side: Side = args.side ?? "a";
-
-    const record: TurnRecord = {
-      seq,
-      t: args.t,
-      driver: "human",
-      trigger: "HUMAN",
-      event: {
-        kind: "HUMAN",
-        reason: "human input",
-        sender: args.sender,
-        topicId: args.topicId,
-        side,
-      },
-      candidates: [],
-      ordered: [],
-      chosen: null,
-      escalated: null,
-      decision: "APPROVE",
-      attempts: [],
-      message: {
-        id: `m_${seq}`,
-        seq,
-        t: args.t,
-        sender: args.sender,
-        primaryRecipient: "",
-        mentions: [],
-        text: args.text,
-        topicId: args.topicId,
-        side,
-        system: false,
-      },
-      memoryWrites: [],
-      worldVersion: "",
-      note: "human input",
-      durationMs: 0,
-    };
-
+    const record = humanMessageRecord(seq, args);
     await this.appendTurn(record);
     return record;
   }
@@ -276,7 +241,16 @@ export function forumRoot(): string {
   return configured ? path.resolve(configured) : path.join(process.cwd(), DEFAULT_FORUM_ROOT);
 }
 
-/** The store the app and the tools use unless told otherwise. */
-export function openForumStore(root: string = forumRoot()): FileStore {
+/**
+ * The store the app and the tools use unless told otherwise.
+ *
+ * `DATABASE_URL` selects Postgres. That is the deployment case: a serverless host
+ * has a read-only filesystem and no shared instance, so a log on disk is neither
+ * writable nor visible to the next request (spec §3.3). Without it the room is a
+ * directory, which is what local development and the CLI tools want.
+ */
+export function openForumStore(root: string = forumRoot()): ForumStore {
+  const url = process.env.DATABASE_URL?.trim();
+  if (url) return new PgStore({ connectionString: url });
   return new FileStore(root);
 }
