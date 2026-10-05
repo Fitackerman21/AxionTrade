@@ -37,7 +37,7 @@ import { BrandMark } from "@/components/brand";
 import {
   ONLINE_COUNT,
   PERSONAS,
-  REPLAY,
+  REPLAY_INDEXED,
   type ChatPersona,
 } from "@/lib/community-chat";
 import type { ForumMessage } from "@/lib/forum/types";
@@ -103,7 +103,7 @@ function replayRows(): Row[] {
   const base = new Date();
   base.setHours(8, 0, 0, 0);
   const start = base.getTime();
-  return REPLAY.map((m) => ({
+  return REPLAY_INDEXED.map((m) => ({
     key: `replay-${m.id}`,
     from: m.from,
     text: m.text,

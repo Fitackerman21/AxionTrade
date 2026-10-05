@@ -54,4 +54,6 @@ export { respondersFor } from "./permissions";
 export type { PermissionLookup } from "./permissions";
 export { cannedDraft } from "./drafts";
 export type { DraftContext } from "./drafts";
+export { voiceDraft } from "./voice";
+export type { VoiceDraftOptions, VoiceDraftResult } from "./voice";
 export { hashPick, hashString, mulberry32, orderByWeightThenSeed } from "./rng";

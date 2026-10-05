@@ -8,6 +8,7 @@
     "color": "#9fc6ff",
     "online": true,
     "bot": true,
+    "model": "qwen/qwen3.8-27b",
     "sheet": {
       "stance": "systematic, conviction-weighted, no opinion without a number",
       "register": { "minChars": 80, "maxChars": 320, "note": "terse session reports, no emoji" },
@@ -31,6 +32,7 @@
     "g2": "#f97316",
     "color": "#fda4af",
     "online": true,
+    "model": "qwen/qwen3.8-27b",
     "sheet": {
       "stance": "patient, long gold, allergic to being outperformed by code",
       "register": { "minChars": 40, "maxChars": 240, "note": "warm, emoji-heavy, small size" },

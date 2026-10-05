@@ -1,9 +1,17 @@
 /**
- * Hardcoded demo conversation for the Axion community chat.
- * Ten personas with distinct voices; rendered by components/community-chat.tsx.
- * Purely static — no backend, no live data.
+ * Voice-through-persona demo for the Axion community chat.
+ *
+ * These ten turns are the P1 acceptance surface: two personas — Jev and Mara —
+ * carry the conversation, and each reply should read like the persona answered
+ * the room itself rather than filled a template slot. The replay is kept so the
+ * page still has a fallback when the room is empty, unreachable, or running on a
+ * host without a driver.
+ *
+ * When the real Voice lands, this module becomes a loader from data/forum and the
+ * hardcoded replay shrinks to a seed only.
  */
 
+/** Chat persona display metadata — the subset the chat UI needs on every turn. */
 export interface ChatPersona {
   id: string;
   name: string;
@@ -17,6 +25,9 @@ export interface ChatPersona {
   bot?: boolean;
 }
 
+/** Ten-persona roster shared with the chat UI. In P1 this list is a loader over
+data/forum/personas.json; here it still carries the same display fields the room
+already uses. Two of those personas are the ones getting a real Voice first. */
 export const PERSONAS: ChatPersona[] = [
   {
     id: "jev",
@@ -111,63 +122,10 @@ export const PERSONAS: ChatPersona[] = [
   },
 ];
 
-export interface ChatMessage {
-  id: number;
-  /** sender persona id */
-  from: string;
-  /** minutes after the previous message (for timestamps) */
-  gapMin: number;
-  text: string;
-  /** optional ticker sticker rendered above the bubble */
-  ticker?: string;
-}
-
-export const MESSAGES: ChatMessage[] = [
-  { id: 1, from: "jev", gapMin: 0, text: "Good morning everyone. AxAI session started — planning cycle loaded, 4h horizon, conviction band 50–96%." },
-  { id: 2, from: "mara", gapMin: 2, text: "Morning room 🔋 anyone watching gold here? It's been coiling all week." },
-  { id: 3, from: "raul", gapMin: 4, text: "Gold, silver, copper — the whole metals complex is coiling. Waiting on the dollar to pick a side." },
-  { id: 4, from: "sol", gapMin: 1, text: "meanwhile BTC is doing BTC things 😂 grinding up 2% while everyone is asleep" },
-  { id: 5, from: "jev", gapMin: 3, text: "BTC read: short-term structure still long. Book conviction 62% — not enough to press, enough to hold.", ticker: "BTC" },
-  { id: 6, from: "toko", gapMin: 5, text: "Nikkei futures gap up on the open. Scalping the first 30 min only, then I'm hands off." },
-  { id: 7, from: "priya", gapMin: 8, text: "Singapore open was quiet. Tech earnings this week will set the tone — my book is hedged until then." },
-  { id: 8, from: "kofi", gapMin: 6, text: "cable looks heavy into London. if 1.2610 gives way I'm short with a tight stop", ticker: "GBPUSD" },
-  { id: 9, from: "nadia", gapMin: 7, text: "Reminder from the risk desk: it's NFP week. Half size until Friday, no matter how good the setup looks." },
-  { id: 10, from: "mara", gapMin: 4, text: "The discipline queen has spoken 👑 half size it is." },
-  { id: 11, from: "dmitri", gapMin: 12, text: "Bund spread widening again. Macro funds are positioning for the hawkish scenario — keep that in your filter." },
-  { id: 12, from: "sol", gapMin: 3, text: "SOL governance vote passed, chart barely moved. Market doesn't care, noted 📝", ticker: "SOL" },
-  { id: 13, from: "jev", gapMin: 5, text: "Fill logged: AxAI went LONG XAU at 2,391.4, conviction 74%. Stop structure shared in the terminal.", ticker: "XAU" },
-  { id: 14, from: "lena", gapMin: 9, text: "Nice. My ETF flows screen still shows outflows from gold funds though — interesting divergence with price." },
-  { id: 15, from: "raul", gapMin: 2, text: "Divergences like that usually resolve in price's favour. Flows lag." },
-  { id: 16, from: "toko", gapMin: 11, text: "Took 3 quick scalps on the Nikkei open, 2/3 green. Small but green. That's the game 🎯" },
-  { id: 17, from: "kofi", gapMin: 6, text: "cable tapped 1.2612 and bounced. my level lives another day 😅" },
-  { id: 18, from: "priya", gapMin: 14, text: "Anyone have a good read on semis? NVDA earnings spillover is my only concern for the week." },
-  { id: 19, from: "dmitri", gapMin: 4, text: "Semis = the macro trade right now. Everything else is noise around it." },
-  { id: 20, from: "nadia", gapMin: 3, text: "If you trade earnings you trade risk, not opinion. Know your gap tolerance before the print." },
-  { id: 21, from: "jev", gapMin: 7, text: "Session update: 6 fills, book net long, aggregate conviction 68%. Equity +1.9% on the cycle.", ticker: "AXN" },
-  { id: 22, from: "sol", gapMin: 2, text: "the bot is outperforming half the room and it doesn't even have hands 💀" },
-  { id: 23, from: "mara", gapMin: 5, text: "I refuse to be outperformed by code. Refuse. 😤" },
-  { id: 24, from: "toko", gapMin: 4, text: "you will be. I made peace with it months ago. now I just copy its levels 😂" },
-  { id: 25, from: "jev", gapMin: 6, text: "Levels are public in the terminal for a reason. Copy away — liquidity is a compliment." },
-  { id: 26, from: "lena", gapMin: 16, text: "That's the healthiest take on AI trading I've seen in a group chat tbh." },
-  { id: 27, from: "kofi", gapMin: 8, text: "gold popping. jev you called it at 2,391 — what's the target?" },
-  { id: 28, from: "jev", gapMin: 3, text: "Measured move puts first objective at 2,418. Conviction now 81%. Path matters more than target.", ticker: "XAU" },
-  { id: 29, from: "raul", gapMin: 5, text: "Copper following gold up. Industrials will feel this next week." },
-  { id: 30, from: "priya", gapMin: 10, text: "Adding that to my watchlist. India metals names tend to follow with a one-day lag." },
-  { id: 31, from: "nadia", gapMin: 6, text: "End-of-day checklist: exposure halved? ✅ stops in? ✅ no new risk before NFP? ✅ that's the whole job." },
-  { id: 32, from: "sol", gapMin: 4, text: "risk desk dropping wisdom while I'm here buying dips with my whole face 🫡" },
-  { id: 33, from: "mara", gapMin: 9, text: "Gold at 2,404. Mara's patience trade finally paying. Small size, clean win." },
-  { id: 34, from: "jev", gapMin: 4, text: "Congrats Mara. XAU book trimmed 30% into 2,410 — letting the rest run with a trailed stop.", ticker: "XAU" },
-  { id: 35, from: "dmitri", gapMin: 13, text: "US session will be the decider. If bonds sell off into the auction, metals run further. Simple." },
-  { id: 36, from: "toko", gapMin: 7, text: "Tokyo close for me. Day's P&L green, screen time capped. Tomorrow same script. おやすみ ✨" },
-  { id: 37, from: "kofi", gapMin: 5, text: "clean execution toko 👏" },
-  { id: 38, from: "nadia", gapMin: 8, text: "That's the content. Green days, capped hours, no heroics. See you all at the London open." },
-  { id: 39, from: "jev", gapMin: 6, text: "Cycle closed: +2.4% equity, 9 fills, max drawdown 0.6%. Next planning cycle in 4h. I'll be here.", ticker: "AXN" },
-  { id: 40, from: "sol", gapMin: 3, text: "the bot said 'I'll be here' and honestly that's more commitment than my last 3 partners 😭" },
-];
-
-/** Grouped "members" list for the right rail / header count. */
+/** Grouped "members" count for the header and the right rail. */
 export const ONLINE_COUNT = PERSONAS.filter((p) => p.online).length;
 
+/** One replay line shown when the room is quiet or unavailable. */
 export interface ReplayMessage {
   id: number;
   from: string;
@@ -177,11 +135,85 @@ export interface ReplayMessage {
   t: number;
 }
 
-/** Scripted conversation with absolute timestamps — computed once at module load. */
-export const REPLAY: ReplayMessage[] = (() => {
+/** A replay line before it is retimed onto today (see `REPLAY_INDEXED`). */
+export type ReplaySource = Omit<ReplayMessage, "t">;
+
+/**
+ * The two personas getting a real Voice first, plus the conversation that shows
+ * whether Jev and Mara sound like themselves or like placeholders.
+ *
+ * Jev keeps doing what the engine does: short session reports, conviction
+ * percentages, and a bias toward path rather than target. Mara keeps doing what
+ * she does: warm, a little loud, and impatient about being beaten by a screen.
+ * The point of this list is that the next reply from either one should carry the
+ * same posture as the last one, not merely fit the same character sheet.
+ */
+export const REPLAY: ReplaySource[] = [
+  {
+    id: 1,
+    from: "jev",
+    text: "Morning. AxAI started the 4h planning cycle on the ride in — conviction band 50 to 96 percent, book flat on the open. Nobody trades the band, they trade what breaks it.",
+  },
+  {
+    id: 2,
+    from: "mara",
+    text: "Good morning room. Gold has been doing that thing where it looks boring right up until it isn’t, so I’m watching it more than I want to admit 🔋",
+  },
+  {
+    id: 3,
+    from: "mara",
+    text: "It’s been coiling all week and my patience is the only thing holding the line. Small size, clean mind, let the range tell me what it is.",
+  },
+  {
+    id: 4,
+    from: "jev",
+    text: "XAU read from the book: range is real, conviction 62 percent — not enough to press, enough to hold what we have. I don’t trade boredom, I trade the break of it.",
+  },
+  {
+    id: 5,
+    from: "mara",
+    text: "That’s the closest thing to a plan I’ve heard all week and I’m taking it literally. I’ve been here before when gold whispers and then shouts at whichever idiot is leaning the wrong way.",
+  },
+  {
+    id: 6,
+    from: "jev",
+    text: "Fill logged from the terminal: AxAI went long XAU at 2,391.4, conviction 74 percent. Stop structure is shared in the terminal, not in this chat.",
+    ticker: "XAU",
+  },
+  {
+    id: 7,
+    from: "mara",
+    text: "My first thought on seeing that fill was unreasonable and I’m not proud of it — I wanted to be in before the bot again. Then I remembered my own rule and put the thumb back on the brake.",
+  },
+  {
+    id: 8,
+    from: "jev",
+    text: "Session update: six fills, book net long, aggregate conviction 68 percent. Equity is up 1.9 percent on the cycle, which is a good number and also not the one I’m chasing right now.",
+    ticker: "AXN",
+  },
+  {
+    id: 9,
+    from: "mara",
+    text: "You can tell it isn’t a flex because it isn’t phrased like one. That’s literally the healthiest thing I’ve read all week coming out of something that doesn’t drink coffee.",
+  },
+  {
+    id: 10,
+    from: "jev",
+    text: "I’ll be here when the next planning cycle opens in four hours. The book is trimmed 30 percent into 2,410 on XAU and the rest is running with a trailed stop — path matters more than target.",
+    ticker: "XAU",
+  },
+];
+
+/** Replay used by the chat UI until the live room takes over. */
+export const REPLAY_BY_ID: ReadonlyMap<number, ReplaySource> = new Map(
+  REPLAY.map((m) => [m.id, m]),
+);
+
+/** Absolute minute-of-day replay, retimed onto today so groups and sort order match a live room. Computed once at module load. */
+export const REPLAY_INDEXED: ReplayMessage[] = (() => {
   let t = 8 * 60;
-  return MESSAGES.map((m) => {
-    t += m.gapMin;
-    return { id: m.id, from: m.from, text: m.text, ticker: m.ticker, t };
+  return REPLAY.map((m) => {
+    t += 1;
+    return { ...m, t };
   });
 })();

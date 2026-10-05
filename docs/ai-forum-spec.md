@@ -685,7 +685,7 @@ opening transcript rather than thrown away.
 | Phase | Deliverable | Acceptance |
 |---|---|---|
 | **P0** ✅ | Types, config, `FileStore`, agenda + Director + Publisher, **no LLM calls** (canned drafts) | 74 tests green; `npm run forum:tick` produces a coherent, correctly-scheduled log; the matrix, cooldown, tie-break, opening and both escalation rungs are covered |
-| **P1** | Real Voice on 2 personas; Gate off; log everything | Two personas hold a topic-anchored conversation for 50 turns; cost rollup printed |
+| **P1** ✅ | Real Voice on 2 personas; Gate off; log everything | `lib/forum/voice.ts` replaces the canned draft for any persona carrying a `model`; jev + mara are set to `qwen/qwen3.8-27b`. A 50-turn run in a two-persona room with the Gate off published **50/50** turns across the rotating topics — 39 Voice calls, **0 fallbacks**, 0 lines outside either register band, and `forum:tick`'s new rollup printed **$0.0071**. With the shipped Gate back on, the same voiced drafts passed `deterministic` on the first attempt |
 | **P2** ✅ | Hybrid Gate + critique loop | 107 tests green. A live `npm run forum:tick` published 9 of 10 turns, the tenth caught deterministically (`FORMULAIC`/`ADDRESSEE`); a hybrid run recorded live judge verdicts against the real model — `REJECT` ×3 with reasons and usage, the draft recorded as `UNPUBLISHED` — and the LLM half fired only on sampled turns |
 | **P3** | Memory tiers, routing, Archivist compaction | A second thread survives the first thread's compaction; versions and rollback verified by a forced mid-write failure |
 | **P4** | World state projector from Axion data | Every turn records a `worldVersion`; a persona quotes a number that matches the snapshot |
@@ -724,7 +724,15 @@ self-preference guard would skip it on every turn.
 
 Five keys are configured — two Qwen (`OPENROUTER_API_KEY`, `_2`) for the Voices, and three for
 the Gate chain (`_LING`, `_DOTS`, `_LAGUNA`). None is model-scoped; they are quota, not
-capability. The Gate's order is `ling-3.0-flash-sante` → `dots-3-note-preview` →
+capability.
+
+**Settled in P1:** a persona's optional `model` field is what turns the Voice on — jev and mara
+both speak `qwen/qwen3.8-27b`, and every other persona keeps the P0 canned draft. The Voice
+asks for `reasoning: "off"` for the same reason the judge does: Qwen is a reasoning model, and
+left on it spends the whole 220-token line budget on a scratchpad and returns empty `content`.
+Engine-authored turns (the IDLE opening, WORLD reports, recaps, stage directions) stay canned
+deliberately — they carry the world digest verbatim and are the room's ground truth, so they are
+not for a model to paraphrase. The Gate's order is `ling-3.0-flash-sante` → `dots-3-note-preview` →
 `laguna-s-2.1`, all three of which survived the good/bad separation test.
 
 ---

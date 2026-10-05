@@ -12,6 +12,7 @@
 
 import { nextEvent } from "./agenda";
 import { cannedDraft } from "./drafts";
+import { voiceDraft } from "./voice";
 import { resolveGateConfig, runGate } from "./gate";
 import type { GateVerdict } from "./gate";
 import { respondersFor } from "./permissions";
@@ -25,6 +26,7 @@ import type {
   AgendaEvent,
   Attempt,
   Decision,
+  Persona,
   TurnGate,
   TurnRecord,
   TurnUsage,
@@ -129,6 +131,9 @@ export async function advance(
     let text = "";
     // Engine-authored turns are not replies, so they have no candidates to review.
     let candidatesForRecord = candidates;
+    // Set when the chosen speaker is a responder, so the Voice is drafted once the
+    // Gate's mode decides whether the Gate's retry loop or the Director owns it.
+    let responder: Persona | null = null;
 
     if (event.authoredBy === "engine") {
       // The engine addresses the room itself: it opens the session, reports world
@@ -156,7 +161,7 @@ export async function advance(
       const persona = personas.find((p) => p.id === chosen);
       if (!persona) throw new Error(`forum: chosen responder ${chosen} is not on the roster`);
       notes.push(choice.reason);
-      text = cannedDraft({ persona, event, world, seq, attempt: 1 });
+      responder = persona;
       if (choice.relaxedCooldown) notes.push("every candidate was on cooldown");
     }
 
@@ -172,6 +177,33 @@ export async function advance(
     const usage: TurnUsage[] = [];
     let decision: Decision = "APPROVE";
     let gate: TurnGate | undefined;
+    let voiceUsed = false;
+    let voiceModel: string | null = null;
+    let voiceFallback: string | null = null;
+
+    /**
+     * Draft one line in the persona's voice and account for it. The Voice is the
+     * only model call a turn makes outside the Gate, so its cost is recorded the
+     * same way the judge's is (§11).
+     */
+    const speak = async (persona: Persona, attempt = 1): Promise<string> => {
+      const voice = await voiceDraft({ persona, event, world, seq, attempt });
+      voiceUsed = voice.usedVoice;
+      if (voice.model) voiceModel = voice.model;
+      if (voice.usage) {
+        usage.push({
+          provider: "voice",
+          model: voice.model ?? "",
+          tokensIn: voice.usage.tokensIn,
+          tokensOut: voice.usage.tokensOut,
+          estCost: voice.usage.cost,
+        });
+      }
+      // A persona with no model is meant to run canned; only a configured Voice
+      // that failed is worth flagging on the turn.
+      if (voice.fallback && persona.model) voiceFallback = voice.reason;
+      return voice.text;
+    };
 
     if (gated && chosenPersona) {
       // The voice's model is passed so the resolution can skip a judge from the
@@ -192,7 +224,7 @@ export async function advance(
 
       let verdict: GateVerdict | null = null;
       for (let n = 1; n <= gateConfig.maxAttempts; n += 1) {
-        text = cannedDraft({ persona: chosenPersona, event, world, seq, attempt: n });
+        text = await speak(chosenPersona, n);
         verdict = await runGate({
           context: { persona: chosenPersona, text, event, world, turns, seq },
           config: gateConfig,
@@ -216,7 +248,11 @@ export async function advance(
 
       const gateMode: TurnGate["mode"] =
         verdict?.mode === "llm" ? "llm" : gateConfig.mode === "off" ? "off" : "deterministic";
-      gate = { mode: gateMode, model: verdict?.judgeModel, sampled: verdict?.sampled ?? false };
+      gate = {
+        mode: gateMode,
+        model: verdict?.judgeModel ?? voiceModel ?? undefined,
+        sampled: verdict?.sampled ?? false,
+      };
 
       if (verdict && verdict.decision !== "APPROVE") {
         // Spec §8.4: the draft is not published. The record keeps the full trace, and
@@ -226,7 +262,12 @@ export async function advance(
           `gate exhausted after ${gateConfig.maxAttempts} attempts (${verdict.codes.join(", ")}); thread stalled`,
         );
       }
+    } else if (responder) {
+      // Gate off: the Director owns the single draft, so the Voice runs exactly once.
+      text = await speak(responder);
     }
+
+    if (voiceFallback) notes.push(`voice fallback: ${voiceFallback}`);
 
     const record: TurnRecord = {
       seq,
@@ -268,6 +309,8 @@ export async function advance(
         notes.filter(Boolean).join("; "),
         gateNotes.length > 0 ? `gate: ${[...new Set(gateNotes)].join(", ")}` : "",
         `gate ${gateConfig.mode}`,
+        `voice ${voiceUsed ? "on" : "off"}`,
+        voiceModel ? `voiceModel ${voiceModel}` : "",
         "memory disabled (P3)",
       ]
         .filter(Boolean)

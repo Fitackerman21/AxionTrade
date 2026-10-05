@@ -1,12 +1,13 @@
 /**
- * Run the P0 room from the terminal.
+ * Run the room from the terminal.
  *
  *   npm run forum:tick
  *   npm run forum:tick -- --turns 30
  *   npm run forum:tick -- --say "what is the room's read on gold?" --turns 6
  *
- * No LLM calls, no Gate, no memory writes — this exercises the agenda, the
- * permission matrix and the scheduler, and prints the log it produced.
+ * It exercises the agenda, the permission matrix and the scheduler against the
+ * room as configured. Personas carrying a `model` speak through the real Voice
+ * (P1); the rest use canned drafts. Prints the log and a per-model cost rollup.
  */
 
 import path from "node:path";
@@ -73,15 +74,58 @@ function printTurn(turn: TurnRecord): void {
   const who = (turn.chosen ?? "-").padEnd(7);
   const to = (turn.message?.primaryRecipient || "-").padEnd(7);
   const text = turn.message?.system ? `[system] ${turn.message.text}` : (turn.message?.text ?? "(nothing)");
+  const note = turn.note ?? "";
+  const spent = (turn.usage ?? []).reduce((sum, u) => sum + u.estCost, 0);
   const flags = [
     turn.escalated ? `escalated:${turn.escalated}` : "",
-    turn.note?.includes("cooldown") ? "cooldown-relaxed" : "",
+    note.includes("cooldown") ? "cooldown-relaxed" : "",
+    note.includes("voice on") ? "voice" : "",
+    note.includes("voice fallback") ? "voice-fallback" : "",
+    spent > 0 ? `$${spent.toFixed(4)}` : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   console.log(`[${seq}] ${kind} ${who} → ${to} ${shorten(text)}`);
-  if (flags) console.log(`      ${flags} — ${shorten(turn.note ?? "", 110)}`);
+  console.log(`      ${flags}${flags ? " — " : ""}${shorten(note, 150)}`);
+}
+
+/** The P1 acceptance asks for a cost rollup (spec §11, §14). */
+function rollupUsage(turns: TurnRecord[]): void {
+  const rows = new Map<string, { calls: number; tokensIn: number; tokensOut: number; cost: number }>();
+  const total = { calls: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
+
+  for (const turn of turns) {
+    for (const use of turn.usage ?? []) {
+      const key = `${use.provider}/${use.model || "unknown"}`;
+      const row = rows.get(key) ?? { calls: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
+      row.calls += 1;
+      row.tokensIn += use.tokensIn;
+      row.tokensOut += use.tokensOut;
+      row.cost += use.estCost;
+      rows.set(key, row);
+      total.calls += 1;
+      total.tokensIn += use.tokensIn;
+      total.tokensOut += use.tokensOut;
+      total.cost += use.estCost;
+    }
+  }
+
+  console.log("\n--- usage ---");
+  if (total.calls === 0) {
+    console.log("  (no model calls)");
+    return;
+  }
+  for (const [key, row] of [...rows].sort((a, b) => b[1].cost - a[1].cost)) {
+    console.log(
+      `  ${key.padEnd(34)} ${String(row.calls).padStart(3)} calls  ` +
+        `${row.tokensIn} in / ${row.tokensOut} out  $${row.cost.toFixed(4)}`,
+    );
+  }
+  console.log(
+    `  ${"total".padEnd(34)} ${String(total.calls).padStart(3)} calls  ` +
+      `${total.tokensIn} in / ${total.tokensOut} out  $${total.cost.toFixed(4)}`,
+  );
 }
 
 function summarise(turns: TurnRecord[]): void {
@@ -140,6 +184,7 @@ async function main(): Promise<void> {
 
   const all = await store.readTurns(Number.POSITIVE_INFINITY);
   summarise(produced);
+  rollupUsage(produced);
   console.log(`\n--- published projection (${messagesFromTurns(all).length} messages) ---`);
   console.log(`log: ${path.join(options.root, "log.jsonl")}`);
 }
