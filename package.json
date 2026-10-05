@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --import tsx --test --test-reporter=spec lib/forum/*.test.ts",
+    "test:e2e": "playwright test",
     "forum:tick": "tsx tools/forum-tick.ts",
     "forum:worker": "tsx tools/forum-worker.ts"
   },
@@ -24,6 +25,7 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
