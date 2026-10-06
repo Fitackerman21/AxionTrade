@@ -20,13 +20,17 @@ import { buildMessage, publish, publishUnpublished } from "./publisher";
 import { resolveJudgeProvider } from "./provider";
 import type { ChatProvider } from "./provider";
 import { recencyFromTurns, pickSpeaker } from "./schedule";
+import type { SpeakerChoice } from "./schedule";
+import { humanReplyDueAt, humanReplyRange } from "./clock";
 import { hashPick } from "./rng";
 import type { ForumStore } from "./store";
 import type {
   AgendaEvent,
   Attempt,
   Decision,
+  ForumConfig,
   Persona,
+  PersonaId,
   TurnGate,
   TurnRecord,
   TurnUsage,
@@ -38,12 +42,35 @@ export const RECENT_TURNS_WINDOW = 40;
 /** Long enough to cover a slow turn, short enough to recover from a crash. */
 export const LEASE_TTL_MS = 30_000;
 
-export type AdvanceStatus = "published" | "unpublished" | "lease-held" | "clock-rewind";
+export type AdvanceStatus =
+  | "published"
+  | "unpublished"
+  | "lease-held"
+  | "clock-rewind"
+  | "deferred";
 
 export interface AdvanceResult {
   status: AdvanceStatus;
   record: TurnRecord | null;
   reason?: string;
+  /** for `deferred`: when the owed reply comes due (epoch ms) */
+  dueAt?: number;
+}
+
+/**
+ * Is the newest turn a person's message still waiting on a reply?
+ *
+ * A human record is the only one with a message, no chosen speaker and the
+ * `HUMAN` trigger — a persona's reply is also triggered by a human but names the
+ * persona that wrote it, so the two are never confused.
+ */
+/**
+ * Plain predicate, not a type guard: it narrows on a *property*, and a type
+ * predicate whose output type equals its input would make the negative branch
+ * `never` for a caller that already holds a `TurnRecord`.
+ */
+export function isPendingHumanTurn(turn: TurnRecord | null | undefined): boolean {
+  return Boolean(turn && turn.trigger === "HUMAN" && turn.chosen === null && turn.message);
 }
 
 export interface AdvanceOptions {
@@ -52,11 +79,26 @@ export interface AdvanceOptions {
   recentTurns?: number;
   /** inject the Gate's judge; by default it is resolved from config + env (§8.2) */
   judge?: ChatProvider;
+  /** inject the Voice's provider (tests, dry runs); by default it comes from the persona's model */
+  voiceProvider?: ChatProvider;
 }
 
 /** Used for lease ownership; 0 where there is no process to name. */
 export function processId(): number {
   return typeof process !== "undefined" && typeof process.pid === "number" ? process.pid : 0;
+}
+
+/**
+ * Does a published line sit inside the persona's own register band?
+ *
+ * The Gate enforces this for responder drafts, but an engine turn bypasses the
+ * Gate, so its line is checked here instead of being clamped: a book update cut
+ * off mid-sentence would read worse than the template it replaced.
+ */
+function withinRegister(persona: Persona, text: string): boolean {
+  const { minChars, maxChars } = persona.sheet.register;
+  const length = text.trim().length;
+  return length >= minChars && length <= maxChars;
 }
 
 function stageDirection(event: AgendaEvent, world: WorldState): string {
@@ -69,6 +111,94 @@ function stageDirection(event: AgendaEvent, world: WorldState): string {
     `stage:${event.sender}`,
   );
   return (template ?? "Moving on.").replace("{topic}", event.topic.title);
+}
+
+export interface ResponderPlan {
+  /** the permitted pool the choice was drawn from */
+  candidates: PersonaId[];
+  escalated: TurnRecord["escalated"];
+  choice: SpeakerChoice;
+}
+
+/**
+ * Who answers, given an event (spec §6.2, §6.3).
+ *
+ * Extracted so the typing indicator can name the expected responder using the
+ * exact same rules the real turn will use — the preview and the publish cannot
+ * disagree about who is "typing".
+ */
+function chooseResponder(args: {
+  event: AgendaEvent;
+  config: ForumConfig;
+  personas: readonly Persona[];
+  turns: readonly TurnRecord[];
+  lastSeq: number;
+  seq: number;
+}): ResponderPlan {
+  const { event, config, personas, turns, lastSeq, seq } = args;
+  const permissions = respondersFor(event.sender, config, personas);
+  const recency = recencyFromTurns(turns, lastSeq);
+  const scheduleInput = { ...recency, config, roomId: config.roomId, seq };
+
+  let candidates = permissions.direct;
+  let escalated: TurnRecord["escalated"] = null;
+  let choice = pickSpeaker({ candidates, ...scheduleInput });
+
+  // Escalation rung 1 (spec §6.3): widen to the reciprocal set before giving up.
+  if (!choice.chosen && permissions.widened.length > 0) {
+    candidates = permissions.widened;
+    escalated = "pool-widened";
+    choice = pickSpeaker({ candidates, ...scheduleInput });
+  }
+
+  return { candidates, escalated, choice };
+}
+
+/** What the room will look like while a person waits for their reply (§9). */
+export interface HumanReplyPreview {
+  /** the persona expected to answer */
+  sender: PersonaId;
+  /** true when the engine will post a stage direction rather than a reply */
+  system: boolean;
+  /** when the reply is due (epoch ms) */
+  dueAt: number;
+}
+
+/**
+ * Who is "typing" at a person, and when their reply lands.
+ *
+ * Returns null unless the newest turn is a person's unanswered message. That is
+ * deliberately the only case: a generic room turn is not a reply to anyone, so
+ * there is nothing to put a typing bubble under.
+ */
+export async function previewHumanReply(
+  store: ForumStore,
+  now: number = Date.now(),
+): Promise<HumanReplyPreview | null> {
+  const config = await store.readConfig();
+  const last = await store.readLastTurn();
+  if (!last || !isPendingHumanTurn(last)) return null;
+
+  const dueAt = humanReplyDueAt(config.roomId, last.t, last.seq, humanReplyRange(config));
+  const [personas, topics, world, turns] = await Promise.all([
+    store.readPersonas(),
+    store.readTopics(),
+    store.readWorld(),
+    store.readTurns(RECENT_TURNS_WINDOW),
+  ]);
+
+  const seq = last.seq + 1;
+  const event = nextEvent({ seq, now, turns, config, topics, world, personas });
+  if (event.authoredBy === "engine") {
+    return { sender: config.agenda.enginePersona, system: true, dueAt };
+  }
+
+  const plan = chooseResponder({ event, config, personas, turns, lastSeq: last.seq, seq });
+  const chosen = plan.choice.chosen;
+  if (!chosen) return { sender: config.agenda.enginePersona, system: true, dueAt };
+
+  const persona = personas.find((p) => p.id === chosen);
+  return { sender: chosen, system: !persona, dueAt };
 }
 
 export async function advance(
@@ -88,6 +218,22 @@ export async function advance(
     };
   }
 
+  // A person's message is answered on its own, shorter clock (§9): the room is
+  // "typing", not waiting out the 45–180s cadence. Deferring inside `advance`
+  // (rather than in the POST handler) keeps every driver — the human POST, a
+  // lazy page read, the worker — on the same rule.
+  if (last && isPendingHumanTurn(last)) {
+    const dueAt = humanReplyDueAt(config.roomId, last.t, last.seq, humanReplyRange(config));
+    if (now < dueAt) {
+      return {
+        status: "deferred",
+        record: null,
+        dueAt,
+        reason: "a reply is being composed",
+      };
+    }
+  }
+
   const owner = `${driver}:${processId()}`;
   if (!(await store.acquireLease(owner, LEASE_TTL_MS, now))) {
     return { status: "lease-held", record: null, reason: "another driver holds the lease" };
@@ -105,20 +251,17 @@ export async function advance(
     const seq = (last?.seq ?? 0) + 1;
     const event = nextEvent({ seq, now, turns, config, topics, world, personas });
 
-    const permissions = respondersFor(event.sender, config, personas);
-    const recency = recencyFromTurns(turns, last?.seq ?? 0);
-    const scheduleInput = { ...recency, config, roomId: config.roomId, seq };
-
-    let candidates = permissions.direct;
-    let escalated: TurnRecord["escalated"] = null;
-    let choice = pickSpeaker({ candidates, ...scheduleInput });
-
-    // Escalation rung 1 (spec §6.3): widen to the reciprocal set before giving up.
-    if (!choice.chosen && permissions.widened.length > 0) {
-      candidates = permissions.widened;
-      escalated = "pool-widened";
-      choice = pickSpeaker({ candidates, ...scheduleInput });
-    }
+    const plan = chooseResponder({
+      event,
+      config,
+      personas,
+      turns,
+      lastSeq: last?.seq ?? 0,
+      seq,
+    });
+    let candidates = plan.candidates;
+    let escalated = plan.escalated;
+    let choice = plan.choice;
 
     const enginePersona = personas.find((p) => p.id === config.agenda.enginePersona);
     if (!enginePersona) {
@@ -134,6 +277,9 @@ export async function advance(
     // Set when the chosen speaker is a responder, so the Voice is drafted once the
     // Gate's mode decides whether the Gate's retry loop or the Director owns it.
     let responder: Persona | null = null;
+    // An engine turn drafts after `speak` exists, because its line goes through
+    // the Voice too (and is checked against the band, since the Gate is skipped).
+    let engineTurn = false;
 
     if (event.authoredBy === "engine") {
       // The engine addresses the room itself: it opens the session, reports world
@@ -149,7 +295,7 @@ export async function advance(
         relaxedCooldown: false,
       };
       notes.push(opening ? "opening the room" : `engine ${event.kind.toLowerCase()}`);
-      text = cannedDraft({ persona: enginePersona, event, world, seq, attempt: 1 });
+      engineTurn = true;
     } else if (chosen === null) {
       // Rung 2: the engine persona stage-directs, so the room never dead-ends.
       chosen = enginePersona.id;
@@ -180,6 +326,8 @@ export async function advance(
     let voiceUsed = false;
     let voiceModel: string | null = null;
     let voiceFallback: string | null = null;
+    /** the last draft was licensed to leave the subject it was answering (§8.1) */
+    let voiceDrift = false;
 
     /**
      * Draft one line in the persona's voice and account for it. The Voice is the
@@ -187,8 +335,17 @@ export async function advance(
      * same way the judge's is (§11).
      */
     const speak = async (persona: Persona, attempt = 1): Promise<string> => {
-      const voice = await voiceDraft({ persona, event, world, seq, attempt });
+      const voice = await voiceDraft({
+        persona,
+        event,
+        world,
+        seq,
+        attempt,
+        recent: turns,
+        provider: options.voiceProvider,
+      });
       voiceUsed = voice.usedVoice;
+      voiceDrift = voice.drift;
       if (voice.model) voiceModel = voice.model;
       if (voice.usage) {
         usage.push({
@@ -204,6 +361,18 @@ export async function advance(
       if (voice.fallback && persona.model) voiceFallback = voice.reason;
       return voice.text;
     };
+
+    if (engineTurn) {
+      const drafted = await speak(enginePersona);
+      if (withinRegister(enginePersona, drafted)) {
+        text = drafted;
+      } else {
+        // The Gate is skipped for engine turns, so this is the only place a line
+        // outside the persona's band can be caught before it is published.
+        text = cannedDraft({ persona: enginePersona, event, world, seq, attempt: 1 });
+        notes.push(`engine line fell outside ${enginePersona.id}'s register; used the template`);
+      }
+    }
 
     if (gated && chosenPersona) {
       // The voice's model is passed so the resolution can skip a judge from the
@@ -222,17 +391,31 @@ export async function advance(
           turn.message?.sender === chosenPersona.id && turn.message.topicId === event.topic.id,
       );
 
+      // A person is owed an answer, so a human-triggered turn is not put through
+      // the full retry budget: it degrades to "published anyway" below, and each
+      // retry is another slow Voice call on a request someone is waiting on.
+      const maxAttempts =
+        event.kind === "HUMAN" ? Math.min(gateConfig.maxAttempts, 2) : gateConfig.maxAttempts;
+
       let verdict: GateVerdict | null = null;
-      for (let n = 1; n <= gateConfig.maxAttempts; n += 1) {
+      for (let n = 1; n <= maxAttempts; n += 1) {
         text = await speak(chosenPersona, n);
+        // A turn the Voice licensed to drift is not held to ADDRESSEE: changing
+        // the subject is a human move, and failing it here would replace exactly
+        // the lines the room was asked for with the canned ones.
+        const attemptConfig =
+          voiceDrift && gateConfig.requireAddressee
+            ? { ...gateConfig, requireAddressee: false }
+            : gateConfig;
         verdict = await runGate({
           context: { persona: chosenPersona, text, event, world, turns, seq },
-          config: gateConfig,
+          config: attemptConfig,
           priorPosts,
           attempt: n,
           voiceModel: chosenPersona.model,
           judge,
           threadStart,
+          drift: voiceDrift,
         });
         attempts.push({
           n,
@@ -255,12 +438,33 @@ export async function advance(
       };
 
       if (verdict && verdict.decision !== "APPROVE") {
-        // Spec §8.4: the draft is not published. The record keeps the full trace, and
-        // the scheduler avoids this speaker on the next turn, so the room keeps moving.
-        decision = "UNPUBLISHED";
-        notes.push(
-          `gate exhausted after ${gateConfig.maxAttempts} attempts (${verdict.codes.join(", ")}); thread stalled`,
-        );
+        if (event.kind === "HUMAN") {
+          // §9 beats §8.4: a person asked and the room must answer. An imperfect
+          // line — even a canned one — is worth more than the silence that made
+          // the room look dead. The override is recorded on the turn.
+          decision = "APPROVE";
+          notes.push(
+            `gate exhausted after ${maxAttempts} attempts (${verdict.codes.join(", ")}); published anyway (human trigger)`,
+          );
+        } else if (gateConfig.onExhausted === "canned") {
+          // The ambient room may not go quiet either (spec §8.4): with nobody in
+          // the room to notice a hole, a rejected draft would simply be a gap in
+          // the conversation. The template line is register-safe by construction,
+          // so it is published instead of nothing.
+          text = cannedDraft({ persona: chosenPersona, event, world, seq, attempt: maxAttempts + 1 });
+          decision = "APPROVE";
+          notes.push(
+            `gate exhausted after ${maxAttempts} attempts (${verdict.codes.join(", ")}); published the fallback line instead of a gap`,
+          );
+        } else {
+          // Spec §8.4: the draft is not published. The record keeps the full trace,
+          // and the scheduler avoids this speaker on the next turn, so the room
+          // keeps moving.
+          decision = "UNPUBLISHED";
+          notes.push(
+            `gate exhausted after ${maxAttempts} attempts (${verdict.codes.join(", ")}); thread stalled`,
+          );
+        }
       }
     } else if (responder) {
       // Gate off: the Director owns the single draft, so the Voice runs exactly once.
@@ -268,6 +472,8 @@ export async function advance(
     }
 
     if (voiceFallback) notes.push(`voice fallback: ${voiceFallback}`);
+    // §8.4 records what the Gate did; the drift licence is part of that trace.
+    if (gated && voiceDrift) notes.push("off-topic turn; the addressee rule was waived for it");
 
     const record: TurnRecord = {
       seq,

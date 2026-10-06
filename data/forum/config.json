@@ -20,10 +20,11 @@
   "scheduling": {
     "minTurnsBetweenPosts": 2,
     "maxConsecutivePosts": 1,
-    "gapSec": [45, 180],
-    "worldEventEveryTurns": 5,
+    "gapSec": [20, 70],
+    "humanReplySec": [30, 60],
+    "worldEventEveryTurns": 6,
     "frictionStreakTurns": 3,
-    "topicRotationTurns": 12
+    "topicRotationTurns": 8
   },
   "agenda": {
     "enginePersona": "jev",
@@ -41,6 +42,7 @@
   "gate": {
     "mode": "deterministic",
     "maxAttempts": 3,
+    "onExhausted": "canned",
     "sampleRate": 0.25,
     "warmupTurns": 25,
     "redundancyWindow": 8,

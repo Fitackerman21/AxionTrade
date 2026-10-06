@@ -28,6 +28,29 @@ test("the shipped room loads", async () => {
   assert.ok(config.agenda.enginePersona.length > 0);
 });
 
+test("the shipped room is tuned to keep talking, not to go quiet", async () => {
+  const [config, personas] = await Promise.all([store.readConfig(), store.readPersonas()]);
+  const { gapSec, humanReplySec } = config.scheduling;
+
+  assert.ok(gapSec[0] > 0 && gapSec[0] < gapSec[1], "the ambient cadence must be a real range");
+  assert.ok(gapSec[1] <= 90, `an ambient gap of ${gapSec[1]}s reads as silence, not chatter`);
+  assert.ok(humanReplySec && humanReplySec[0] > 0, "a person's reply must be paced, not instant");
+  // A rejected ambient draft becomes the persona's own line instead of a hole in
+  // the conversation, which is the difference between a stalled room and a live one.
+  assert.equal(config.gate?.onExhausted, "canned");
+
+  for (const persona of personas) {
+    assert.ok(
+      (persona.sheet.personality?.length ?? 0) >= 3,
+      `${persona.id} needs a personality, not only a book`,
+    );
+    assert.ok(
+      (persona.sheet.banter?.length ?? 0) >= 2,
+      `${persona.id} needs something off-market to bring up`,
+    );
+  }
+});
+
 test("the matrix only names personas that exist, and nobody answers themselves", async () => {
   const [config, personas] = await Promise.all([store.readConfig(), store.readPersonas()]);
   const ids = new Set(personas.map((p) => p.id));

@@ -6,9 +6,10 @@
  * The transcript is the real room: turns come from `GET /api/forum/messages`,
  * which also wakes a lazy room via bounded catch-up, and are polled so the
  * conversation comes forward while the page is open. Sending a message POSTs to
- * the same endpoint, which appends it as an external sender and advances once —
- * the agenda's first rule is "a person spoke and is owed a reply" — so a reply
- * arrives immediately rather than after the room's 45–180s cadence.
+ * the same endpoint, which records it as an external sender and reports the
+ * pending reply. A reply is paced 30–60s out on its own clock (§9), so the
+ * header shows who is "typing" and the page polls until the line lands — no
+ * instant, obviously-scripted answer.
  *
  * The scripted replay from `lib/community-chat.ts` is the fallback: it seeds the
  * transcript when the room is empty, unreachable, or running on a host without
@@ -55,8 +56,10 @@ const YOU: ChatPersona = {
   online: true,
 };
 
-/** How often the open page refreshes the transcript while the room advances. */
+/** How often the open page refreshes the transcript while the room is idle. */
 const POLL_MS = 6_000;
+/** A faster tick while someone is typing, so the reply lands close to its due time. */
+const TYPING_POLL_MS = 3_000;
 /** A gap this long between messages breaks the avatar/name grouping. */
 const GROUP_GAP_MS = 5 * 60_000;
 
@@ -71,6 +74,22 @@ interface Row {
 }
 
 type Source = "live" | "demo" | "unavailable";
+
+/** The room's report of a reply being composed for a person (§9). */
+interface PendingReply {
+  /** the persona expected to answer */
+  sender: string;
+  /** true when the engine will post a stage direction instead */
+  system: boolean;
+  dueAt: number;
+}
+
+interface RoomResponse {
+  messages?: ForumMessage[];
+  pending?: PendingReply | null;
+  error?: string;
+  reply?: { status: string; chosen: string | null; dueAt?: number | null } | null;
+}
 
 function initials(name: string) {
   const chars = name.replace(/[^a-z0-9]/gi, "");
@@ -230,6 +249,20 @@ function Bubble({
   );
 }
 
+function TypingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="inline-block h-1 w-1 animate-bounce rounded-full bg-brand"
+          style={{ animationDelay: `${i * 120}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function MemberRow({ p }: { p: ChatPersona }) {
   return (
     <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-surface-2/70">
@@ -250,27 +283,33 @@ export function CommunityChat() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [typing, setTyping] = useState<PendingReply | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const adopt = useCallback((data: { messages?: ForumMessage[]; error?: string }) => {
+  const adopt = useCallback((data: RoomResponse) => {
     if (data.messages && data.messages.length > 0) {
       setRows(liveRows(data.messages));
       setSource("live");
+      // The server owns "is someone typing": it clears as soon as the reply is
+      // published, so a stale bubble cannot outlive the message it promised.
+      setTyping(data.pending ?? null);
       setNotice(null);
       return true;
     }
     setSource(data.error ? "unavailable" : "demo");
+    setTyping(null);
     return false;
   }, []);
 
   /**
    * Reading refreshes *and* wakes: the endpoint's catch-up is what brings a paused
-   * room forward, so polling while the page is open is the room's heartbeat.
+   * room forward, so polling while the page is open is the room's heartbeat. It is
+   * also what lands a paced reply once its 30–60s window is up.
    */
   const load = useCallback(async () => {
     try {
       const response = await fetch("/api/forum/messages", { cache: "no-store" });
-      adopt((await response.json()) as { messages?: ForumMessage[]; error?: string });
+      adopt((await response.json()) as RoomResponse);
     } catch {
       setSource("unavailable");
     }
@@ -278,14 +317,16 @@ export function CommunityChat() {
 
   // Both ticks run from timer callbacks rather than the effect body: the first is
   // deferred a task so the initial fetch cannot set state during the render commit.
+  // While a reply is being composed the tick is faster, so the line shows up close
+  // to when it was promised rather than up to a full poll later.
   useEffect(() => {
     const first = setTimeout(() => void load(), 0);
-    const timer = setInterval(() => void load(), POLL_MS);
+    const timer = setInterval(() => void load(), typing ? TYPING_POLL_MS : POLL_MS);
     return () => {
       clearTimeout(first);
       clearInterval(timer);
     };
-  }, [load]);
+  }, [load, typing]);
 
   // Start pinned to the newest message, and stay pinned as turns arrive.
   useEffect(() => {
@@ -305,11 +346,7 @@ export function CommunityChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      const data = (await response.json()) as {
-        messages?: ForumMessage[];
-        error?: string;
-        reply?: { status: string; chosen: string | null } | null;
-      };
+      const data = (await response.json()) as RoomResponse;
 
       if (!response.ok || data.error) {
         setNotice(data.error ?? "the room could not take that message");
@@ -318,9 +355,11 @@ export function CommunityChat() {
 
       setDraft("");
       const live = adopt(data);
-      if (live && !data.reply) setNotice("sent — waiting for the room");
-      else if (live && data.reply?.status !== "published") {
-        setNotice(`sent — no reply this turn (${data.reply?.status ?? "unknown"})`);
+      // `deferred` is the normal path and is not worth a notice — the typing
+      // indicator is the feedback. A notice only appears if the room took the
+      // message but reported no reply and no pending one at all.
+      if (live && !data.pending && data.reply?.status !== "published") {
+        setNotice("sent — waiting for the room");
       }
     } catch {
       setNotice("could not reach the room");
@@ -349,7 +388,19 @@ export function CommunityChat() {
           </span>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-[15px] font-semibold text-foreground">Axion Community</h1>
-            <p className="flex items-center gap-1.5 text-xs text-muted">
+            {typing && (
+              <p
+                data-testid="typing"
+                className="flex items-center gap-1.5 text-xs font-medium text-brand"
+              >
+                {personaFor(typing.sender).name} is typing
+                <TypingDots />
+              </p>
+            )}
+            <p
+              data-testid="room-status"
+              className="flex items-center gap-1.5 text-xs text-muted"
+            >
               <span
                 className={`inline-block h-1.5 w-1.5 rounded-full ${
                   source === "live" ? "bg-gain" : source === "demo" ? "bg-muted" : "bg-loss"

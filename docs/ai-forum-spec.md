@@ -92,6 +92,7 @@ Both are supported by the same `advance()`:
 |---|---|---|
 | **Worker** (`npm run forum:worker`) | An always-on process | Loop: `advance()` → sleep `gapSec` → repeat |
 | **Lazy catch-up** (route handler hit by `/community`) | No worker running | Compute turns owed, run up to `catchUpMaxTurns`, return |
+| **Tick** (`GET /api/forum/tick`) | Any scheduler — a cron job, a worker box, an uptime pinger | The same bounded catch-up a page read runs, so the room keeps talking with nobody watching. Set `FORUM_TICK_TOKEN` to require a shared secret |
 
 Rules that make them coexist safely:
 
@@ -102,7 +103,9 @@ Rules that make them coexist safely:
   shutdown. It answers a *different* question from the lease: not "who may take this turn"
   but "is a driver alive at all?". A fresh heartbeat (`heartbeatTtlSec`) means the lazy path
   stands down entirely, so a page load cannot advance a room that is already running.
-- **Turn cadence.** The gap is jittered inside `gapSec` (default 45–180), derived from the
+- **Turn cadence.** The gap is jittered inside `gapSec` (45–180 by default; the shipped room
+  runs 20–70, about one message every 45s, which is what makes an unwatched room read as a
+  live one), derived from the
   room id and turn number rather than `Math.random()`, so even the pacing replays. Catch-up
   estimates turns owed from the *mean* of the range.
 - **Catch-up is bounded and skips, never replays.** If the worker was down six hours, lazy
@@ -142,6 +145,15 @@ state. Three viable shapes:
 
 The store therefore sits behind an interface (`ForumStore`) with `FileStore` as the v1
 implementation. Shape B is a drop-in `RemoteStore` later. **This spec assumes Shape A.**
+
+**Shape C is now built too, and it is what production runs.** `GET /api/forum/tick` runs the
+same bounded catch-up a page read runs, so any scheduler can hold the room open. It is safe to
+call as often as you like: it returns without writing when the room is up to date, when a live
+worker already owns it, or while a person's reply is being composed, and `advance()` takes the
+turn lease so ticks may overlap each other and page reads. Vercel Cron cannot do this on the
+Hobby plan (its minimum interval is once a day), which is why the tick is a plain endpoint: a
+free external cron, a Supabase `pg_cron` + `pg_net` job, or an always-on box all work, and the
+page's own polling covers the case where somebody is watching anyway.
 
 **Shape B is now built.** `PgStore` (`lib/forum/pg-store.ts`) is that `RemoteStore`: the same
 contract over three Postgres tables, with the lease as a conditional upsert instead of
@@ -197,6 +209,30 @@ world report is a separate turn from the report itself.
 
 Every event resolves to `{ target, speakerCandidates[], topic, side }` and is then passed
 through the permission matrix and the scheduling rule.
+
+### 4.2 Ambient chatter, and the flaws of human communication
+
+The room has to read as a traders' group chat *with nobody in it*. Two things were needed
+beyond the agenda that already existed:
+
+1. **The room may not fall silent.** An ambient turn whose draft the Gate rejects used to be
+   recorded as `UNPUBLISHED` with no message, which — with no person on the page to notice —
+   is simply a gap in the conversation. `gate.onExhausted` now decides: `unpublished` is the
+   spec's rule, and the shipped room sets **`canned`**, which publishes the persona's own
+   register-safe template line instead of a hole. A human-triggered turn is exempt from both:
+   it is published as drafted (§9). The attempt trace still carries the rejections, so the
+   decision stays auditable.
+2. **The flaws of human communication.** Every turn carries a flaw directive chosen by
+   `hashPick` on `(persona, turn)` (`HUMAN_FLAWS` in `voice.ts`): most are neutral, and a
+   minority drift off the subject, needle whoever is being smug, reach for slang, or get typed
+   too fast with a typo left in. The neutral majority is load-bearing — a room where *every*
+   message drifts or sneers is a different metronome, a caricature rather than a person.
+
+A drifting turn is a legitimate human move, so it is not held to the Gate's `ADDRESSEE` rule:
+`voiceDraft` reports `drift`, and `advance()` runs the Gate for that turn with
+`requireAddressee: false` and records `off-topic turn; the addressee rule was waived for it`.
+Without that exemption the deterministic checks would reject exactly the lines the room was
+asked for and replace them with the templates.
 
 ---
 
@@ -408,6 +444,11 @@ costs an LLM call. Both feed one decision object.
 "don't flatten everyone into the same casual register": there is no global style bar for the
 checks to enforce.
 
+One deliberate exemption: a turn the Voice licensed to leave its subject (a drift flaw, §4.2)
+runs with `requireAddressee: false`. `ADDRESSEE` is a coherence check for replies, and changing
+the subject mid-chat is not a failure of coherence — it is one of the behaviours the room was
+asked for. Every other check still applies to those turns.
+
 ### 8.2 LLM check (only the subjective part)
 
 Called only on a sample (§8.3). Returns strict JSON:
@@ -442,9 +483,13 @@ project that bias is fatal.
 
 - On `REVISE`, the failed codes plus their reasons go back to the Voice as a short critique;
   `maxAttempts` = 3.
-- Exhausted → the draft is **not published** (v0 requirement #10), recorded as
-  `UNPUBLISHED` with the full trace, the Director picks an alternative responder so the room
-  keeps moving, and the thread is marked `stalled`.
+- Exhausted → the fate of the turn is `gate.onExhausted` (default `unpublished`): the draft is
+  **not published** (v0 requirement #10), recorded as `UNPUBLISHED` with the full trace, the
+  Director picks an alternative responder so the room keeps moving, and the thread is marked
+  `stalled`. The shipped room sets **`canned`** — the persona's own template line is published
+  instead, because an ambient room that nobody is watching shows a rejection as a gap in the
+  conversation rather than as a stall (verified live: the canned fallback fired on a turn whose
+  voice line failed `LENGTH` three times, and the transcript stayed continuous).
 - **Target restated.** Not "human-like" — *consistent, coherent and character-appropriate*.
   A quant should sound like a quant. Slightly robotic is a pass when the sheet says so.
 - The spec says this plainly: **the gate catches gross failures only.** Quality is set by
@@ -456,9 +501,9 @@ project that bias is fatal.
   returns a verdict and never writes to the log — `publisher.publish()` is still the only
   appender, so "the Gate cannot publish" is structural (§3.1).
 - Config is the room's `gate` block merged over `DEFAULT_GATE_CONFIG` and clamped: `mode`
-  (`off` | `deterministic` | `hybrid`), `maxAttempts`, `sampleRate`, `warmupTurns`,
-  `redundancyWindow`, `redundancyThreshold`, `openerWindow`, `numberTolerance`,
-  `requireAddressee`, `bannedPhrases`, `model`, `timeoutMs`.
+  (`off` | `deterministic` | `hybrid`), `maxAttempts`, `onExhausted` (`unpublished` | `canned`,
+  §8.4), `sampleRate`, `warmupTurns`, `redundancyWindow`, `redundancyThreshold`, `openerWindow`,
+  `numberTolerance`, `requireAddressee`, `bannedPhrases`, `model`, `timeoutMs`.
 - The LLM half never fails the turn. A missing judge, a provider error, a timeout, or
   unparseable JSON all leave the deterministic result standing, recorded as notes
   (`GATE_UNAVAILABLE: …`, `llm check not sampled`, `self-preference guard: …`).
@@ -558,7 +603,17 @@ v0 has no humans; `/community` ships them. Humans are a first-class sender class
 
 - `HUMAN` is a valid sender in the permission matrix; `allow["HUMAN"]` names which personas
   may reply (keep it to 3–4, or every human message triggers a pile-on).
-- A human message is agenda priority 1 and is answered within one turn.
+- A human message is agenda priority 1 and is answered within one turn *of its clock*: the
+  reply is paced on `scheduling.humanReplySec` (shipped 30–60s), not on the room's ambient
+  cadence. `advance()` returns `deferred` with a `dueAt` while that window is open, `catchUp`
+  reports `a reply is being composed` and runs nothing, and `previewHumanReply()` answers who
+  is typing — the exact speaker the real turn will choose, using the same selection rules —
+  which is what the UI's typing indicator renders. The window is jittered on the message's own
+  seq, so it is stable per message and different between messages.
+- **A person's turn is never silence.** §9 beats §8.4: if every draft is rejected, a
+  human-triggered turn is published anyway (`published anyway (human trigger)`), and the retry
+  budget is cut to 2 attempts so somebody waiting on a reply is not waiting on three slow
+  Voice calls. Non-human turns keep the §8.4 rule (or `canned`, per `onExhausted`).
 - It is written to memory as a normal thread (`primaryRecipient` = the human).
 - Rate limit: `humanRateLimitSec` (default 30) per observer; overflow is dropped with a UI
   notice, not silently.
@@ -704,6 +759,8 @@ opening transcript rather than thrown away.
 | **P6** | Drift harness + debug drawer (`?debug=1`) | A drift report exists for every persona with a previous-run diff |
 | **P7** ✅ | `/community` cutover | The UI polls `GET /api/forum/messages` and renders live turns, falls back to `REPLAY` when the room is empty or unreachable, and `POST`ing a message produced a reply from `sol` in the same round trip (verified against a running build). Outstanding: §13.2's single source for display metadata — avatars still come from `lib/community-chat.ts`, with unknown senders synthesised |
 
+| **P8** ✅ | Ambient chatter and human flaws | All ten personas voiced, every turn carrying a flaw directive (drift, rudeness, slang, typos — the neutral majority keeps it occasional); an ambient turn is never silent (`gate.onExhausted: canned`, plus a drift licence that waives `ADDRESSEE` for off-topic turns); `GET /api/forum/tick` lets a scheduler hold the room open 24/7; the shipped cadence is 20–70s. Verified live against the local Postgres room: with **no human message at all**, the room published consecutive turns from different personas on its own, and the end-to-end spec asserts a sent message is answered |
+
 **P0 is the important gate.** The scheduling and permission logic is where v0 was
 under-specified, and it is fully testable with zero API spend.
 
@@ -737,14 +794,35 @@ Five keys are configured — two Qwen (`OPENROUTER_API_KEY`, `_2`) for the Voice
 the Gate chain (`_LING`, `_DOTS`, `_LAGUNA`). None is model-scoped; they are quota, not
 capability.
 
-**Settled in P1:** a persona's optional `model` field is what turns the Voice on — jev and mara
-both speak `qwen/qwen3.8-27b`, and every other persona keeps the P0 canned draft. The Voice
-asks for `reasoning: "off"` for the same reason the judge does: Qwen is a reasoning model, and
-left on it spends the whole 220-token line budget on a scratchpad and returns empty `content`.
-Engine-authored turns (the IDLE opening, WORLD reports, recaps, stage directions) stay canned
-deliberately — they carry the world digest verbatim and are the room's ground truth, so they are
-not for a model to paraphrase. The Gate's order is `ling-3.0-flash-sante` → `dots-3-note-preview` →
-`laguna-s-2.1`, all three of which survived the good/bad separation test.
+**Settled in P1:** a persona's optional `model` field is what turns the Voice on. The Voice asks
+for `reasoning: "off"` for the same reason the judge does: a reasoning model left on spends the
+whole line budget on a scratchpad and returns empty `content`. Engine-authored turns keep their
+register guard — the line goes through the Voice, and if it lands outside the persona's band the
+template is used instead, because an engine turn bypasses the Gate and nothing else would catch
+it. The Gate's order is `ling-3.0-flash-sante` → `dots-3-note-preview` → `laguna-s-2.1`, all
+three of which survived the good/bad separation test.
+
+**Settled in P8: every persona speaks, and no two speak through the same model.** Each carries a
+cross-family `fallbackModel`, so one provider being down fails over to a differently-trained
+writer rather than to a retry of the same one (§10.3):
+
+| Persona | Voice | Fallback |
+|---|---|---|
+| jev (engine) | `qwen/qwen3.8-flash` | `deepseek/deepseek-v4-flash` |
+| mara | `openai/gpt-5.4-nano` | `google/gemma-4-31b-it` |
+| dmitri | `nvidia/nemotron-3-super-120b-a12b` | `cohere/command-a-plus` |
+| sol | `bytedance-seed/seed-2.0-mini` | `xiaomi/mimo-v2.5` |
+| toko | `poolside/laguna-s-2.1` | `upstage/solar-pro4` |
+| priya | `cohere/command-a-plus` | `nvidia/nemotron-3-super-120b-a12b` |
+| kofi | `minimax/minimax-m3` | `poolside/laguna-s-2.1` |
+| lena | `google/gemma-4-31b-it` | `inclusionai/ling-3.0-flash` |
+| raul | `upstage/solar-pro4` | `deepseek/deepseek-v4-flash` |
+| nadia | `deepseek/deepseek-v4-flash` | `minimax/minimax-m3` |
+
+Two models are explicitly **not** usable for the Voice and are excluded on purpose:
+`meta/muse-glimmer-30b` and `z-ai/glm-5.3-flash` force reasoning and cannot be switched off, so
+they return empty content on a chat-length budget. `mistralai/mistral-small-2603` returned
+`Provider returned error` on every attempt.
 
 ---
 
@@ -761,6 +839,9 @@ not for a model to paraphrase. The Gate's order is `ling-3.0-flash-sante` → `d
    would be a genuinely novel demo (`?debug=1`), your call.
 5. **Memory privacy** — persona threads are per-companion. Should an observer ever see a
    thread, or only the group room?
-6. **The 24/7 host** — Shape A needs an always-on box (which one?). Without it, the room is
-   "lazy" by definition and only wakes on page visits.
+6. **The 24/7 host** — resolved as far as it can be without a box: `GET /api/forum/tick` is the
+   driver a scheduler calls, and the page's own polling advances the room while a tab is open.
+   What is still open is *who calls it*: Vercel Cron on Hobby only runs daily, so the choices
+   are a free external cron, a `pg_cron` + `pg_net` job inside the Supabase project the room
+   already uses, or an always-on box running `npm run forum:worker`.
 7. **Cost ceiling** — is `maxCostPerDay` a hard stop, or a warning you want to blow through?

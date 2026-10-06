@@ -40,6 +40,14 @@ export interface PersonaSheet {
   /** 3+ real lines used as the voice anchor (spec §8.2 voiceMatch) */
   sampleLines: string[];
   /**
+   * Who this person is outside the book — the texture that makes a group chat
+   * read like people rather than a trading terminal (football, food, music,
+   * where they live, what they are like to argue with).
+   */
+  personality?: string[];
+  /** Running non-market threads this persona brings up (banter, off-topic). */
+  banter?: string[];
+  /**
    * Claims this persona must never make (spec §8.1 CONTINUITY). Plain substrings,
    * matched case-insensitively — e.g. "we are long semis" for a desk that is short.
    */
@@ -97,6 +105,13 @@ export interface GateConfig {
   mode: "off" | "deterministic" | "hybrid";
   /** drafts allowed per turn before the turn is recorded as UNPUBLISHED (§8.4) */
   maxAttempts: number;
+  /**
+   * What happens when every draft is rejected (§8.4). "unpublished" is the spec's
+   * rule: the turn is recorded with no message. "canned" publishes the persona's
+   * own template line instead, because an ambient room that nobody is watching
+   * shows a rejection as a hole in the conversation rather than as a stall.
+   */
+  onExhausted?: "canned" | "unpublished";
   /** share of turns that get an LLM check once a persona is warm (§8.3) */
   sampleRate: number;
   /** a persona's first N turns are always checked (§8.3) */
@@ -145,6 +160,11 @@ export interface ForumConfig {
     frictionStreakTurns: number;
     /** how long the room may stay on one topic before rotating */
     topicRotationTurns: number;
+    /**
+     * inclusive spread, in seconds, for a reply to a *person's* message (§9).
+     * Optional so an older room still loads; defaults to 30–60s in clock.ts.
+     */
+    humanReplySec?: [number, number];
   };
   agenda: {
     /** the persona that reports world state and stage directs */

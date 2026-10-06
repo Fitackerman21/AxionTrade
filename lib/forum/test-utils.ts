@@ -128,6 +128,9 @@ export const TEST_CONFIG: ForumConfig = {
     minTurnsBetweenPosts: 2,
     maxConsecutivePosts: 1,
     gapSec: [45, 180],
+    // Zero so the scheduling/P0 tests keep advancing straight through a person's
+    // message; the shipped room paces a reply 30–60s out (data/forum/config.json).
+    humanReplySec: [0, 0],
     worldEventEveryTurns: 5,
     frictionStreakTurns: 3,
     topicRotationTurns: 12,

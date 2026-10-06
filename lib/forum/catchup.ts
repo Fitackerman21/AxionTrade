@@ -8,9 +8,9 @@
  * visit after a restart would be a cost spike and a nonsense torrent.
  */
 
-import { advance } from "./advance";
+import { advance, isPendingHumanTurn } from "./advance";
 import type { AdvanceStatus } from "./advance";
-import { meanGapMs, turnsOwed } from "./clock";
+import { humanReplyDueAt, humanReplyRange, meanGapMs, turnsOwed } from "./clock";
 import type { ForumStore } from "./store";
 import type { RoomMode } from "./types";
 
@@ -35,6 +35,8 @@ export interface CatchUpReport {
   recapped: boolean;
   statuses: AdvanceStatus[];
   reason: string;
+  /** set while a person's message is owed a reply: when that reply comes due */
+  dueAt?: number | null;
 }
 
 /** A worker with a fresh heartbeat is driving the room; nobody else should. */
@@ -90,6 +92,37 @@ export async function catchUp(
       recapped: false,
       statuses: [result.status],
       reason: result.record ? "opened the room" : `no turn (${result.status})`,
+    };
+  }
+
+  // A person's message is answered on its own, shorter clock (§9). Until it is
+  // due there is nothing to catch up on — the room is "typing" — and once it is
+  // due exactly one reply is owed, not a full cadence's worth of turns.
+  if (isPendingHumanTurn(last)) {
+    const dueAt = humanReplyDueAt(config.roomId, last.t, last.seq, humanReplyRange(config));
+    if (now < dueAt) {
+      return {
+        mode,
+        owed: 1,
+        ran: 0,
+        skipped: 0,
+        recapped: false,
+        statuses: [],
+        reason: "a reply is being composed",
+        dueAt,
+      };
+    }
+
+    const result = await advance(store, { now, driver });
+    return {
+      mode,
+      owed: 1,
+      ran: result.record ? 1 : 0,
+      skipped: 0,
+      recapped: false,
+      statuses: [result.status],
+      reason: result.record ? "answered the person" : `no reply (${result.status})`,
+      dueAt,
     };
   }
 

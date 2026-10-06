@@ -8,9 +8,9 @@ import { test } from "node:test";
 
 import { cannedDraft } from "./drafts";
 import type { ChatProvider, ChatRequest, ChatResponse } from "./provider";
-import { TEST_PERSONAS, TEST_TOPICS, TEST_WORLD } from "./test-utils";
+import { makeTurn, TEST_PERSONAS, TEST_TOPICS, TEST_WORLD } from "./test-utils";
 import type { AgendaEvent, Persona } from "./types";
-import { voiceDraft } from "./voice";
+import { flawFor, voiceDraft } from "./voice";
 
 const MARA = TEST_PERSONAS.find((p) => p.id === "mara")!;
 
@@ -109,19 +109,92 @@ test("the prompt carries the character sheet, the world digest and the quoted li
   const system = request.system ?? "";
   assert.match(system, /Mara Okafor/);
   assert.match(system, /allergic to being outperformed by code/);
-  assert.match(system, /register: 40-240 chars/);
+  assert.match(system, /warm, emoji-heavy/);
   assert.ok(system.includes(MARA.sheet.sampleLines[0]!), "sample lines anchor the voice");
 
   const user = request.messages[0]?.content ?? "";
-  assert.match(user, /<topic>/);
+  assert.match(user, /<what the room is on>/);
   assert.ok(user.includes(TEST_WORLD.digest), "the world digest must reach the prompt");
-  assert.match(user, /<quoted from jev>/);
+  assert.match(user, /<message from jev>/);
+  assert.match(user, /40-240 characters/, "the hard register band must be stated");
 
   // Same shared defaults the Gate's judge uses: one cheap, untruncated call.
   assert.equal(request.reasoning, "off");
-  assert.equal(request.temperature, 0.7);
-  assert.equal(request.maxTokens, 220);
-  assert.equal(request.timeoutMs, 20_000);
+  assert.ok((request.temperature ?? 0) >= 0.6 && (request.temperature ?? 2) <= 1.1);
+  assert.equal(request.maxTokens, 260);
+  assert.equal(request.timeoutMs, 15_000);
+});
+
+test("the recent transcript is threaded into the prompt so the line connects", async () => {
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({
+    persona: voiced(),
+    event: eventOf(),
+    world: TEST_WORLD,
+    seq: 20,
+    recent: [
+      makeTurn(18, { sender: "jev", text: "book net long, conviction 68%" }),
+      makeTurn(19, { sender: "sol", text: "meanwhile btc is doing btc things" }),
+    ],
+    provider,
+  });
+
+  const user = seen[0]?.messages[0]?.content ?? "";
+  assert.match(user, /<chat so far, most recent last>/);
+  assert.ok(user.includes("meanwhile btc is doing btc things"), "recent lines must reach the prompt");
+  assert.ok(user.includes("- sol:"), "recent lines are attributed to their sender");
+});
+
+test("the delivery hint varies between turns so the voice is not metronomic", async () => {
+  const lines = new Set<string>();
+  for (let seq = 1; seq <= 12; seq += 1) {
+    const { provider, seen } = fake(() => answer("ok"));
+    await voiceDraft({ persona: voiced(), event: eventOf(), world: TEST_WORLD, seq, provider });
+    lines.add(seen[0]!.messages[0]!.content!);
+  }
+  assert.ok(lines.size > 5, "the same prompt was reused across turns");
+});
+
+test("a failing primary model fails over to the persona's fallbackModel", async () => {
+  const original = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { model: string };
+    calls.push(body.model);
+    if (body.model === "primary/model") {
+      return new Response(JSON.stringify({ error: { message: "upstream down" } }), { status: 500 });
+    }
+    return new Response(
+      JSON.stringify({
+        model: body.model,
+        choices: [{ message: { content: "backup line, still me" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 4, cost: 0.0001 },
+      }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+
+  try {
+    const persona: Persona = {
+      ...MARA,
+      model: "primary/model",
+      fallbackModel: "backup/model",
+    };
+    const result = await voiceDraft({
+      persona,
+      event: eventOf(),
+      world: TEST_WORLD,
+      seq: 2,
+      keys: ["test-key"],
+    });
+
+    assert.equal(result.usedVoice, true);
+    assert.equal(result.model, "backup/model");
+    assert.equal(result.text, "backup line, still me");
+    assert.deepEqual(calls, ["primary/model", "backup/model"]);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test("an opening turn has no quoted message", async () => {
@@ -179,6 +252,83 @@ test("a model with no key falls back instead of calling the network", async () =
 
   assert.equal(result.usedVoice, false);
   assert.match(result.reason ?? "", /no voice provider for mara/);
+});
+
+test("the prompt licenses the flaws of human communication", async () => {
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({ persona: voiced(), event: eventOf(), world: TEST_WORLD, seq: 3, provider });
+
+  const system = seen[0]!.system ?? "";
+  assert.match(system, /go on tangents/, "the room must be allowed to leave the topic");
+  assert.match(system, /slang/, "current slang is part of the register");
+  assert.match(system, /annoyed, dismissive, mean or bored/, "rudeness must be licensed");
+  assert.match(system, /misspell a word/, "imperfection must be licensed");
+  assert.match(
+    seen[0]!.messages[0]!.content ?? "",
+    /<how you send it>/,
+    "each turn gets its own flaw directive",
+  );
+});
+
+test("the flaw varies per turn, and only some flaws drift off the subject", async () => {
+  const flaws = new Set<string>();
+  let drifting = 0;
+  const seqs = 24;
+
+  for (let seq = 1; seq <= seqs; seq += 1) {
+    const { provider, seen } = fake(() => answer("ok"));
+    const result = await voiceDraft({
+      persona: voiced(),
+      event: eventOf(),
+      world: TEST_WORLD,
+      seq,
+      provider,
+    });
+    const match = /<how you send it>([\s\S]*?)<\/how you send it>/.exec(
+      seen[0]!.messages[0]!.content ?? "",
+    );
+    flaws.add(match?.[1] ?? "missing");
+    if (result.drift) drifting += 1;
+  }
+
+  assert.ok(flaws.size > 5, `the same flaw was reused across turns: ${[...flaws].join(" | ")}`);
+  assert.ok(flaws.has("missing") === false, "a turn went out without a flaw directive");
+  assert.ok(drifting > 0, "nothing ever left the subject");
+  assert.ok(drifting < seqs / 2, `drift should be occasional, got ${drifting}/${seqs}`);
+});
+
+test("an engine turn is never handed a drifting flaw", async () => {
+  const seenFlaws = new Set<string>();
+  for (let seq = 1; seq <= 24; seq += 1) {
+    const { provider, seen } = fake(() => answer("ok"));
+    await voiceDraft({
+      persona: voiced(),
+      event: eventOf({ authoredBy: "engine", sender: "jev", quoted: TEST_WORLD.digest }),
+      world: TEST_WORLD,
+      seq,
+      provider,
+    });
+    const match = /<how you send it>([\s\S]*?)<\/how you send it>/.exec(
+      seen[0]!.messages[0]!.content ?? "",
+    );
+    seenFlaws.add(match?.[1] ?? "missing");
+    // The tape is not a message from someone else, so the framing changes too.
+    assert.match(seen[0]!.messages[0]!.content ?? "", /<the tape, and your own read of it>/);
+  }
+  assert.deepEqual([...seenFlaws], ["Just answer in your own voice. Nothing special needed."]);
+});
+
+test("a canned draft never claims the drift licence", async () => {
+  const drifting = [1, 2, 3, 4, 5, 6, 7, 8].find((seq) => flawFor("mara", seq).drift);
+  const result = await voiceDraft({
+    persona: MARA,
+    event: eventOf(),
+    world: TEST_WORLD,
+    seq: drifting ?? 3,
+  });
+
+  assert.equal(result.usedVoice, false);
+  assert.equal(result.drift, false, "a template line answers what it was given");
 });
 
 test("the retry number reaches the canned fallback", async () => {

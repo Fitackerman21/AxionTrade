@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { catchUp, roomMode } from "./catchup";
-import { createFixture, makeTurn, TEST_BASE, TEST_CONFIG, TEST_TOPICS } from "./test-utils";
+import {
+  createFixture,
+  makeTurn,
+  TEST_BASE,
+  TEST_CONFIG,
+  TEST_PERSONAS,
+  TEST_TOPICS,
+} from "./test-utils";
 import type { ForumConfig } from "./types";
 
 /** gapSec [45,180] means a mean gap of 112.5s. */
@@ -110,6 +117,63 @@ test("a stale gap produces one recap instead of a replay", async () => {
     assert.equal(turns.length, 2);
     assert.equal(turns[1]?.trigger, "RECAP");
     assert.equal(turns[1]?.t, now);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a person's message is reported as pending until its reply window is up", async () => {
+  const fixture = await createFixture({
+    config: { ...TEST_CONFIG, scheduling: { ...TEST_CONFIG.scheduling, humanReplySec: [30, 60] } },
+  });
+  try {
+    await fixture.store.appendHumanMessage({
+      text: "read on gold?",
+      sender: "human",
+      t: TEST_BASE,
+      topicId: TEST_TOPICS[0].id,
+    });
+
+    const pending = await catchUp(fixture.store, { now: TEST_BASE + 1000 });
+    assert.equal(pending.ran, 0);
+    assert.equal(pending.owed, 1);
+    assert.match(pending.reason, /being composed/);
+    assert.ok((pending.dueAt ?? 0) >= TEST_BASE + 30_000);
+    assert.equal((await fixture.store.readTurns(10)).length, 1);
+
+    const answered = await catchUp(fixture.store, { now: TEST_BASE + 61_000 });
+    assert.equal(answered.ran, 1);
+    assert.match(answered.reason, /answered the person/);
+
+    const turns = await fixture.store.readTurns(10);
+    assert.equal(turns.length, 2);
+    assert.equal(turns[1]?.trigger, "HUMAN");
+    assert.notEqual(turns[1]?.chosen, null, "the reply must name a responder");
+    assert.ok(turns[1]?.message, "the reply must be published, never silent");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an empty room keeps talking to itself with nobody in it", async () => {
+  const fixture = await createFixture();
+  try {
+    // Two reads, as a page poll or a cron tick would do, and no human anywhere.
+    await catchUp(fixture.store, { now: TEST_BASE });
+    const report = await catchUp(fixture.store, { now: TEST_BASE + 8 * MINUTE });
+
+    assert.ok(report.ran > 0, "a room nobody is watching must still advance");
+
+    const turns = await fixture.store.readTurns(Number.POSITIVE_INFINITY);
+    assert.ok(turns.length >= 5, `expected a room's worth of chatter, got ${turns.length}`);
+    for (const turn of turns) {
+      assert.ok(turn.message, `turn ${turn.seq} published nothing`);
+      assert.notEqual(turn.message?.sender, "human", "nobody spoke, so nobody is answered");
+      assert.ok(
+        TEST_PERSONAS.some((p) => p.id === turn.message?.sender),
+        `${turn.message?.sender} is not on the roster`,
+      );
+    }
   } finally {
     await fixture.cleanup();
   }

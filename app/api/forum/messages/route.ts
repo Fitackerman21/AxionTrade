@@ -13,12 +13,18 @@
 
 import { NextResponse } from "next/server";
 
-import { advance } from "@/lib/forum/advance";
+import { advance, previewHumanReply } from "@/lib/forum/advance";
 import { catchUp, roomMode } from "@/lib/forum/catchup";
 import { nextTurnAt } from "@/lib/forum/clock";
 import { messagesFromTurns, openForumStore } from "@/lib/forum/store";
 
 export const dynamic = "force-dynamic";
+/**
+ * A reply is composed after a person's 30–60s "typing" window, and the Voice can
+ * spend a few seconds on it. The default function budget is too tight for that
+ * tail, so the room is given the longest budget Vercel allows on this plan.
+ */
+export const maxDuration = 60;
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -45,16 +51,27 @@ export async function GET(request: Request) {
       (message) => message.seq > (Number.isFinite(since) ? since : 0),
     );
 
+    // Who is "typing" at a person, if anyone. Only rendered while a reply is owed.
+    const pending = await previewHumanReply(store, now);
+
     return NextResponse.json(
       {
         mode: report?.mode ?? "lazy",
         roomId: config.roomId,
         seq: last?.seq ?? 0,
         lastTurnAt: last?.t ?? null,
-        nextExpectedAt: last ? nextTurnAt(last.t, config.scheduling.gapSec) : null,
+        nextExpectedAt: pending ? pending.dueAt : last ? nextTurnAt(last.t, config.scheduling.gapSec) : null,
+        pending,
         messages,
         catchUp: report
-          ? { owed: report.owed, ran: report.ran, skipped: report.skipped, recapped: report.recapped, reason: report.reason }
+          ? {
+              owed: report.owed,
+              ran: report.ran,
+              skipped: report.skipped,
+              recapped: report.recapped,
+              reason: report.reason,
+              dueAt: report.dueAt ?? null,
+            }
           : null,
       },
       { headers: NO_STORE },
@@ -77,8 +94,13 @@ export async function GET(request: Request) {
  *
  * The message is appended first, which puts it at the head of the log as an
  * external sender. That alone is enough for the agenda: its first rule is "a
- * person spoke and is owed a reply" (§4), so one `advance()` produces the reply
- * immediately rather than making the sender wait out the room's 45–180s cadence.
+ * person spoke and is owed a reply" (§4).
+ *
+ * The reply is not returned here. It is paced 30–60s out on its own clock (§9),
+ * so this handler records the message and reports the pending reply (who is
+ * typing, and when it is due); the client shows a typing bubble and polls `GET`
+ * until the reply lands. A room configured with a zero-length window replies
+ * inline instead.
  *
  * Safe alongside a worker: `advance()` takes the turn lease, so a worker already
  * driving the room simply wins and the reply arrives on its next tick.
@@ -122,9 +144,13 @@ export async function POST(request: Request) {
       topicId: topic.id,
     });
 
+    // This almost always returns `deferred`: a person's reply is paced 30–60s out
+    // (§9), so the client shows a typing bubble and polls until it lands. It still
+    // runs so a room configured with a zero-length window replies inline.
     const reply = await advance(store, { now: now + 1, driver: "human" });
     const turns = await store.readTurns(Number.POSITIVE_INFINITY);
     const last = turns[turns.length - 1] ?? null;
+    const pending = await previewHumanReply(store, now + 1);
 
     return NextResponse.json(
       {
@@ -132,9 +158,14 @@ export async function POST(request: Request) {
         roomId: config.roomId,
         seq: last?.seq ?? 0,
         lastTurnAt: last?.t ?? null,
-        nextExpectedAt: last ? nextTurnAt(last.t, config.scheduling.gapSec) : null,
+        nextExpectedAt: pending ? pending.dueAt : last ? nextTurnAt(last.t, config.scheduling.gapSec) : null,
+        pending,
         accepted: { seq: accepted.seq, text },
-        reply: { status: reply.status, chosen: reply.record?.chosen ?? null },
+        reply: {
+          status: reply.status,
+          chosen: reply.record?.chosen ?? null,
+          dueAt: reply.dueAt ?? pending?.dueAt ?? null,
+        },
         messages: messagesFromTurns(turns),
         catchUp: null,
       },

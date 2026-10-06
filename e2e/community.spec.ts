@@ -1,9 +1,16 @@
 /**
- * Live test of the community page (P7 + P1): a person sends a message and the
- * room answers it through the real `/api/forum/messages` round trip.
+ * Live test of the community page (P7 + P1 + §9): a person sends a message and
+ * the room answers it through the real `/api/forum/messages` round trip.
  *
  * Deliberately end-to-end and not hermetic — it exercises the running room, the
- * Voice and the Gate exactly as a visitor would. `npm run test:e2e`.
+ * Voice, the Gate and the paced reply exactly as a visitor would.
+ * `npm run test:e2e`.
+ *
+ * The two properties this asserts, and that the earlier version could not:
+ *  - a person's message is *always* answered (the old build could leave it in
+ *    UNPUBLISHED, which looked like the room had died), and
+ *  - the answer is paced 30–60s out with a visible typing indicator, not returned
+ *    in the same instant.
  */
 
 import { expect, test } from "@playwright/test";
@@ -48,13 +55,15 @@ async function readRows(page: Page): Promise<Row[]> {
   );
 }
 
-test("the live community page takes a message and the room answers it", async ({ page }) => {
+test("the live community page answers a person, after a visible composing pause", async ({
+  page,
+}) => {
   await page.goto("/community");
 
-  // "live" in the header means the transcript came from the room, not the demo
-  // replay the page falls back to when the room is empty or unreachable.
+  // "live" in the status line means the transcript came from the room, not the
+  // demo replay the page falls back to when the room is empty or unreachable.
   // Generous: the first read wakes a stale room via bounded catch-up.
-  await expect(page.locator("header p")).toContainText("live", { timeout: 120_000 });
+  await expect(page.getByTestId("room-status")).toContainText("live", { timeout: 120_000 });
 
   const outgoingBefore = (await readRows(page)).filter((row) => row.outgoing).length;
 
@@ -73,12 +82,20 @@ test("the live community page takes a message and the room answers it", async ({
   expect(response.ok()).toBe(true);
   const body = (await response.json()) as {
     accepted?: { seq: number; text: string };
-    reply?: { status: string; chosen: string | null } | null;
+    pending?: { sender: string; system: boolean; dueAt: number } | null;
+    reply?: { status: string; chosen: string | null; dueAt?: number | null } | null;
     error?: string;
   };
 
   expect(body.error, `the room refused the message: ${body.error}`).toBeUndefined();
   expect(body.accepted?.text, "the room must record exactly what was sent").toBe(QUESTION);
+  // The reply is paced now: the POST reports who is typing, it does not carry the
+  // answer. `deferred` is the normal status.
+  expect(
+    body.pending?.sender,
+    `the room must report who is composing a reply (reply: ${JSON.stringify(body.reply)})`,
+  ).toBeTruthy();
+  expect(["deferred", "lease-held", "published"]).toContain(body.reply?.status ?? "");
 
   await expect
     .poll(async () => (await readRows(page)).filter((row) => row.outgoing).length, {
@@ -87,21 +104,27 @@ test("the live community page takes a message and the room answers it", async ({
     })
     .toBe(outgoingBefore + 1);
 
+  // The typing indicator is the visible sign the room is composing, not stalled.
+  await expect(page.getByTestId("typing")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("typing")).toContainText("is typing");
+
+  // Wait out the composing window: the reply lands once its 30–60s clock is up.
+  await expect
+    .poll(
+      async () => {
+        const rows = await readRows(page);
+        const sent = rows.findLastIndex((row) => row.outgoing && row.text.includes(QUESTION));
+        return sent < 0 ? -1 : rows.length - 1 - sent;
+      },
+      { timeout: 150_000, message: "the room never answered the message — this is the silence bug" },
+    )
+    .toBeGreaterThan(0);
+
   const rows = await readRows(page);
   const sent = rows.findLastIndex((row) => row.outgoing && row.text.includes(QUESTION));
   expect(sent, "the sent message should be on screen").toBeGreaterThanOrEqual(0);
 
-  if (body.reply?.status !== "published") {
-    // The room can legitimately decline: a rejected draft is recorded, never
-    // shown, and the page says so rather than dead-ending silently (spec §8.4).
-    await expect(page.getByText(/no reply this turn/)).toBeVisible({ timeout: 30_000 });
-    console.log(
-      `\n[community] You: ${QUESTION}\n[community] no reply this turn (${body.reply?.status}, chosen: ${body.reply?.chosen}) — the Gate rejected the draft\n`,
-    );
-    return;
-  }
-
-  // The POST advances the room once, so the reply is the very next row.
+  // A real line came back — never silence, never an empty bubble.
   const reply = rows[sent + 1];
   expect(reply, "the reply should be the row right after the message").toBeTruthy();
   expect(reply!.outgoing, "the reply must not be the visitor's own echo").toBe(false);
@@ -112,9 +135,8 @@ test("the live community page takes a message and the room answers it", async ({
     `the reply did not come from a permitted responder: ${JSON.stringify(reply!.text)}`,
   ).toContain(name);
 
-  // A real line came back, not a placeholder or an empty bubble. Strip the avatar
-  // initials, the "AxAI" badge, the name and the trailing clock; what is left is
-  // the message itself.
+  // Strip the avatar initials, the "AxAI" badge, the name and the trailing clock;
+  // what is left is the message itself.
   const message = reply!.text
     .replace(/^[A-Z]{2}\s*/, "")
     .replace("AxAI", "")
@@ -124,6 +146,9 @@ test("the live community page takes a message and the room answers it", async ({
   expect(message.length, `the reply has no substance: ${JSON.stringify(reply!.text)}`).toBeGreaterThan(
     15,
   );
+
+  // Once the reply has landed, the typing bubble is gone.
+  await expect(page.getByTestId("typing")).toHaveCount(0, { timeout: 15_000 });
 
   console.log(
     `\n[community] You: ${QUESTION}\n[community] ${name} (${PERMITTED[name!]}) replied: ${message}\n`,

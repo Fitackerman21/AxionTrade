@@ -55,6 +55,9 @@ export type RubricItem = (typeof RUBRIC_ITEMS)[number];
 export const DEFAULT_GATE_CONFIG: GateConfig = {
   mode: "deterministic",
   maxAttempts: 3,
+  // The spec's rule by default; a room that wants continuous chatter sets
+  // "canned" so a rejected draft becomes its template line rather than a gap.
+  onExhausted: "unpublished",
   sampleRate: 0.25,
   warmupTurns: 25,
   redundancyWindow: 8,
@@ -77,6 +80,7 @@ export function resolveGateConfig(partial?: Partial<GateConfig> | null): GateCon
   return {
     ...merged,
     maxAttempts: Math.round(clamp(merged.maxAttempts, 1, 10, DEFAULT_GATE_CONFIG.maxAttempts)),
+    onExhausted: merged.onExhausted === "canned" ? "canned" : "unpublished",
     sampleRate: clamp(merged.sampleRate, 0, 1, DEFAULT_GATE_CONFIG.sampleRate),
     warmupTurns: Math.round(clamp(merged.warmupTurns, 0, 10_000, DEFAULT_GATE_CONFIG.warmupTurns)),
     redundancyWindow: Math.round(
