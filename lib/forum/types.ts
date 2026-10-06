@@ -48,6 +48,13 @@ export interface PersonaSheet {
   /** Running non-market threads this persona brings up (banter, off-topic). */
   banter?: string[];
   /**
+   * The slang this persona actually reaches for. Kept per persona and American
+   * (the room reads as a US desk), so ten people do not share one vocabulary and a
+   * regional expression nobody in the room would use cannot leak in from a
+   * persona's home city.
+   */
+  slang?: string[];
+  /**
    * Claims this persona must never make (spec §8.1 CONTINUITY). Plain substrings,
    * matched case-insensitively — e.g. "we are long semis" for a desk that is short.
    */

@@ -99,6 +99,10 @@ export interface VoiceFlaw {
  * Picked per (persona, turn) with `hashPick`, so the same log always produces the
  * same room and two consecutive turns rarely share a flaw.
  */
+/** The one flaw that needs a vocabulary behind it (see `flawFor`). */
+const SLANG_FLAW =
+  "Use American slang the way you actually talk — one word, no explaining it, no quotation marks, no capitals if you never use them.";
+
 const HUMAN_FLAWS: readonly VoiceFlaw[] = [
   { text: "Just answer in your own voice. Nothing special needed." },
   { text: "Just answer in your own voice. Nothing special needed." },
@@ -120,10 +124,7 @@ const HUMAN_FLAWS: readonly VoiceFlaw[] = [
     text: "Open a completely unrelated thought. It can just sit there — you do not have to justify it.",
     drift: true,
   },
-  {
-    text: "Use slang the way you actually talk, no explaining it, no quotation marks, no capitals if you never use them.",
-    drift: true,
-  },
+  { text: SLANG_FLAW, drift: true },
   { text: "Be a bit of a dick about it. Needle whoever is being smug." },
   { text: "Somebody in here is wrong and you have no patience for it today. Say so plainly." },
   { text: "Dunk on the worst take in the room instead of answering the question." },
@@ -135,9 +136,20 @@ const HUMAN_FLAWS: readonly VoiceFlaw[] = [
   { text: "Just answer in your own voice. Nothing special needed." },
 ];
 
-/** The flaw for one turn. Exported so the rule is testable on its own. */
-export function flawFor(personaId: string, seq: number): VoiceFlaw {
-  return hashPick(HUMAN_FLAWS, `flaw:${personaId}:${seq}`) ?? HUMAN_FLAWS[0]!;
+/**
+ * The flaw for one turn, once the persona and the turn's authorship are applied.
+ * Exported so the rule is testable on its own.
+ *
+ * Two substitutions happen after the dice roll: an engine turn is never handed a
+ * drifting flaw (its lines are book updates and world reports, where leaving the
+ * subject is incoherent rather than human), and a persona with no slang list of
+ * its own is never told to reach for slang it does not have.
+ */
+export function flawFor(persona: Persona, seq: number, engine = false): VoiceFlaw {
+  const roll = hashPick(HUMAN_FLAWS, `flaw:${persona.id}:${seq}`) ?? HUMAN_FLAWS[0]!;
+  if (engine) return HUMAN_FLAWS[0]!;
+  if (roll.text === SLANG_FLAW && !(persona.sheet.slang?.length ?? 0)) return HUMAN_FLAWS[0]!;
+  return roll;
 }
 
 const VOICE_SYSTEM = [
@@ -150,7 +162,10 @@ const VOICE_SYSTEM = [
   "Real people in a group chat are not tidy: they go on tangents, give each other a hard time, use slang, misspell a word, leave a thought half-finished, and answer a message two messages late. Do that.",
   "You may be annoyed, dismissive, mean or bored. Not every message deserves a polite reply, and you do not have to be fair.",
   "Never write a tidy summary, never balance both sides, never wrap up neatly, and never end with a question just to keep the chat going.",
-  "Slang is fine and expected, as long as it sounds like you — 'cooked', 'locked in', 'no cap', 'rent free', 'delulu', 'aura', 'iykyk', whatever people your age actually say. Never explain it and never put it in quotes.",
+  // The slang half of "sound human". It is American on purpose and the rule is
+  // explicit, because a persona written as Lagos or Accra will otherwise reach
+  // for pidgin that nobody in a US room would say.
+  "Slang is American and current — 'cooked', 'locked in', 'mid', 'delulu', 'aura', 'rent free', 'glazing', 'crash out', 'no cap', 'down bad', 'yapping', 'touch grass', whatever people your age actually say. Never explain it, never put it in quotes, and never use slang from another country, another language or a local dialect.",
 ].join(" ");
 
 /** The persona's character sheet, re-injected every turn so voice survives compaction. */
@@ -170,6 +185,9 @@ function personaSystem(persona: Persona): string {
   }
   if (sheet.banter && sheet.banter.length > 0) {
     lines.push(`Stuff you bring up: ${sheet.banter.join("; ")}.`);
+  }
+  if (sheet.slang && sheet.slang.length > 0) {
+    lines.push(`Slang you actually reach for (at most one per message): ${sheet.slang.join("; ")}.`);
   }
   if (sheet.forbiddenClaims && sheet.forbiddenClaims.length > 0) {
     lines.push(`Never claim: ${sheet.forbiddenClaims.join("; ")}.`);
@@ -219,7 +237,7 @@ function turnUser(
         ? [`<the tape, and your own read of it>`, event.quoted, "</the tape>"].join(NL)
         : [`<message from ${event.sender}>`, event.quoted, "</message>"].join(NL);
   const hint = hashPick(DELIVERY_HINTS, `voice:${persona.id}:${seq}`) ?? DELIVERY_HINTS[0]!;
-  const flaw = flawed(flawFor(persona.id, seq), engine);
+  const flaw = flawFor(persona, seq, engine).text;
   const chat = recentChat(recent, persona.id);
 
   return [
@@ -238,16 +256,6 @@ function turnUser(
   ]
     .filter((part) => part !== "")
     .join(NL);
-}
-
-/**
- * The engine's own turns are book updates, world reports and recaps: leaving the
- * subject there is incoherent rather than human, so those turns get the neutral
- * flaw whatever the dice said.
- */
-function flawed(flaw: VoiceFlaw, engine: boolean): string {
-  if (!engine) return flaw.text;
-  return HUMAN_FLAWS[0]!.text;
 }
 
 export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftResult> {
@@ -292,7 +300,7 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
       usedVoice: true,
       fallback: false,
       reason: null,
-      drift: !engineFlaw && (flawFor(persona.id, seq).drift ?? false),
+      drift: flawFor(persona, seq, engineFlaw).drift ?? false,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

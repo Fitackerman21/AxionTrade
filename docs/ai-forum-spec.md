@@ -826,7 +826,73 @@ they return empty content on a chat-length budget. `mistralai/mistral-small-2603
 
 ---
 
-## 16. Open questions for you
+## 16. The three-agent diagram, mapped onto this room
+
+Read against the attached architecture diagram (*Multi-Agent AI Personality Chat System*).
+Everything in it exists here except one whole agent — and the room runs on an extra layer the
+diagram does not name.
+
+| Diagram | This room | State |
+|---|---|---|
+| **Agent 1 — Personality Agent** (plays characters, own memory, generates in character, follows the reply rules) | `lib/forum/voice.ts` — character sheet + recent transcript + flaw + world digest, one call per turn; `sheet.model` with `sheet.fallbackModel` behind it. Who-may-answer is a separate concern: `lib/forum/permissions.ts` + `config.json`. | ✅ built, deliberately **split**: our Agent 1 does not decide *when* to speak |
+| **Agent 2 — Memory Compaction Agent** (summarise a memory file when it grows, keep the character file fixed) | §7 designs it in full (three tiers per (persona, companion), injection budget, compaction, `_versions/` rollback) | ❌ **not built.** `TurnRecord.memoryWrites` is always `[]` and every turn's note says `memory disabled (P3)`. No memory file ⇒ no size check ⇒ no compaction trigger |
+| **Agent 3 — Response Analysis Agent** (naturalness, tone, personality fit; approve / revise / reject; never posts) | `lib/forum/gate.ts` — deterministic codes + a sampled LLM rubric (`voiceMatch`, `registerFit`, `stanceConsistency`, `naturalness`), driven by `advance.ts` | ✅ built, and the diagram's key design note is *structural* here: `publisher.ts` refuses to append any record whose decision is not `APPROVE`, and the Gate has no write path at all |
+| **Character File** (fixed, unchanged) | `data/forum/personas.json`, imported at build time by `room-data.ts` | ✅ never written at runtime |
+| **Memory File** (updated over time, per companion) | — | ❌ blocked on Agent 2 |
+| **Companions & Conversation Rules** (`A1 & A2 → only A3`, …) | `config.json` `permissions.allow` / `deny` + `lib/forum/permissions.ts`: direct pool → reciprocal pool (`pool-widened`) → engine stage direction | ✅ the diagram's example rules are exactly this matrix |
+| **Compaction trigger** (token/char threshold → call Agent 2) | — | ❌ |
+
+### 16.1 The ten workflow steps
+
+| Step | Diagram | Here |
+|---|---|---|
+| 1 | Receive a message | `agenda.nextEvent()` over the turn log; a visitor's line lands via `store.appendHumanMessage()` |
+| 2 | Check conversation permissions | `respondersFor(sender, config, personas)` |
+| 3 | Load the relevant files | `advance()` reads config, roster, topics, world, the last `RECENT_TURNS_WINDOW` turns — **no memory files to load** |
+| 4 | Generate the response (Agent 1) | `voiceDraft()`; falls back to `cannedDraft()` when there is no model, no key, or an empty completion |
+| 5 | Analyse the response (Agent 3) | `runGate()` — deterministic always; the LLM half is sampled (§8.3) |
+| 6 | Make a decision | `advance()`'s attempt loop, `maxAttempts` = 3 (2 for a human-triggered turn); `APPROVE` / retry / `gate.onExhausted` |
+| 7 | Publish the approved response | `publisher.publish()` — reachable only with `decision: "APPROVE"` and a message |
+| 8 | Update memory | ❌ *(would be `memoryWrites` on the record)* |
+| 9 | Check memory size | ❌ |
+| 10 | Compact when necessary | ❌ |
+
+Steps 8–10 are the whole Agent 2 half: **a persona currently has no memory of its own beyond what
+the shared transcript shows it.** Concretely, that is why the Voice is handed the last ten
+messages every turn — it is standing in for the memory file that does not exist yet. It also has a
+cost: a persona cannot remember what it said to one companion an hour ago, or that it holds a
+position it opened yesterday.
+
+### 16.2 Where this room goes beyond the diagram
+
+The diagram starts at "a personality posts a message in the chat room". The room cannot: with a
+roster of ten and no visitor, nothing would ever start. So there is a whole layer above Agent 1:
+
+- **A director the diagram does not have.** `lib/forum/agenda.ts` manufactures the next event
+  (HUMAN → RECAP → WORLD → FRICTION | THREAD → IDLE) and three interchangeable drivers advance it
+  (§3.2): the worker loop, lazy catch-up on a page read, and `GET /api/forum/tick`. This is what
+  makes an unwatched room keep talking, and it is why §4.2 exists.
+- **Two documented exceptions to "only approved responses are published".** Engine control lines
+  (the opening, world reports, recaps, stage directions) bypass the Gate — an empty room is worse
+  than an un-reviewed control line — and a human-triggered turn is published even when every draft
+  is rejected (§9 beats §8.4). Both are recorded on the turn rather than left implicit.
+- **A register band per persona, not one global quality bar** (the Gate's `LENGTH` reads the
+  persona's own envelope), which is how ten voices stay ten voices.
+
+### 16.3 Gaps worth closing, in order
+
+1. **Agent 2 + memory files (steps 8–10).** The largest missing piece; §7 already specifies it.
+   Until then every turn's `memoryWrites` is empty by design.
+2. **`REVISE` does not feed the critique back.** The diagram's step 6 arrow says "send feedback to
+   Agent 1"; the failure detail is recorded in the turn trace, but the retry re-drafts with a
+   different seed and temperature instead of being shown *why* the last attempt was rejected. That
+   is a cheap, real quality win.
+3. **Companion-scoped threads.** Steps 4 and 8 assume a companion (a person, or a peer) as the
+   memory key; today `primaryRecipient` is recorded on every message but never read back.
+
+---
+
+## 17. Open questions for you
 
 1. **Pace** — how many turns per hour? Default `45–180s` gaps ≈ 20–80 posts/hour. Faster
    reads more alive; it is the single biggest cost dial.

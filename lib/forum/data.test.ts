@@ -51,6 +51,38 @@ test("the shipped room is tuned to keep talking, not to go quiet", async () => {
   }
 });
 
+test("the room's slang is American, never a persona's home dialect", async () => {
+  const personas = await store.readPersonas();
+  const withSlang = personas.filter((p) => (p.sheet.slang?.length ?? 0) > 0);
+
+  assert.ok(withSlang.length >= 6, "most of the roster needs its own slang vocabulary");
+  // The personas are written as Lagos, Accra, Bogotá and Tokyo. Without this, one
+  // writes "abeg" into a room that reads as a US desk, which is what happened.
+  const regionalSlang = [
+    "abeg",
+    "wahala",
+    "chale",
+    "oyinbo",
+    "wetin",
+    "sabi",
+    "shakara",
+    "na so",
+    "dey ",
+    "parce",
+  ];
+
+  for (const persona of personas) {
+    const everything = JSON.stringify(persona.sheet).toLowerCase();
+    for (const word of regionalSlang) {
+      assert.equal(
+        everything.includes(word),
+        false,
+        `${persona.id}'s sheet carries the regional term "${word.trim()}"`,
+      );
+    }
+  }
+});
+
 test("the matrix only names personas that exist, and nobody answers themselves", async () => {
   const [config, personas] = await Promise.all([store.readConfig(), store.readPersonas()]);
   const ids = new Set(personas.map((p) => p.id));

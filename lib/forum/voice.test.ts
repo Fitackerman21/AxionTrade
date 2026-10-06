@@ -260,7 +260,12 @@ test("the prompt licenses the flaws of human communication", async () => {
 
   const system = seen[0]!.system ?? "";
   assert.match(system, /go on tangents/, "the room must be allowed to leave the topic");
-  assert.match(system, /slang/, "current slang is part of the register");
+  assert.match(system, /Slang is American and current/, "the slang has to be the room's");
+  assert.match(
+    system,
+    /never use slang from another country, another language or a local dialect/,
+    "a persona's home city must not leak its dialect into the room",
+  );
   assert.match(system, /annoyed, dismissive, mean or bored/, "rudeness must be licensed");
   assert.match(system, /misspell a word/, "imperfection must be licensed");
   assert.match(
@@ -318,8 +323,48 @@ test("an engine turn is never handed a drifting flaw", async () => {
   assert.deepEqual([...seenFlaws], ["Just answer in your own voice. Nothing special needed."]);
 });
 
+test("a persona's own slang reaches the prompt, and a persona without any gets no line", async () => {
+  const slangy: Persona = {
+    ...voiced(),
+    sheet: { ...MARA.sheet, slang: ["no cap", "cooked"] },
+  };
+
+
+  const first = fake(() => answer("ok"));
+  await voiceDraft({ persona: slangy, event: eventOf(), world: TEST_WORLD, seq: 4, provider: first.provider });
+  assert.match(
+    first.seen[0]!.system ?? "",
+    /Slang you actually reach for \(at most one per message\): no cap; cooked/,
+  );
+
+  // The engine carries no slang list, so it is never handed the slang flaw either.
+  const second = fake(() => answer("ok"));
+  await voiceDraft({
+    persona: voiced(),
+    event: eventOf(),
+    world: TEST_WORLD,
+    seq: 4,
+    provider: second.provider,
+  });
+  assert.doesNotMatch(second.seen[0]!.system ?? "", /Slang you actually reach for/);
+
+  // With a vocabulary some of the first forty turns roll the slang flaw; without
+  // one, that roll becomes the neutral flaw rather than inventing a voice.
+  const rolled = Array.from({ length: 40 }, (_, i) => i + 1).filter((seq) =>
+    flawFor(slangy, seq).text.includes("American slang"),
+  );
+  assert.ok(rolled.length > 0, "the slang flaw must be reachable for a persona that has slang");
+  for (let seq = 1; seq <= 40; seq += 1) {
+    assert.doesNotMatch(
+      flawFor(MARA, seq).text,
+      /American slang/,
+      `turn ${seq} handed slang to a persona with no vocabulary for it`,
+    );
+  }
+});
+
 test("a canned draft never claims the drift licence", async () => {
-  const drifting = [1, 2, 3, 4, 5, 6, 7, 8].find((seq) => flawFor("mara", seq).drift);
+  const drifting = [1, 2, 3, 4, 5, 6, 7, 8].find((seq) => flawFor(MARA, seq).drift);
   const result = await voiceDraft({
     persona: MARA,
     event: eventOf(),

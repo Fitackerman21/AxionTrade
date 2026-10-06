@@ -70,8 +70,8 @@ function driftingTurn(): { id: string; seq: number } {
   for (let seq = 2; seq <= 11; seq += 1) {
     // A WORLD turn is engine-authored, so no responder is drafted for it.
     if (seq % 5 === 0) continue;
-    for (const id of ["jev", "dmitri", "sol"]) {
-      if (flawFor(id, seq).drift) return { id, seq };
+    for (const persona of TEST_PERSONAS.filter((p) => ["jev", "dmitri", "sol"].includes(p.id))) {
+      if (flawFor(persona, seq).drift) return { id: persona.id, seq };
     }
   }
   throw new Error("no drifting turn found in the searched range");
@@ -81,8 +81,8 @@ function driftingTurn(): { id: string; seq: number } {
 function anchoredTurn(): { id: string; seq: number } {
   for (let seq = 2; seq <= 11; seq += 1) {
     if (seq % 5 === 0) continue;
-    for (const id of ["jev", "dmitri", "sol"]) {
-      if (!flawFor(id, seq).drift) return { id, seq };
+    for (const persona of TEST_PERSONAS.filter((p) => ["jev", "dmitri", "sol"].includes(p.id))) {
+      if (!flawFor(persona, seq).drift) return { id: persona.id, seq };
     }
   }
   throw new Error("no anchored turn found in the searched range");

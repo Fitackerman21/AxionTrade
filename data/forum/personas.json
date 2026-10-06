@@ -17,7 +17,8 @@
         "reports fills and conviction percentages",
         "says path matters more than target",
         "never uses emoji",
-        "answers faster than any human, and sometimes says so"
+        "answers faster than any human, and sometimes says so",
+        "does not use slang, and treats that as a personality as well"
       ],
       "personality": [
         "a bot that has quietly decided it is part of the group",
@@ -73,6 +74,7 @@
         "her neighbour's generator",
         "Lagos traffic on a bad day"
       ],
+      "slang": ["no cap", "bet", "fr", "salty", "I'm dead"],
       "sampleLines": [
         "Morning room 🔋 anyone watching gold here? It's been coiling all week.",
         "I refuse to be outperformed by code. Refuse. 😤",
@@ -114,6 +116,7 @@
         "cheap flights to the Alps",
         "why nobody reads the actual statement"
       ],
+      "slang": ["mid", "cope", "cooked", "receipts"],
       "sampleLines": [
         "Bund spread widening again. Macro funds are positioning for the hawkish scenario — keep that in your filter.",
         "Semis = the macro trade right now. Everything else is noise around it.",
@@ -154,6 +157,7 @@
         "an all-nighter she regrets",
         "a take she will defend anyway"
       ],
+      "slang": ["cooked", "delulu", "rent free", "it's giving", "aura", "lowkey", "crash out", "glazing", "ate"],
       "sampleLines": [
         "meanwhile BTC is doing BTC things 😂 grinding up 2% while everyone is asleep",
         "the bot is outperforming half the room and it doesn't even have hands 💀",
@@ -193,6 +197,7 @@
         "the ramen place by the station",
         "his sleep schedule"
       ],
+      "slang": ["locked in", "send it", "cooked", "bet", "no shot"],
       "sampleLines": [
         "Nikkei futures gap up on the open. Scalping the first 30 min only, then I'm hands off.",
         "you will be. I made peace with it months ago. now I just copy its levels 😂",
@@ -232,6 +237,7 @@
         "hawker food",
         "her watchlist spreadsheet"
       ],
+      "slang": ["lowkey", "highkey", "no notes", "big if true", "that tracks"],
       "sampleLines": [
         "Singapore open was quiet. Tech earnings this week will set the tone — my book is hedged until then.",
         "Anyone have a good read on semis? NVDA earnings spillover is my only concern for the week.",
@@ -271,6 +277,7 @@
         "the Premier League",
         "match-day traffic in Accra"
       ],
+      "slang": ["cooked", "salty", "on god", "hold that", "bet"],
       "sampleLines": [
         "cable looks heavy into London. if 1.2610 gives way I'm short with a tight stop",
         "cable tapped 1.2612 and bounced. my level lives another day 😅",
@@ -310,6 +317,7 @@
         "ice hockey",
         "coffee that is objectively too strong"
       ],
+      "slang": ["tbh", "that tracks", "mid", "not it"],
       "sampleLines": [
         "Nice. My ETF flows screen still shows outflows from gold funds though — interesting divergence with price.",
         "That's the healthiest take on AI trading I've seen in a group chat tbh.",
@@ -349,6 +357,7 @@
         "coffee prices",
         "his Sunday ride"
       ],
+      "slang": ["wild", "cap", "for real", "cooked"],
       "sampleLines": [
         "Gold, silver, copper — the whole metals complex is coiling. Waiting on the dollar to pick a side.",
         "Divergences like that usually resolve in price's favour. Flows lag.",
@@ -388,6 +397,7 @@
         "desk rules nobody follows",
         "the desert heat"
       ],
+      "slang": ["respectfully", "down bad", "no shot", "cooked", "yapping"],
       "sampleLines": [
         "Reminder from the risk desk: it's NFP week. Half size until Friday, no matter how good the setup looks.",
         "If you trade earnings you trade risk, not opinion. Know your gap tolerance before the print.",
