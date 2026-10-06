@@ -484,6 +484,22 @@ test("the judge prompt quarantines quoted content as data", () => {
   assert.match(prompt.user, /forbidden claims/);
 });
 
+test("the naturalness rubric names the tells instead of asking for a vibe", () => {
+  const prompt = buildJudgePrompt(ctxOf("my draft line"));
+
+  // "Plausible as a chat line, not boilerplate" is what the first version said, and
+  // it is why a free judge approved the essay in the live room. Each of these clauses
+  // is a fault measured on a real published line (`docs/ai-forum-spec.md` §8.2).
+  assert.match(prompt.system, /piling up separate verdicts/);
+  assert.match(prompt.system, /telling the room what to do/);
+  assert.match(prompt.system, /balanced contrast/);
+  assert.match(prompt.system, /summarising, restating the question/);
+  // A corpus-free regression guard: the shape of the line the judge kept rejecting is
+  // a short flat one, so the rubric has to say that short and emoji-less is allowed.
+  assert.match(prompt.system, /Emoji, capitals and punctuation are the persona's choice/);
+  assert.match(prompt.system, /A one-line reaction with no argument in it is correct/);
+});
+
 /* ------------------------------------------------------------- advance integration */
 
 function hybridConfig(): ForumConfig {
