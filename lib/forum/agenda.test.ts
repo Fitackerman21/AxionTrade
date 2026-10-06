@@ -43,6 +43,42 @@ test("a person's message outranks everything else", () => {
   assert.equal(event.quoted, "read on gold?");
 });
 
+test("a question that is not about the open thread is marked off-topic", () => {
+  const asking = makeTurn(4, {
+    sender: "human",
+    topicId: gold,
+    text: "Hey does anyone here know how to make withdrawals on the platform? It's kinda complicated",
+  });
+  const event = nextEvent(context({ seq: 5, turns: [asking] }));
+
+  assert.equal(event.kind, "HUMAN");
+  assert.equal(event.offTopic, true, "the room must answer the question, not the thread");
+  assert.match(event.reason, /not about the open thread/);
+  // It is still a reply to that message, and it still lands in the thread.
+  assert.equal(event.replyTo, 4);
+  assert.equal(event.topic.id, gold);
+
+  // A market question about the open thread is not off-topic, and neither is a bare
+  // greeting — the room should not answer those differently.
+  for (const text of ["what's the read on gold into the close?", "the range breaks up here", "oi"]) {
+    const onTopic = nextEvent(
+      context({ seq: 5, turns: [makeTurn(4, { sender: "human", topicId: gold, text })] }),
+    );
+    assert.notEqual(onTopic.offTopic, true, `"${text}" is about the thread and was flagged`);
+    assert.match(onTopic.reason, /owed a reply/);
+  }
+
+  // Asking about a *different* market is off-topic too: the answer is about that
+  // market, not a pivot back to gold.
+  const other = nextEvent(
+    context({
+      seq: 5,
+      turns: [makeTurn(4, { sender: "human", topicId: gold, text: "anyone watching bitcoin tonight?" })],
+    }),
+  );
+  assert.equal(other.offTopic, true);
+});
+
 test("a world tick hands the floor to the engine persona", () => {
   const turns = [makeTurn(3, { sender: "mara", topicId: semis })];
   const event = nextEvent(context({ seq: 5, turns }));

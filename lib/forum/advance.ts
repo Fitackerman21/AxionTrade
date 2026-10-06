@@ -515,9 +515,12 @@ export async function advance(
         text = await speak(chosenPersona, n, critique);
         // A turn the Voice licensed to drift is not held to ADDRESSEE: changing
         // the subject is a human move, and failing it here would replace exactly
-        // the lines the room was asked for with the canned ones.
+        // the lines the room was asked for with the canned ones. An answer to an
+        // off-topic question is the same case for the same reason — "it's under
+        // settings, mine took two days" shares no content word with "how do I make
+        // a withdrawal", and that is a good answer, not a non-answer.
         const attemptConfig =
-          voiceDrift && gateConfig.requireAddressee
+          (voiceDrift || event.offTopic === true) && gateConfig.requireAddressee
             ? { ...gateConfig, requireAddressee: false }
             : gateConfig;
         verdict = await runGate({
@@ -597,6 +600,9 @@ export async function advance(
     if (voiceFallback) notes.push(`voice fallback: ${voiceFallback}`);
     // §8.4 records what the Gate did; the drift licence is part of that trace.
     if (gated && voiceDrift) notes.push("off-topic turn; the addressee rule was waived for it");
+    if (gated && event.offTopic) {
+      notes.push("the person asked something off the thread; answered them, addressee rule waived");
+    }
 
     // ---- steps 8-10: fold the exchange into memory, then compact if needed ----
     let memoryWrites: string[] = [];

@@ -96,6 +96,19 @@ test("the room definition ships with the build, not the filesystem", { skip }, a
   assert.match(world.version, /#/, "the world version carries a content hash");
 });
 
+test("a seq range can be pruned out of the shared store", { skip }, async () => {
+  for (let seq = 1; seq <= 5; seq += 1) {
+    await store!.appendTurn(makeTurn(seq, { sender: "mara" }));
+  }
+
+  assert.equal(await store!.deleteTurns(2, 3), 2);
+  assert.deepEqual(
+    (await store!.readTurns()).map((turn) => turn.seq),
+    [1, 4, 5],
+  );
+  assert.equal(await store!.deleteTurns(40, 50), 0, "an empty range is not an error");
+});
+
 test("turns append, stay ordered, and the newest N returns in log order", { skip }, async () => {
   for (let seq = 1; seq <= 3; seq += 1) {
     await store!.appendTurn(makeTurn(seq, { sender: "jev" }));

@@ -39,6 +39,15 @@ export interface ForumStore {
   readLastTurn(): Promise<TurnRecord | null>;
   /** Only the publisher calls this. */
   appendTurn(record: TurnRecord): Promise<void>;
+  /**
+   * Remove every turn whose seq is inside `[from, to]`, and return how many went.
+   *
+   * The log *is* the room's state, so this is irreversible and the room itself never
+   * calls it — the only caller is the `forum:prune` tool a person runs on purpose, to
+   * take a test run's messages back out of a room they were written into. Gaps are
+   * fine: the room moves on from the highest seq it can still see.
+   */
+  deleteTurns(from: number, to: number): Promise<number>;
   /** The human path: a person speaks, the Director answers next turn. */
   appendHumanMessage(args: HumanMessageArgs): Promise<TurnRecord>;
   /**
@@ -226,6 +235,22 @@ export class FileStore implements ForumStore {
     const record = humanMessageRecord(seq, args);
     await this.appendTurn(record);
     return record;
+  }
+
+  async deleteTurns(from: number, to: number): Promise<number> {
+    const turns = await this.readTurns(Number.POSITIVE_INFINITY);
+    const kept = turns.filter((turn) => turn.seq < from || turn.seq > to);
+    const removed = turns.length - kept.length;
+    if (removed === 0) return 0;
+
+    // Rewrite-then-rename, the same discipline as a memory write: a reader sees the
+    // old log or the new one, never a half-written one.
+    await mkdir(this.root, { recursive: true });
+    const target = this.file("log.jsonl");
+    const temp = `${target}.tmp`;
+    await writeFile(temp, kept.map((turn) => `${JSON.stringify(turn)}\n`).join(""), "utf8");
+    await rename(temp, target);
+    return removed;
   }
 
   async readLease(): Promise<Lease | null> {

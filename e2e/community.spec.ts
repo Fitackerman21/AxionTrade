@@ -29,7 +29,24 @@ const PERMITTED: Record<string, string> = {
   "Jess T.": "jess",
 };
 
-const QUESTION = "Evening room — what's the read on gold into the close?";
+/**
+ * The visitor's line, varied per run — deliberately.
+ *
+ * This suite is not hermetic: it posts into the room it is testing. With a fixed
+ * string every run appends another identical copy, and the live room had collected
+ * "fair point — but what's the stop on that?" six times, which is more obviously
+ * synthetic than anything the personas had said. The variation has to be plausible,
+ * so it is the two things a person here actually types — the price on their screen
+ * and the time — which is also why nobody quotes the same tenth of a dollar twice.
+ */
+function probe(prefix: string): string {
+  const now = new Date();
+  const price = (2400 + Math.random() * 40).toFixed(1);
+  const clock = `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`;
+  return `${prefix} ${price} on my screen, ${clock} UTC`;
+}
+
+const QUESTION = probe("Evening room — what's the read on gold into the close?");
 
 interface Row {
   /** true for the visitor's own bubbles */
@@ -198,7 +215,7 @@ test("a person can quote a message and the quote renders above their bubble", as
   await expect(bar).toBeVisible({ timeout: 10_000 });
   await expect(bar).toContainText("Replying to");
 
-  const QUOTE_REPLY = "fair point — but what's the stop on that?";
+  const QUOTE_REPLY = probe("fair point — but what's the stop on that?");
   await page.getByPlaceholder("Message the community…").fill(QUOTE_REPLY);
   const [response] = await Promise.all([
     page.waitForResponse(

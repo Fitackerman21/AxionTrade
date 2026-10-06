@@ -282,6 +282,16 @@ export interface AgendaEvent {
   authoredBy: "engine" | "responder";
   /** the turn being answered, when this event is a reply to a specific message */
   replyTo?: number;
+  /**
+   * A person asked something that is not about the open topic (spec §9).
+   *
+   * The room owes this person an answer to *their* question, so the turn is written
+   * without the market side and without the pivot back to the thread. Found live: a
+   * visitor asked how withdrawals work, was told "the withdrawal thing is dead, gold's
+   * still coiling", and replied "you guys sound like AI". Deflection reads as
+   * evasion, which is the one thing a room of people never sounds like.
+   */
+  offTopic?: boolean;
 }
 
 export interface ForumMessage {

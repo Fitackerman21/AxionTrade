@@ -486,6 +486,71 @@ test("the same line is rejected on a turn whose flaw stays on subject", async ()
   }
 });
 
+/**
+ * The question a live visitor actually asked, and the answer that has no word in
+ * common with it ("settings" appears nowhere in what they wrote).
+ */
+const OFF_THREAD_QUESTION =
+  "Hey does anyone here know how to make withdrawals on the platform? It's kinda complicated";
+const OFF_THREAD_ANSWER = "yeah it is under settings, mine took two days";
+
+/** A gated room whose only permitted responder for a person is `id`, with a Voice. */
+function gatedPerson(id: string): { fixture: Promise<Fixture>; line: string } {
+  const persona = TEST_PERSONAS.find((p) => p.id === id)!;
+  return {
+    fixture: createFixture({
+      config: { ...withPermissions({ allow: { human: [id] } }), gate: gate() },
+      personas: TEST_PERSONAS.map((p) => (p.id === id ? { ...p, model: "test/model" } : p)),
+    }),
+    line: fitLine(OFF_THREAD_ANSWER, persona, 2),
+  };
+}
+
+test("a person's off-thread question is answered on its own terms", async () => {
+  const id = TEST_CONFIG.permissions.allow.human[0]!;
+  const { fixture: pending, line } = gatedPerson(id);
+  const fixture = await pending;
+  try {
+    await personSays(fixture.store, OFF_THREAD_QUESTION, BASE);
+    const voice = voiceRecording(line);
+
+    const result = await advance(fixture.store, { now: BASE + 61_000, voiceProvider: voice.provider });
+
+    assert.equal(result.status, "published");
+    assert.equal(result.record?.chosen, id);
+    assert.equal(result.record?.message?.text, line, "the answer must survive the Gate");
+    assert.equal(voice.seen.length, 1, "an off-thread answer must not buy a retry");
+    assert.match(result.record?.note ?? "", /off the thread; answered them/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("the same answer is held to its subject on a market question", async () => {
+  const id = TEST_CONFIG.permissions.allow.human[0]!;
+  const { fixture: pending, line } = gatedPerson(id);
+  const fixture = await pending;
+  try {
+    await personSays(fixture.store, "what's the read on gold into the close?", BASE);
+    const voice = voiceRecording(line);
+
+    const result = await advance(fixture.store, {
+      now: BASE + 61_000,
+      voiceProvider: voice.provider,
+    });
+
+    // On-topic, so the rule applies and this line earns a retry: it shares nothing
+    // with a question about gold. §9 publishes a person's reply either way, so the
+    // cost of the rule here is the extra call — which is exactly what the off-thread
+    // waiver buys back, and the only thing it changes.
+    assert.equal(voice.seen.length, 2, "the on-topic turn earned its retry");
+    assert.match(result.record?.note ?? "", /ADDRESSEE/);
+    assert.doesNotMatch(result.record?.note ?? "", /off the thread; answered them/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("a double-text turn lands as two messages, tied to the first", async () => {
   const { id, seq } = burstTurn();
   const persona = TEST_PERSONAS.find((p) => p.id === id)!;

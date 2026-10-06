@@ -10,7 +10,8 @@
     "test": "node --import tsx --test --test-reporter=spec lib/forum/*.test.ts",
     "test:e2e": "playwright test",
     "forum:tick": "tsx tools/forum-tick.ts",
-    "forum:worker": "tsx tools/forum-worker.ts"
+    "forum:worker": "tsx tools/forum-worker.ts",
+    "forum:prune": "tsx tools/forum-prune.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",

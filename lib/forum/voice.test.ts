@@ -366,6 +366,41 @@ test("a persona's own slang reaches the prompt, and a persona without any gets n
   }
 });
 
+test("a question that is not about the thread is answered on its own terms", async () => {
+  const { provider, seen } = fake(() => answer("yeah it's under settings, took mine two days"));
+  await voiceDraft({
+    persona: voiced(),
+    event: eventOf({
+      kind: "HUMAN",
+      sender: "human",
+      quoted: "Hey does anyone here know how to make withdrawals on the platform?",
+      offTopic: true,
+    }),
+    world: TEST_WORLD,
+    seq: 6,
+    provider,
+  });
+
+  const user = seen[0]!.messages[0]!.content ?? "";
+  assert.match(user, /not about that thread/);
+  assert.match(user, /Do not steer it back to the market/);
+  assert.match(user, /Do not invent a feature, a menu, a fee or a number/);
+  assert.ok(user.includes("make withdrawals"), "the question itself must reach the model");
+  // The market stance is what produced "the withdrawal thing is dead, gold's still
+  // coiling" on the live room, so it is withheld on this shape of turn.
+  assert.doesNotMatch(user, /<your side>/);
+});
+
+test("an ordinary thread turn still carries the topic and its side", async () => {
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({ persona: voiced(), event: eventOf(), world: TEST_WORLD, seq: 7, provider });
+
+  const user = seen[0]!.messages[0]!.content ?? "";
+  assert.match(user, /<what the room is on>/);
+  assert.match(user, /<your side>/);
+  assert.doesNotMatch(user, /Do not steer it back to the market/);
+});
+
 test("the prompt bans the machine aphorism and licenses occasional platform talk", async () => {
   const withResults: Persona = {
     ...voiced(),

@@ -334,6 +334,10 @@ function turnUser(args: {
   const hint = hashPick(DELIVERY_HINTS, `voice:${persona.id}:${seq}`) ?? DELIVERY_HINTS[0]!;
   const flaw = flawFor(persona, seq, engine).text;
   const chat = recentChat(recent, persona.id);
+  // A person asking something the room is not on gets an answer to *that*, not a
+  // stance on the thread (spec §9). Handing the model <your side> here is what made
+  // the live room reply to "how do withdrawals work" with a view on gold.
+  const offTopic = event.offTopic === true && !engine;
 
   return [
     memory ? `<what you remember about ${event.sender}>${NL}${memory}${NL}</what you remember>` : "",
@@ -341,8 +345,13 @@ function turnUser(args: {
       ? `You may use what you remember, the way a person uses a memory of a real conversation. Never recite it, never say that you remember it, never list it back.`
       : "",
     chat,
-    `<what the room is on>${event.topic.title}</what the room is on>`,
-    `<your side>${event.topic.sides[event.side]}</your side>`,
+    offTopic
+      ? [
+          `<the open thread>${event.topic.title}</the open thread>`,
+          `${event.sender} asked you something that is not about that thread. Answer the question they actually asked, in your own voice and at your own length. Do not steer it back to the market, and do not bring the thread up unless the answer needs it.`,
+          `If you do not know the answer, say so the way you would to someone at the desk. Do not invent a feature, a menu, a fee or a number.`,
+        ].join(NL)
+      : [`<what the room is on>${event.topic.title}</what the room is on>`, `<your side>${event.topic.sides[event.side]}</your side>`].join(NL),
     `<today>${world.digest}</today>`,
     quoted,
     "",

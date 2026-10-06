@@ -41,6 +41,36 @@ test("readTurns returns the newest N in ascending order", async () => {
   }
 });
 
+test("a seq range can be pruned out, and the room carries on from what is left", async () => {
+  const fixture = await createFixture();
+  try {
+    for (let seq = 1; seq <= 5; seq += 1) {
+      await fixture.store.appendTurn(makeTurn(seq, { sender: "mara" }));
+    }
+
+    // The shapes the tool actually asks for: a contiguous block, and the tail.
+    assert.equal(await fixture.store.deleteTurns(2, 3), 2);
+    assert.deepEqual((await fixture.store.readTurns(10)).map((t) => t.seq), [1, 4, 5]);
+    assert.equal(await fixture.store.deleteTurns(4, 9), 2);
+    assert.deepEqual((await fixture.store.readTurns(10)).map((t) => t.seq), [1]);
+
+    // A range with nothing in it is not an error, and removes nothing.
+    assert.equal(await fixture.store.deleteTurns(40, 50), 0);
+    assert.deepEqual((await fixture.store.readTurns(10)).map((t) => t.seq), [1]);
+
+    // The room resumes from the highest seq it can still see, so the gap is harmless.
+    const next = await fixture.store.appendHumanMessage({
+      text: "still here?",
+      sender: "human",
+      t: Date.now(),
+      topicId: TEST_TOPICS[0]!.id,
+    });
+    assert.equal(next.seq, 2);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("a truncated final line is dropped, not fatal", async () => {
   const fixture = await createFixture();
   try {

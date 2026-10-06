@@ -9,6 +9,7 @@
  * the room cannot settle into agreement.
  */
 
+import { contentTokens } from "./gate";
 import type {
   AgendaEvent,
   ForumConfig,
@@ -59,6 +60,32 @@ function topicFor(id: string, topics: readonly Topic[]): Topic {
   return topic;
 }
 
+/**
+ * Is the person's message about what the room is on?
+ *
+ * The room used to assume every human message was about the open thread, because a
+ * person's message is appended under the current topic id. That held until a live
+ * visitor asked how withdrawals work and got "the withdrawal thing is dead, gold's
+ * still coiling above 2400" back twice, then said the room sounded like AI. The
+ * signal here is lexical, which is enough: a market question shares a word with the
+ * topic's own vocabulary ("what's the read on gold"), and a product question shares
+ * none of it.
+ *
+ * Deliberately generous in the other direction — a message with no content words at
+ * all is treated as on-topic, because "oi" is not a question the room should answer
+ * differently. `contentTokens` is the same definition of "a shared word" the Gate's
+ * ADDRESSEE check uses, so the two cannot disagree about what a message is about.
+ */
+function asksAboutTopic(text: string, topic: Topic): boolean {
+  const theirs = contentTokens(text);
+  if (theirs.size === 0) return true;
+  const vocabulary = contentTokens(
+    [topic.title, topic.sides.a, topic.sides.b, topic.friction.a, topic.friction.b].join(" "),
+  );
+  for (const token of theirs) if (vocabulary.has(token)) return true;
+  return false;
+}
+
 /** Trailing run of posts that share the newest post's topic *and* side. */
 function trailingStreak(posts: readonly PostedTurn[]): { side: Side | null; count: number } {
   const newest = posts[posts.length - 1];
@@ -104,17 +131,23 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
 
   // 1. HUMAN — a person spoke and is owed a reply.
   if (newest && isExternal(newest.message.sender, personas)) {
+    const topic = topicFor(newest.message.topicId, topics);
+    const onTopic = asksAboutTopic(newest.message.text, topic);
     return {
       kind: "HUMAN",
-      reason: "a person spoke and is owed a reply",
+      reason: onTopic
+        ? "a person spoke and is owed a reply"
+        : "a person asked something that is not about the open thread",
       sender: newest.message.sender,
-      topic: topicFor(newest.message.topicId, topics),
+      topic,
       side: newest.message.side,
       quoted: newest.message.text,
       authoredBy: "responder",
       // The reply is visibly attached to the message it answers, the way a quoted
       // reply works in a chat app.
       replyTo: newest.message.seq,
+      // Off the thread: the answer is to the person, not to the market.
+      ...(onTopic ? {} : { offTopic: true }),
     };
   }
 

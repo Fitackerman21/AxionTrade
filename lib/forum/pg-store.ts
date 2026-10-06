@@ -179,6 +179,15 @@ export class PgStore implements ForumStore {
     return rows[0]?.record ?? null;
   }
 
+  async deleteTurns(from: number, to: number): Promise<number> {
+    await this.ensure();
+    const result = await this.pool.query("delete from forum_turns where seq between $1 and $2", [
+      from,
+      to,
+    ]);
+    return result.rowCount ?? 0;
+  }
+
   async appendTurn(record: TurnRecord): Promise<void> {
     await this.ensure();
     try {
