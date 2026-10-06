@@ -9,8 +9,9 @@
  * The two properties this asserts, and that the earlier version could not:
  *  - a person's message is *always* answered (the old build could leave it in
  *    UNPUBLISHED, which looked like the room had died), and
- *  - the answer is paced 30–60s out with a visible typing indicator, not returned
- *    in the same instant.
+ *  - the answer is paced 30–60s out with a visible typing indicator — in the room
+ *    header and as a bubble in the transcript — not returned in the same instant,
+ *  - the room quotes the line it answers, and a visitor can answer a specific line.
  */
 
 import { expect, test } from "@playwright/test";
@@ -113,9 +114,13 @@ test("the live community page answers a person, after a visible composing pause"
     })
     .toBe(outgoingBefore + 1);
 
-  // The typing indicator is the visible sign the room is composing, not stalled.
+  // The typing indicator is the visible sign the room is composing, not stalled —
+  // in the profile header, and again inside the transcript the way a messenger
+  // shows it (a bubble from the person who is composing).
   await expect(page.getByTestId("typing")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("typing")).toContainText("is typing");
+  await expect(page.getByTestId("typing-row")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("typing-row")).toContainText("is typing");
 
   // Wait out the composing window: the reply lands once its 30–60s clock is up.
   await expect
