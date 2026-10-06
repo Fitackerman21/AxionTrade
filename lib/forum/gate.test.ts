@@ -155,6 +155,20 @@ test("the machine aphorism is caught as formulaic", () => {
     "the I-do-not-X-I-do-Y shape must fail",
   );
   assert.ok(failingCodes("it is not a breakout, it is a wick").includes("FORMULAIC"));
+  assert.ok(
+    failingCodes("I'm not chasing noise, I'm respecting the range.").includes("FORMULAIC"),
+    "the I-am-not-X-I-am-Y shape must fail",
+  );
+
+  // The live line verbatim, and the reason it needed its own test: the room types
+  // with a phone, so the apostrophes and the quotes arrive curly and the pattern
+  // has to match the straightened copy or it never fires at all.
+  assert.ok(
+    failingCodes("Gold\u2019s still coiling so I\u2019m not \u201creading\u201d it, I\u2019m respecting the range.").includes(
+      "FORMULAIC",
+    ),
+    "a curly apostrophe must not hide the aphorism",
+  );
 
   // A plain sentence that merely contains the words must survive, or the check
   // would punish normal disagreement.
@@ -164,6 +178,18 @@ test("the machine aphorism is caught as formulaic", () => {
   );
   assert.equal(
     failingCodes("I do not chase it, and the stop stays where it is").includes("FORMULAIC"),
+    false,
+  );
+  assert.equal(
+    failingCodes("I'm not sure about that, but the range is still the range").includes("FORMULAIC"),
+    false,
+    "a second clause that does not restate the first person must survive",
+  );
+  // The contrast shape is NOT banned on its own: it is in the roster's own sample
+  // lines (\"allocation question, not a timing one\"), and a measured version of this
+  // check flagged six approved lines for every one it caught.
+  assert.equal(
+    failingCodes("that's an allocation question, not a timing one").includes("FORMULAIC"),
     false,
   );
 });

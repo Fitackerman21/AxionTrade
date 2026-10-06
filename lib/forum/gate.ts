@@ -158,8 +158,23 @@ const STOPWORDS = new Set([
   "where", "which", "while", "will", "with", "without", "would", "your", "yours",
 ]);
 
+/**
+ * iOS lists straighten the punctuation you type: `I'm` arrives as `I’m`, and quotes
+ * as `“…”`.
+ *
+ * Matching is done on a straightened copy and never on the message itself. This is
+ * not cosmetic: 22 of the 124 published lines in the live room carry a curly
+ * apostrophe, so every check written against an ASCII one silently stops matching a
+ * fifth of the room. `I’m not “reading” it, I’m respecting the range` walked through
+ * the Gate — aphorism and all — for exactly that reason. The published message keeps
+ * the punctuation the person typed; only the tests run on the straightened text.
+ */
+function straighten(text: string): string {
+  return text.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"');
+}
+
 function tokenize(text: string): string[] {
-  return text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
+  return straighten(text).toLowerCase().match(/[a-z0-9']+/g) ?? [];
 }
 
 /**
@@ -209,6 +224,14 @@ const APHORISM_PATTERNS: Array<[RegExp, string]> = [
   [
     /\bi\s+(?:do not|don'?t|never)\s+(?:trade|analy[sz]e|chase|watch|buy|sell|answer|read|take|do)\b[^.,!?;\n]{2,40},\s*i\s+(?:trade|analy[sz]e|chase|watch|buy|sell|answer|read|take|do)\b/i,
     "the I-do-not-X-I-do-Y aphorism",
+  ],
+  // The same balanced construction in the first person, which is the one the room
+  // kept publishing: "I'm not reading it, I'm respecting the range". Measured over
+  // the live transcript it catches that line and none of the roster's own sample
+  // or fallback lines, so it is shape-matching rather than a blacklist.
+  [
+    /\bi(?:'m| am) not\b[^.,!?;\n]{2,40},\s*i(?:'m| am)\b/i,
+    "the I-am-not-X-I-am-Y aphorism",
   ],
 ];
 
@@ -363,7 +386,7 @@ function checkFormulaic(
   window: number,
   banned: readonly string[],
 ): GateFailure | null {
-  const lower = ctx.text.toLowerCase();
+  const lower = straighten(ctx.text).toLowerCase();
   for (const phrase of banned) {
     if (lower.includes(phrase.toLowerCase())) {
       return { code: "FORMULAIC", detail: `banned phrase "${phrase}"` };
@@ -371,7 +394,7 @@ function checkFormulaic(
   }
 
   for (const [pattern, why] of APHORISM_PATTERNS) {
-    if (pattern.test(ctx.text)) return { code: "FORMULAIC", detail: why };
+    if (pattern.test(lower)) return { code: "FORMULAIC", detail: why };
   }
 
   const opener = openerOf(ctx.text);
@@ -411,8 +434,12 @@ function checkPatterns(
   patterns: readonly (readonly [RegExp, string])[],
   code: GateCode,
 ): GateFailure | null {
+  // Straightened, because every one of these patterns is written against the
+  // punctuation a keyboard produces and the room types with a phone (see
+  // `straighten`).
+  const subject = straighten(text);
   for (const [pattern, why] of patterns) {
-    if (pattern.test(text)) return { code, detail: why };
+    if (pattern.test(subject)) return { code, detail: why };
   }
   return null;
 }

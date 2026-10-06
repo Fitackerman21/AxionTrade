@@ -7,10 +7,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { cannedDraft } from "./drafts";
+import { cannedDraft, REPERTOIRE } from "./drafts";
+import { contentTokens } from "./gate";
 import { lengthTarget, typographyFault } from "./register";
 import { dataStore } from "./test-utils";
-import type { AgendaEvent, Side } from "./types";
+import type { AgendaEvent, Persona, Side } from "./types";
 
 const store = dataStore();
 const SIDES: Side[] = ["a", "b"];
@@ -240,4 +241,133 @@ test("every member of the room is a person, and the UI agrees with the Voice", a
     personas.map((p) => `${p.id}|${p.name}|${p.role}|${p.online}`),
     "lib/community-chat.ts and data/forum/personas.json disagree about the roster",
   );
+});
+
+test("every member of the room has their own fallback lines, sized for the turn they serve", async () => {
+  const personas = await store.readPersonas();
+
+  for (const persona of personas) {
+    const repertoire = REPERTOIRE[persona.id];
+    assert.ok(
+      repertoire,
+      `${persona.id} has no repertoire of its own and would answer in the generic lines`,
+    );
+
+    for (const line of repertoire.beat) {
+      assert.ok(line.length >= 1 && line.length <= 28, `${persona.id} beat is ${line.length} chars: "${line}"`);
+    }
+    for (const line of repertoire.short) {
+      // A `short` turn is 8-80 characters, and the name that makes it an answer
+      // costs up to eight, so a one-liner over 72 could never be addressed and fit.
+      assert.ok(
+        line.length >= 8 && line.length <= 72,
+        `${persona.id} one-liner is ${line.length} chars: "${line}"`,
+      );
+    }
+    for (const line of repertoire.thought) {
+      assert.ok(
+        line.length >= 40 && line.length <= 135,
+        `${persona.id} thought is ${line.length} chars: "${line}"`,
+      );
+      assert.equal(typographyFault(line), "", `${persona.id} thought uses keyboard punctuation: "${line}"`);
+    }
+  }
+});
+
+test("a fallback line is chosen to fit the turn, and connects without quoting anyone in pieces", async () => {
+  const [personas, topics, world] = await Promise.all([
+    store.readPersonas(),
+    store.readTopics(),
+    store.readWorld(),
+  ]);
+  // The repertoire is fixed text with no placeholders, so the topic cannot change
+  // what a fallback says — which is the property that makes "this line fits this
+  // turn" true rather than probable. One topic is therefore the whole space.
+  const topic = topics[0]!;
+  const quoted = "flows are already leaving and the range breaks down first";
+
+  for (const persona of personas) {
+    for (let seq = 1; seq <= 240; seq += 1) {
+      const event: AgendaEvent = {
+        kind: "THREAD",
+        reason: "test",
+        sender: "dmitri",
+        topic,
+        side: "a",
+        quoted,
+        authoredBy: "responder",
+      };
+      for (const attempt of [1, 2, 3]) {
+        const text = cannedDraft({ persona, event, world, seq, attempt });
+        const target = lengthTarget(persona, seq);
+        const where = `${persona.id}/${target.tier}/seq ${seq}/attempt ${attempt}`;
+
+        assert.ok(
+          text.length >= target.min && text.length <= target.max,
+          `${where} missed its target (${target.min}-${target.max}, got ${text.length}): "${text}"`,
+        );
+        assert.equal(typographyFault(text), "", `${where} used keyboard punctuation: "${text}"`);
+        // The two things the old fallback did to itself: it was cut with the
+        // ellipsis still attached, and it was stretched with filler word by word.
+        assert.doesNotMatch(text, /\.\./, `${where} arrived with a truncated clause: "${text}"`);
+        assert.doesNotMatch(
+          text,
+          /and honestly that is the whole|read on it from where i am sitting/,
+          `${where} arrived with the padding still attached: "${text}"`,
+        );
+        assert.equal(text, text.trim(), `${where} has stray whitespace: "${text}"`);
+        assert.equal(text.includes("  "), false, `${where} has a double space: "${text}"`);
+
+        // A canned line is judged by the Gate when a persona has no model, so it has
+        // to satisfy the rule the Gate runs (`checkAddressee`): a shared content
+        // token, or the sender's name.
+        if (target.tier !== "beat") {
+          const theirs = contentTokens(quoted);
+          const shares = [...contentTokens(text)].some((token) => theirs.has(token));
+          assert.ok(
+            shares || text.toLowerCase().includes(event.sender),
+            `${where} answers nobody: "${text}"`,
+          );
+        }
+      }
+    }
+  }
+});
+
+test("a fallback says the name once, and never repeats a phrase inside one message", async () => {
+  const [personas, topics, world] = await Promise.all([
+    store.readPersonas(),
+    store.readTopics(),
+    store.readWorld(),
+  ]);
+  const topic = topics[0]!;
+
+  for (const persona of personas) {
+    for (let seq = 1; seq <= 120; seq += 1) {
+      const event: AgendaEvent = {
+        kind: "THREAD",
+        reason: "test",
+        // A long quotation with no content word in common, which is the case the old
+        // prefix handled by quoting it back — twice, in pieces, on a retry.
+        sender: "nadia",
+        topic,
+        side: "a",
+        quoted: "You are buying a narrative with a rolled-over chart and nobody cleared it.",
+        authoredBy: "responder",
+      };
+      const text = cannedDraft({ persona, event, world, seq, attempt: 1 });
+      const where = `${persona.id}/seq ${seq}`;
+
+      const names = text.toLowerCase().split(event.sender).length - 1;
+      assert.ok(names <= 1, `${where} says the name ${names} times: "${text}"`);
+
+      const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+      const seen = new Set<string>();
+      for (let i = 0; i + 4 <= words.length; i += 1) {
+        const gram = words.slice(i, i + 4).join(" ");
+        assert.equal(seen.has(gram), false, `${where} repeats "${gram}": "${text}"`);
+        seen.add(gram);
+      }
+    }
+  }
 });

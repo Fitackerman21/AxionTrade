@@ -1,21 +1,32 @@
 /**
- * Canned drafts — the fallback when the Voice has no model or the call fails.
+ * Canned drafts — what a persona says when the Voice has no model or the call
+ * failed, and what the room publishes when the Gate has exhausted its retries.
  *
- * These are no longer a P0 stand-in: they are what a persona says when the provider
- * is down, when the Gate has exhausted its retries, and on engine turns whose line
- * fell outside the register. So they have to survive the same reading as a real
- * message, which means the same thumb-typography rule the Gate enforces: no em
- * dashes, no semicolons, no ellipsis character, lowercase where the persona is
- * lowercase.
+ * These are not a P0 stand-in: on the live room they were 13 of 124 published
+ * turns, so they are read as often as anyone's real lines and they have to survive
+ * the same reading. The previous version did not. It built a line by filling a
+ * template and then *stretching* it to the turn's length, which produced two
+ * things nobody types: a message cut off mid-clause ("...as an"), and a padded one
+ * with the filler still attached ("...simply built different 🫡 and honestly that
+ * is the whole"). It also prefixed the message it answered as a truncated
+ * quotation, ellipsis and all, and in the retry path it prefixed a *second*
+ * reference on top of the first — so the room published lines that quoted the same
+ * clause twice and sounded like nothing at all.
  *
- * There are two families, because a persona now has two shapes of turn. A short
- * turn gets a beat ("fair", "nah", a verdict), a normal or long turn gets the
- * sentence-shaped template. Trimming a template down to 20 characters would produce
- * a sentence with its head cut off, which is worse than a canned beat.
+ * So a canned line is now **chosen to fit the turn** instead of stretched into it.
+ * Each persona has a small repertoire per length tier: beats, one-liners, and
+ * thoughts (whole sentences). A line is never cut inside a clause and never padded;
+ * when one thought is too short for the turn, the fallback joins whole thoughts.
+ *
+ * A line also has to connect to the message it answers, because a persona with no
+ * model has its canned line judged by the Gate like anyone else's (`checkAddressee`).
+ * The old way was to quote it. The way people actually do it is to say who they are
+ * answering, and `checkAddressee` accepts a sender's name — so that is what the
+ * fallback does, and it cannot garble a quotation that no longer exists.
  */
 
 import { contentTokens } from "./gate";
-import { lengthTarget } from "./register";
+import { lengthTarget, type LengthTarget } from "./register";
 import { hashPick } from "./rng";
 import type { AgendaEvent, Persona, PersonaId, WorldState } from "./types";
 
@@ -27,154 +38,194 @@ export interface DraftContext {
   attempt: number;
 }
 
-/** What a beat template needs to fill: only the persona's own posture. */
-const BEATS: Record<PersonaId, string[]> = {
-  mara: ["fair.", "I'm not arguing with that 😤", "patience trade.", "ok that's funny"],
-  dmitri: ["noise.", "that's not the driver.", "rates decide this.", "we'll see."],
-  sol: ["nah", "cooked", "eh it's fine", "lol ok", "down bad fr"],
-  toko: ["one scalp and out.", "same script.", "30 minutes, that's it.", "mid."],
-  priya: ["watchlist.", "noted.", "flows say otherwise.", "I'd wait."],
-  kofi: ["bet", "cable decides it", "tight stop, then out", "salty ngl"],
-  lena: ["tbh that tracks.", "mid.", "flow screen disagrees.", "no notes."],
-  raul: ["flows lag.", "copper knew first.", "same as last week.", "meh."],
-  nadia: ["half size.", "no new risk.", "know your gap.", "that's the job."],
-  rafa: ["tape says wait.", "no trade there.", "flat into the print.", "not my level."],
-  jess: ["no fills.", "checking the tape.", "that's a nothing level.", "flow's quiet."],
-};
-
-const TEMPLATES: Record<PersonaId, string[]> = {
-  mara: [
-    "ok I'll bite on {topic}. {side} and I'm not going to pretend otherwise 🔋",
-    "{quoted}. this is why I don't rush. {side}. small size, clean mind.",
-    "the patience trade doesn't care what the room thinks. {side}. 😤",
-  ],
-  dmitri: [
-    "{topic} is downstream of the bond market. {side}. everything else is noise around it.",
-    "macro funds are positioned for exactly this. {side}, and the spreads will confirm it.",
-    "{quoted} is a single-name question. I don't trade single-name questions.",
-  ],
-  sol: [
-    "lol ok. {topic}? {side}. simply built different 🫡",
-    "{quoted}. cool story but I'm buying dips with my whole face",
-    "nobody in this room understands {topic} and I include myself in that 💀",
-  ],
-  toko: [
-    "{topic}: first 30 minutes or nothing. {side}.",
-    "{quoted}. I'll scalp it and be hands off by lunch. screen time capped 🎯",
-    "2 of 3 green on that level. {side}. tomorrow, same script.",
-  ],
-  priya: [
-    "my book is hedged into the print, so {topic} is a flows question for me. {side}.",
-    "{quoted}. adding this to the watchlist. {side}, with a one-day lag.",
-    "singapore was quiet. {side}. I'd rather be early on this than loud.",
-  ],
-  kofi: [
-    "cable is what matters, everything else is decoration. {topic}: {side}",
-    "{quoted}. if the level gives way I'm in with a tight stop. {side}",
-    "my level lives another day 😅 {side}",
-  ],
-  lena: [
-    "my flow screen disagrees with the price on {topic}. {side}, tbh.",
-    "{quoted}. divergences like this usually resolve in price's favour. {side}.",
-    "I'd frame {topic} as an allocation question, not a timing one. {side}.",
-  ],
-  raul: [
-    "the whole complex moves together on {topic}. {side}.",
-    "{quoted}. flows lag. {side}.",
-    "copper was already saying this last week. {side}.",
-  ],
-  nadia: [
-    "risk desk view on {topic}: {side}. half size until the event passes.",
-    "{quoted}. know your gap tolerance before the print. {side}.",
-    "no new risk into the number. {side}. that's the whole job.",
-  ],
-  rafa: [
-    "on {topic} the tape is fine, the macro driver is not. {side}.",
-    "{quoted}. that's a desk level, not a level you can hold overnight. {side}.",
-    "I'm flat into the print and I'll tell you why: {side}.",
-  ],
-  jess: [
-    "flow on {topic} is one-sided and I don't love that. {side}.",
-    "{quoted}. no fills on this side until the open settles. {side}.",
-    "I checked the tape twice on {topic}. {side}, and no one is hedging it.",
-  ],
-};
-
-const GENERIC = [
-  "On {topic}: {side}. My book says {stance}, so I'm not moving.",
-  "{quoted}. that's the part I'd argue with. {side}.",
-];
-
-/** Keep the quoted text short enough to sit inside a bubble. */
-function snippet(text: string | undefined, max = 72): string {
-  if (!text) return "no comment";
-  const flat = text.replace(/\s+/g, " ").trim();
-  if (flat.length <= max) return flat;
-  const cut = flat.slice(0, max);
-  const space = cut.lastIndexOf(" ");
-  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trim()}...`;
-}
-
-function fill(template: string, ctx: DraftContext): string {
-  const { event, persona, world, seq } = ctx;
-  const quirk = hashPick(persona.sheet.quirks, `${persona.id}:${seq}`) ?? "";
-
-  return template
-    .replaceAll("{topic}", event.topic.title)
-    .replaceAll("{side}", event.topic.sides[event.side])
-    .replaceAll("{friction}", event.topic.friction[event.side])
-    .replaceAll("{quoted}", snippet(event.quoted))
-    .replaceAll("{stance}", persona.sheet.stance)
-    .replaceAll("{quirk}", quirk)
-    .replaceAll("{digest}", snippet(world.digest, 90));
-}
-
-function trimToWord(text: string, max: number): string {
-  const cut = text.slice(0, max);
-  const space = cut.lastIndexOf(" ");
-  return (space > max * 0.6 ? cut.slice(0, space) : cut)
-    .replace(/[,;:\s]+$/, "")
-    .replace(/[—–]/g, ",");
+export interface Repertoire {
+  /** Reactions: a verdict in two or three words. The `beat` tier is the only one
+   * that uses them, and a beat is the one place a fragment is correct. */
+  beat: string[];
+  /** One-liners, sized to leave room for a name in front of them on a `short`
+   * turn. A `short` turn is 8-80 characters and a name costs up to eight. */
+  short: string[];
+  /** Thoughts: one to three whole sentences, in the persona's own voice. Every
+   * tier above `short` is served from here, which is why the set is mixed in
+   * length: a `full` turn has a floor of 140 characters and the narrowest persona
+   * caps it at 170, so the bank has to contain a pair of thoughts that fits
+   * between them without being cut. */
+  thought: string[];
 }
 
 /**
- * Honour this turn's length target, which is the same one the Gate will check.
+ * What each person says when the Voice cannot speak for them.
  *
- * Padding is deliberate when the text is short of the floor, because a two-word
- * answer where a sentence was asked for is a different failure. It pads one word at
- * a time: appending a whole phrase could overshoot the ceiling and then be trimmed
- * back below the floor, which is how a "full" line came out shorter than the target
- * it was built for. A beat target never needs padding and never gets any.
+ * Exported because the content carries a contract the fit logic depends on — every
+ * line already fits the turn it serves, which is what makes "chosen to fit"
+ * possible — and a contract that is only checked by the code that uses it is a
+ * contract that drifts silently back into padding (`data.test.ts` holds the bands).
+ *
+ * Nothing here carries a placeholder or a quotation. Fixed text is what makes "this
+ * line fits this turn" a fact rather than a hope: the previous version filled a
+ * template with the topic and the message being answered, so its length moved with
+ * the conversation and it had to be clamped afterwards, which is where the filler
+ * and the half-clauses came from.
  */
-const PAD_WORDS =
-  "and honestly that is the whole read on it from where I am sitting right now anyway if you want the long version".split(
-    " ",
-  );
+export const REPERTOIRE: Record<PersonaId, Repertoire> = {
+  mara: {
+    beat: ["fair.", "I'm not arguing with that 😤", "patience trade.", "ok that's funny"],
+    short: [
+      "my patience is doing the work",
+      "small size, clean mind",
+      "i'm not adding to this yet",
+    ],
+    thought: [
+      "i'm not chasing this. small size, clean mind, and i let it come to me",
+      "coiled all week and my patience is the only thing holding this together",
+      "you are all very confident for a room that got the last three of these wrong 😤",
+      "i refuse to be outperformed by a screen, so my size stays small and my stop stays where it is",
+    ],
+  },
+  dmitri: {
+    beat: ["noise.", "that's not the driver.", "rates decide this.", "we'll see."],
+    short: [
+      "that is not the driver",
+      "rates are still the driver",
+      "you have the causality backwards",
+    ],
+    thought: [
+      "you have the causality backwards. the bond market moved first",
+      "rates explain this move. single names explain nothing about it",
+      "the bund spread is widening again, so put it in your filter before you talk about levels",
+      "i trade the bond market and the single names follow from it, which has been true all year",
+    ],
+  },
+  sol: {
+    beat: ["nah", "cooked", "eh it's fine", "lol ok", "down bad fr"],
+    short: [
+      "buying the dip with my whole face",
+      "cooked, all of it",
+      "nobody here reads the chart anyway",
+    ],
+    thought: [
+      "nobody in this room understands this and i include myself in that 💀",
+      "2am and i'm still in the crypto group chat, so yes i saw it before you",
+      "buying dips with my whole face 🫡 and no i will not be taking questions",
+      "you cannot fade a market that only goes up. it has done nothing else since you started complaining",
+    ],
+  },
+  toko: {
+    beat: ["one scalp and out.", "same script.", "30 minutes, that's it.", "mid."],
+    short: [
+      "one scalp and i'm out",
+      "not holding this overnight",
+      "you trade too much, that's the problem",
+    ],
+    thought: [
+      "you trade too much. that is the whole problem with your results",
+      "first thirty minutes or nothing. not holding anything past that",
+      "2 of 3 green and i'm done by lunch. screen time is the enemy",
+      "i counted eleven trades on your account today. that is a slot machine with extra steps やめ",
+    ],
+  },
+  priya: {
+    beat: ["watchlist.", "noted.", "flows say otherwise.", "I'd wait."],
+    short: [
+      "what is your invalidation though",
+      "adding it to the watchlist",
+      "hedged into the print already",
+    ],
+    thought: [
+      "singapore was quiet. i'd rather be early on this than loud",
+      "hedged into the print, so i'm not the person to ask about direction",
+      "adding it to the watchlist with a one day lag, the flows need a session",
+      "what is your invalidation on this, because my book is hedged and i need to know where i'm wrong",
+    ],
+  },
+  kofi: {
+    beat: ["bet", "cable decides it", "tight stop, then out", "salty ngl"],
+    short: ["cable decides it, not gold", "tight stop then out", "that's the whole plan right there"],
+    thought: [
+      "cable decides it, everything else in here is decoration",
+      "tight stop then out, that's the whole plan and it hasn't changed",
+      "second monitor has the cable chart and the gold chart, i look at the cable one",
+      "stopped out of this twice this week and i'll take it a third time if the level sets up",
+    ],
+  },
+  lena: {
+    beat: ["tbh that tracks.", "mid.", "flow screen disagrees.", "no notes."],
+    short: [
+      "the flow screen disagrees here",
+      "that tracks, tbh",
+      "allocation question, not timing",
+    ],
+    thought: [
+      "tbh that tracks. it has been the same range for three weeks",
+      "the flow screen disagrees with the price here and it's been right more often",
+      "that's an allocation question for me, not a timing one, different books",
+      "i'd frame this as a funds flow problem, the etf prints show money leaving and the chart doesn't care yet",
+    ],
+  },
+  raul: {
+    beat: ["flows lag.", "copper knew first.", "same as last week.", "meh."],
+    short: ["flows lag, they always have", "not a real level", "nothing changed since last week"],
+    thought: [
+      "flows lag. copper knew about this a week before your screen did",
+      "that's a chart level, not a real one. the physical trade sets the price",
+      "same as last week and the week before. nothing in this market has changed",
+      "the whole complex moves together and the chart people price them like separate markets",
+    ],
+  },
+  nadia: {
+    beat: ["half size.", "no new risk.", "know your gap.", "that's the job."],
+    short: ["half size until the print", "no new risk here", "your size is the whole problem"],
+    thought: [
+      "no new risk into this. that's the whole job and it isn't interesting",
+      "half size until the print passes, then we can talk about direction",
+      "respectfully, your size is a bet on being right about one thing",
+      "position sizing is the entire job. get it wrong and being right about direction doesn't save you",
+    ],
+  },
+  rafa: {
+    beat: ["tape says wait.", "no trade there.", "flat into the print.", "not my level."],
+    short: ["thin tape, that's all it is", "flat and staying flat", "not a level, that's a chop range"],
+    thought: [
+      "the tape is thin and i'm not paying to find out where it goes",
+      "i'm flat into the print. that's where my risk sits, not a prediction",
+      "opened twenty ticks off yesterday's close and half the room already has a thesis about it",
+      "everyone keeps quoting yesterday's close at me like it's today's print. it isn't though",
+    ],
+  },
+  jess: {
+    beat: ["no fills.", "checking the tape.", "that's a nothing level.", "flow's quiet."],
+    short: ["what was the flow though", "no fills on that side", "i'd wait for the open"],
+    thought: [
+      "no fills on that side all morning, so what am i supposed to read here",
+      "what's the flow on this, because the price is not telling me anything",
+      "the statement is right there in the platform and nobody reads it before they post",
+      "i'll take the other side of that all day, the flow screen disagrees and i trust it more than either of us",
+    ],
+  },
+};
 
-function clampToTarget(text: string, persona: Persona, seq: number): string {
-  const target = lengthTarget(persona, seq);
-  let out = text.trim();
-  if (out.length > target.max) out = trimToWord(out, target.max);
-
-  // Word by word, and cycling if the narrowest ceiling needs more than one pass.
-  // The bound is a guard, not a plan: a word is a few characters and every tier's
-  // window is wider than that.
-  for (let i = 0; out.length < target.min && i < 80; i += 1) {
-    const next = `${out} ${PAD_WORDS[i % PAD_WORDS.length]!}`;
-    if (next.length > target.max) break;
-    out = next;
-  }
-  return out;
-}
+/** Used only if a persona reaches the fallback without a bank of its own. */
+const GENERIC: Repertoire = {
+  beat: ["fair.", "nah.", "hmm.", "ok then."],
+  short: ["fair enough", "not sure about that", "let me check the book"],
+  thought: [
+    "not convinced, but i'm not going to argue about it in here",
+    "the book is staying where it is until something actually changes",
+    "i'd need to see the print before i say anything about this one",
+    "let it come to me. chasing this is how you end up two sizes too big",
+  ],
+};
 
 /**
- * Does the line connect to the message it is answering?
+ * Does this line answer the message it is standing in for?
  *
- * The fallback is published on turns where nobody checks it (the Gate is skipped for
- * engine lines, and a rejected draft is replaced by this line *after* the Gate has
- * run), so it has to satisfy the rule itself rather than be repaired by a retry.
+ * Mirrors `checkAddressee` deliberately: a shared content token, or the sender's
+ * name. A canned line is judged by the Gate when a persona has no model, so the
+ * test it has to pass is the Gate's own.
  */
-function answersTheMessage(text: string, quoted: string | undefined): boolean {
+function connects(text: string, ctx: DraftContext): boolean {
+  if (ctx.event.authoredBy === "engine") return true;
+  const quoted = ctx.event.quoted?.trim();
   if (!quoted) return true;
   const theirs = contentTokens(quoted);
   if (theirs.size === 0) return true;
@@ -182,28 +233,109 @@ function answersTheMessage(text: string, quoted: string | undefined): boolean {
   return false;
 }
 
-export function cannedDraft(ctx: DraftContext): string {
-  const target = lengthTarget(ctx.persona, ctx.seq);
-  const beats = BEATS[ctx.persona.id] ?? BEATS.mara;
+/**
+ * Say who it is for, the way people actually do it in a group chat ("kofi, cable
+ * decides it"). This is what replaces the truncated quotation: it costs a name
+ * rather than a clause, and it cannot produce a fragment.
+ *
+ * Applied to a whole candidate, never to each half of a join — a message that says
+ * the name twice ("nadia, ... did nadia, ...") is the same class of garble the
+ * quotation prefix used to be.
+ */
+function addressed(line: string, ctx: DraftContext): string {
+  if (connects(line, ctx)) return line;
+  const sender = ctx.event.sender?.trim();
+  if (!sender || sender === "room") return line;
+  return `${sender.toLowerCase()}, ${line}`;
+}
 
-  // A beat answers on its own: it is a reaction, and it is exempt from the
-  // addressee rule (see `checkAddressee`), so nothing may be prefixed onto it.
-  if (target.tier === "beat") {
-    return hashPick(beats, `beat:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`) ?? beats[0]!;
+/**
+ * Two thoughts in one message, with a sentence break between them.
+ *
+ * The break is why this is a function and not a space: chat lines mostly do not
+ * end in a full stop, so `"...your screen did" + "the whole complex"` would read as
+ * one broken sentence instead of a person saying two things.
+ */
+function joinThoughts(first: string, second: string): string {
+  return `${first}${/[.!?]$/.test(first) ? "" : "."} ${second}`;
+}
+
+/** Whole thoughts only: never cut inside a clause, so trimming drops sentences. */
+function dropTrailingSentences(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  let out = "";
+  for (const sentence of sentences) {
+    const next = out === "" ? sentence : `${out} ${sentence}`;
+    if (next.length > max) break;
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * Choose the line that fits this turn out of the persona's own repertoire.
+ *
+ * Order of preference: a single thought that fits, then two joined, then three.
+ * Joining is the point — a `full` turn is a floor of 140 characters, and the old
+ * fallback met that floor by appending filler word by word. Two of this person's
+ * thoughts are still this person's writing; the filler was nobody's.
+ */
+function fitToTarget(
+  singles: readonly string[],
+  joined: readonly string[],
+  target: LengthTarget,
+  seed: string,
+): string {
+  const fits = (text: string): boolean => text.length >= target.min && text.length <= target.max;
+
+  for (const pool of [singles, joined]) {
+    const fitting = pool.filter(fits);
+    if (fitting.length > 0) return hashPick(fitting, seed) ?? fitting[0]!;
   }
 
-  const template = hashPick(TEMPLATES[ctx.persona.id] ?? GENERIC, `${ctx.persona.id}:${ctx.seq}`);
-  const base = fill(template ?? GENERIC[0]!, ctx);
+  // Nothing fits even joined: the turn's ceiling is below this persona's shortest
+  // thought. Keep the shortest whole thought and drop any trailing sentences.
+  const shortest = [...singles].sort((a, b) => a.length - b.length)[0] ?? "";
+  return dropTrailingSentences(shortest, target.max);
+}
 
-  // One reference at most, separated by a full stop. A retry used to stack the
-  // critique on top of the quote reference, which produced lines like
-  // "a longer wick, flows lag, my level lives another day" — three sentences in a
-  // trench coat, and worse than the draft they replaced.
-  const reference = !answersTheMessage(base, ctx.event.quoted)
-    ? snippet(ctx.event.quoted, 34)
-    : ctx.attempt > 1
-      ? snippet(ctx.event.topic.friction[ctx.event.side], 40)
-      : "";
+/** Every way this turn could be filled from the persona's own writing. */
+function candidates(lines: readonly string[], ctx: DraftContext): { singles: string[]; joined: string[] } {
+  const singles = lines.map((line) => addressed(line, ctx));
+  const joined: string[] = [];
+  for (let i = 0; i < singles.length; i += 1) {
+    for (let j = 0; j < singles.length; j += 1) {
+      if (i === j) continue;
+      joined.push(addressed(joinThoughts(lines[i]!, lines[j]!), ctx));
+      for (let k = 0; k < singles.length; k += 1) {
+        if (k === i || k === j) continue;
+        const pair = joinThoughts(lines[i]!, lines[j]!);
+        joined.push(addressed(joinThoughts(pair, lines[k]!), ctx));
+      }
+    }
+  }
+  return { singles, joined };
+}
 
-  return clampToTarget(reference === "" ? base : `${reference}. ${base}`, ctx.persona, ctx.seq);
+export function cannedDraft(ctx: DraftContext): string {
+  const target = lengthTarget(ctx.persona, ctx.seq);
+  const bank = REPERTOIRE[ctx.persona.id] ?? GENERIC;
+  // The retry number is in every seed, so a persona with no model does not repeat
+  // itself into a Gate rejection it cannot escape.
+  const seed = `${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`;
+
+  if (target.tier === "beat") {
+    // A beat is a reaction and is exempt from the addressee rule, so nothing is
+    // prefixed onto it. "kofi, nah" is not something anyone types.
+    const fitting = bank.beat.filter((line) => line.length <= target.max);
+    const pool = fitting.length > 0 ? fitting : [bank.beat[0] ?? GENERIC.beat[0]!];
+    return hashPick(pool, `beat:${seed}`) ?? pool[0]!;
+  }
+
+  // The name is applied before the fit is computed, so a line that fits is a line
+  // that fits *with* the name that makes it an answer.
+  const source = target.tier === "short" ? bank.short : bank.thought;
+  const { singles, joined } = candidates(source, ctx);
+  return fitToTarget(singles, joined, target, seed);
 }
