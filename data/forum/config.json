@@ -2,14 +2,15 @@
   "roomId": "axion-forum",
   "permissions": {
     "allow": {
-      "human": ["jev", "mara", "sol", "dmitri"],
-      "jev": ["mara", "dmitri", "sol", "priya"],
-      "mara": ["jev", "toko", "kofi", "lena"],
-      "dmitri": ["priya", "lena", "nadia"],
-      "sol": ["toko", "kofi", "mara"],
+      "human": ["mara", "sol", "dmitri", "rafa", "jess"],
+      "rafa": ["jess", "kofi", "nadia", "lena"],
+      "jess": ["rafa", "sol", "mara", "kofi"],
+      "mara": ["rafa", "toko", "kofi", "lena"],
+      "dmitri": ["priya", "lena", "nadia", "rafa"],
+      "sol": ["toko", "kofi", "mara", "jess"],
       "toko": ["mara", "sol", "kofi"],
       "priya": ["dmitri", "lena", "nadia"],
-      "kofi": ["mara", "toko", "raul"],
+      "kofi": ["mara", "toko", "raul", "jess"],
       "lena": ["priya", "raul", "dmitri"],
       "raul": ["mara", "lena", "sol"],
       "nadia": ["mara", "priya", "raul"]
@@ -27,7 +28,7 @@
     "topicRotationTurns": 8
   },
   "agenda": {
-    "enginePersona": "jev",
+    "enginePersona": "rafa",
     "stageDirections": [
       "Nothing on the desk covers that yet. Book stands — next review at the close.",
       "Passing on that one. Nobody is cleared to trade it.",

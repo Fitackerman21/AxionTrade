@@ -10,7 +10,7 @@ import { cannedDraft } from "./drafts";
 import type { ChatProvider, ChatRequest, ChatResponse } from "./provider";
 import { makeTurn, TEST_PERSONAS, TEST_TOPICS, TEST_WORLD } from "./test-utils";
 import type { AgendaEvent, Persona } from "./types";
-import { flawFor, voiceDraft } from "./voice";
+import { BEAT_BREAK, flawFor, isBurstTurn, splitBeats, voiceDraft } from "./voice";
 
 const MARA = TEST_PERSONAS.find((p) => p.id === "mara")!;
 
@@ -116,7 +116,10 @@ test("the prompt carries the character sheet, the world digest and the quoted li
   assert.match(user, /<what the room is on>/);
   assert.ok(user.includes(TEST_WORLD.digest), "the world digest must reach the prompt");
   assert.match(user, /<message from jev>/);
-  assert.match(user, /40-240 characters/, "the hard register band must be stated");
+  // The length is the turn's own target, not one fixed band, so the prompt has to
+  // state a range and the tier's name rather than a constant pair of numbers.
+  assert.match(user, /Roughly \d+ to \d+ characters/, "the turn's length target must be stated");
+  assert.match(user, /one short beat|one quick message|one ordinary message|a longer message/);
 
   // Same shared defaults the Gate's judge uses: one cheap, untruncated call.
   assert.equal(request.reasoning, "off");
@@ -417,6 +420,47 @@ test("a canned draft never claims the drift licence", async () => {
   assert.equal(result.usedVoice, false);
   assert.equal(result.drift, false, "a template line answers what it was given");
 });
+
+test("the system prompt asks for thumb typography, not keyboard punctuation", async () => {
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({ persona: voiced(), event: eventOf(), world: TEST_WORLD, seq: 1, provider });
+
+  const system = seen[0]!.system ?? "";
+  assert.match(system, /no em dashes or en dashes/);
+  assert.match(system, /no semicolons/);
+  assert.match(system, /do not bother with capital letters/);
+  // The old prompt handed the model its own sample lines and then told it to write
+  // plain sentences; that contradiction is gone.
+  assert.doesNotMatch(system, /half-finished is fine; polished/);
+});
+
+test("a burst turn is told how to send two messages, and the marker splits", async () => {
+  const seq = Array.from({ length: 200 }, (_, i) => i + 1).find((n) => isBurstTurn(MARA, n));
+  assert.ok(seq, "the flaw list must contain a double-text flaw");
+  assert.match(flawFor(MARA, seq!).text, /two messages/);
+
+  const { provider, seen } = fake(() => answer(`first beat ${BEAT_BREAK} second beat`));
+  const result = await voiceDraft({
+    persona: voiced(),
+    event: eventOf(),
+    world: TEST_WORLD,
+    seq: seq!,
+    provider,
+  });
+
+  const user = seen[0]!.messages[0]?.content ?? "";
+  assert.ok(user.includes(BEAT_BREAK), "the split marker has to be shown, not described");
+  assert.match(user, /two messages/);
+  assert.deepEqual(splitBeats(result.text), ["first beat", "second beat"]);
+  // An ordinary turn never sees the marker, so only the licensed turns can burst.
+  assert.equal(isBurstTurn(MARA, nextNonBurst(seq!)), false);
+});
+
+/** A later turn that is not a burst, as a control for the assertion above. */
+function nextNonBurst(seq: number): number {
+  for (let n = seq + 1; n < seq + 40; n += 1) if (!isBurstTurn(MARA, n)) return n;
+  return seq;
+}
 
 test("the retry number reaches the canned fallback", async () => {
   const event = eventOf();

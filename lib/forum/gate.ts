@@ -15,6 +15,7 @@
  */
 
 import { sameFamily } from "./provider";
+import { lengthFault, lengthTarget, typographyFault } from "./register";
 import type { ChatProvider } from "./provider";
 import { mulberry32, hashString } from "./rng";
 import type {
@@ -33,6 +34,7 @@ export type GateCode =
   | "REDUNDANCY"
   | "FORMULAIC"
   | "LENGTH"
+  | "TYPOGRAPHY"
   | "ASSISTANT_TICS"
   | "META"
   | "INJECTION";
@@ -43,6 +45,7 @@ export const GATE_CODES: readonly GateCode[] = [
   "REDUNDANCY",
   "FORMULAIC",
   "LENGTH",
+  "TYPOGRAPHY",
   "ASSISTANT_TICS",
   "META",
   "INJECTION",
@@ -159,7 +162,14 @@ function tokenize(text: string): string[] {
   return text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
 }
 
-function contentTokens(text: string): Set<string> {
+/**
+ * The content words of a line: no stop words, nothing short.
+ *
+ * Exported because `cannedDraft` has to satisfy the rule the ADDRESSEE check below
+ * enforces — a fallback line that shares nothing with the message it answers is a
+ * non-answer — and there should be one definition of "shares a token", not two.
+ */
+export function contentTokens(text: string): Set<string> {
   const out = new Set<string>();
   for (const token of tokenize(text)) {
     if (token.length >= 4 && !STOPWORDS.has(token)) out.add(token);
@@ -301,6 +311,11 @@ function checkAddressee(ctx: GateContext): GateFailure | null {
   const quoted = ctx.event.quoted?.trim();
   if (!quoted) return null;
 
+  // A beat is a reaction — "nah", "fair", "lol". Demanding that two words share a
+  // content token with the message they answer is the kind of rule that produced a
+  // room where nobody ever just replied, so a beat is exempt.
+  if (lengthTarget(ctx.persona, ctx.seq).tier === "beat") return null;
+
   const mine = contentTokens(ctx.text);
   const theirs = contentTokens(quoted);
   // Nothing to match against (e.g. a bare "@lev" reply) — do not manufacture a failure.
@@ -373,16 +388,22 @@ function checkFormulaic(
   return null;
 }
 
+/**
+ * Length, against this turn's tier rather than the persona's whole band.
+ *
+ * The tier comes from the same `lengthTarget(persona, seq)` the Voice was given, so
+ * a beat is legal on a beat turn and illegal on a turn that was asked for a longer
+ * message — which is what keeps the variety from collapsing back into one length.
+ */
 function checkLength(ctx: GateContext): GateFailure | null {
-  const { minChars, maxChars } = ctx.persona.sheet.register;
-  const length = ctx.text.trim().length;
-  if (length < minChars) {
-    return { code: "LENGTH", detail: `${length} chars, under ${ctx.persona.id}'s ${minChars}-char floor` };
-  }
-  if (length > maxChars) {
-    return { code: "LENGTH", detail: `${length} chars, over ${ctx.persona.id}'s ${maxChars}-char ceiling` };
-  }
-  return null;
+  const fault = lengthFault(ctx.text, ctx.persona, ctx.seq);
+  return fault === "" ? null : { code: "LENGTH", detail: fault };
+}
+
+/** Keyboard punctuation in a message typed with a thumb (see `register.ts`). */
+function checkTypography(ctx: GateContext): GateFailure | null {
+  const fault = typographyFault(ctx.text);
+  return fault === "" ? null : { code: "TYPOGRAPHY", detail: fault };
 }
 
 function checkPatterns(
@@ -414,6 +435,7 @@ export function runDeterministicChecks(ctx: GateContext, config: GateConfig): Ga
   };
 
   push(checkLength(ctx));
+  push(checkTypography(ctx));
   push(checkPatterns(ctx.text, TIC_PATTERNS, "ASSISTANT_TICS"));
   push(checkBullets(ctx.text));
   push(checkPatterns(ctx.text, META_PATTERNS, "META"));
@@ -441,6 +463,7 @@ export interface JudgePrompt {
  */
 export function buildJudgePrompt(ctx: GateContext): JudgePrompt {
   const { persona } = ctx;
+  const target = lengthTarget(persona, ctx.seq);
   const system = [
     "You are a strict response analyst for a fictional trading-desk chat room.",
     "You judge one draft message against its character sheet and return JSON only.",
@@ -450,7 +473,7 @@ export function buildJudgePrompt(ctx: GateContext): JudgePrompt {
     "",
     "Rubric — judge each item, and give a reason for any item you fail:",
     "- voiceMatch: reads like the provided sample lines (same diction and rhythm), not a generic writer.",
-    "- registerFit: matches the register note and stays inside the character's length band.",
+    "- registerFit: matches the register note and the length this turn was asked for. A very short reply is correct when the length asked for was a short beat, and wrong when it was not.",
     "- stanceConsistency: consistent with the stance, and does not contradict the forbidden claims.",
     "- naturalness: plausible as a chat line from this person in this room, not boilerplate.",
     "Set confidence to how sure you are of a negative verdict; use 0.9+ only for clear failures.",
@@ -462,7 +485,7 @@ export function buildJudgePrompt(ctx: GateContext): JudgePrompt {
   const user = [
     `<character id="${persona.id}" name="${persona.name}" role="${persona.role}">`,
     `stance: ${persona.sheet.stance}`,
-    `register: ${persona.sheet.register.minChars}-${persona.sheet.register.maxChars} chars — ${persona.sheet.register.note}`,
+    `register: ${persona.sheet.register.note}. This turn targets a ${target.tier} message (${target.min}-${target.max} chars)`,
     `quirks: ${persona.sheet.quirks.join("; ")}`,
     "sample lines:",
     samples,

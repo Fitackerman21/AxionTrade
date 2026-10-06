@@ -302,6 +302,12 @@ export interface ForumMessage {
    * a message before replying.
    */
   replyToSeq?: number;
+  /**
+   * The seq of the turn this message is a second beat of, when a persona
+   * double-texted. The pair is one act of speaking, so the speaker, the recipients
+   * and the length target all belong to the first record.
+   */
+  continuationOf?: number;
 }
 
 /**

@@ -9,6 +9,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { lengthTarget } from "./register";
+import type { LengthTarget } from "./register";
 import { FileStore } from "./store";
 import type { ForumConfig, Persona, Side, Topic, TurnRecord, WorldState } from "./types";
 
@@ -160,6 +162,38 @@ export const TEST_CONFIG: ForumConfig = {
     timeoutMs: 4000,
   },
 };
+
+/**
+ * The first seq at or after `from` whose message target is `tier`.
+ *
+ * Which tier a turn gets is a pure function of (persona, seq), so a test that wants
+ * to exercise "a normal turn" has to ask for one instead of assuming. This is that
+ * ask, and it fails loudly rather than falling through to the wrong tier.
+ */
+export function seqForTier(persona: Persona, tier: LengthTarget["tier"], from = 1): number {
+  for (let seq = from; seq < from + 500; seq += 1) {
+    if (lengthTarget(persona, seq).tier === tier) return seq;
+  }
+  throw new Error(`forum: no ${tier} turn found for ${persona.id}`);
+}
+
+/**
+ * A line that fits the turn's target, for the tests whose subject is some other
+ * check. Padding is plain and punctuation-free, so it cannot trip TYPOGRAPHY,
+ * FORMULAIC or the banned-phrase patterns by accident.
+ */
+export function fitLine(base: string, persona: Persona, seq: number): string {
+  const target = lengthTarget(persona, seq);
+  const filler = " and that is the whole read on it as far as I am concerned";
+  let out = base.trim();
+  while (out.length < target.min) out = `${out}${filler}`;
+  if (out.length > target.max) {
+    const cut = out.slice(0, target.max);
+    const space = cut.lastIndexOf(" ");
+    out = (space > target.max * 0.5 ? cut.slice(0, space) : cut).replace(/[,\s]+$/, "");
+  }
+  return out;
+}
 
 /** A fixed wall clock for the tests, so gaps and staleness are exact. */
 export const TEST_BASE = 1_800_000_000_000;

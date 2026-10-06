@@ -20,14 +20,26 @@ import {
 import type { GateCode, GateContext } from "./gate";
 import { modelFamily } from "./provider";
 import type { ChatProvider } from "./provider";
-import { createFixture, makeTurn, TEST_CONFIG, TEST_TOPICS, TEST_WORLD } from "./test-utils";
+import { lengthTarget } from "./register";
+import {
+  createFixture,
+  fitLine,
+  makeTurn,
+  seqForTier,
+  TEST_CONFIG,
+  TEST_TOPICS,
+  TEST_WORLD,
+} from "./test-utils";
 import { recencyFromTurns } from "./schedule";
 import type { AgendaEvent, ForumConfig, Persona, TurnRecord, WorldState } from "./types";
 
 const DET = resolveGateConfig({ mode: "deterministic" });
 const BASE = 1_800_000_000_000 + 60_000;
 
-/** A wide register band so LENGTH never interferes with the other checks. */
+/**
+ * A realistic band. The tiers are absolute (`register.ts`), so the band only sets
+ * this persona's ceiling; every check other than LENGTH is the subject here.
+ */
 const PERSONA: Persona = {
   id: "mara",
   name: "Mara Okafor",
@@ -38,7 +50,7 @@ const PERSONA: Persona = {
   online: true,
   sheet: {
     stance: "patient, long gold",
-    register: { minChars: 1, maxChars: 10_000, note: "warm" },
+    register: { minChars: 20, maxChars: 300, note: "warm" },
     quirks: ["calls it the patience trade"],
     sampleLines: ["It's been coiling all week.", "Small size, clean win."],
     forbiddenClaims: ["we are short gold"],
@@ -46,6 +58,9 @@ const PERSONA: Persona = {
 };
 
 const TOPIC = TEST_TOPICS[0];
+
+/** A turn whose target is an ordinary sentence, so LENGTH does not decide the test. */
+const SEQ = seqForTier(PERSONA, "normal");
 
 function eventOf(overrides: Partial<AgendaEvent> = {}): AgendaEvent {
   return {
@@ -67,7 +82,7 @@ function ctxOf(text: string, overrides: Partial<GateContext> = {}): GateContext 
     event: eventOf(),
     world: TEST_WORLD,
     turns: [],
-    seq: 100,
+    seq: SEQ,
     ...overrides,
   };
 }
@@ -78,20 +93,48 @@ function failingCodes(text: string, overrides: Partial<GateContext> = {}): GateC
 
 /* ---------------------------------------------------------------- deterministic */
 
-test("LENGTH reads the persona's own register band", () => {
-  const tight: Persona = {
-    ...PERSONA,
-    sheet: { ...PERSONA.sheet, register: { minChars: 50, maxChars: 60, note: "terse" } },
-  };
-  const tooShort = runDeterministicChecks(ctxOf("too short", { persona: tight }), DET);
-  const shortLength = tooShort.find((f) => f.code === "LENGTH");
-  assert.ok(shortLength, `expected a LENGTH failure, got ${tooShort.map((f) => f.code).join(",")}`);
-  assert.match(shortLength?.detail ?? "", /under/);
+test("LENGTH reads this turn's target, not one fixed band", () => {
+  const beatSeq = seqForTier(PERSONA, "beat");
+  const normalSeq = seqForTier(PERSONA, "normal");
 
-  const tooLong = runDeterministicChecks(ctxOf("x".repeat(200), { persona: tight }), DET);
-  const longLength = tooLong.find((f) => f.code === "LENGTH");
-  assert.ok(longLength, `expected a LENGTH failure, got ${tooLong.map((f) => f.code).join(",")}`);
-  assert.match(longLength?.detail ?? "", /over/);
+  // The same two-word line is legal on a turn that asked for a beat...
+  const onBeat = runDeterministicChecks(ctxOf("nah", { seq: beatSeq }), DET);
+  assert.equal(
+    onBeat.some((f) => f.code === "LENGTH"),
+    false,
+    `a beat must be legal on a beat turn, got ${onBeat.map((f) => f.code).join(",")}`,
+  );
+
+  // ...and illegal on a turn that asked for a sentence. That is what stops the room
+  // flattening every message to one length, which is the tell this replaced.
+  const onNormal = runDeterministicChecks(ctxOf("nah", { seq: normalSeq }), DET);
+  const under = onNormal.find((f) => f.code === "LENGTH");
+  assert.ok(under, `expected a LENGTH failure, got ${onNormal.map((f) => f.code).join(",")}`);
+  assert.match(under?.detail ?? "", /under the normal target/);
+
+  // A long line is over on a beat turn.
+  const longOnBeat = runDeterministicChecks(ctxOf("x".repeat(120), { seq: beatSeq }), DET);
+  const over = longOnBeat.find((f) => f.code === "LENGTH");
+  assert.ok(over, `expected a LENGTH failure, got ${longOnBeat.map((f) => f.code).join(",")}`);
+  assert.match(over?.detail ?? "", /over the beat target/);
+
+  // The persona's own ceiling still caps every tier.
+  const narrow: Persona = {
+    ...PERSONA,
+    sheet: { ...PERSONA.sheet, register: { minChars: 20, maxChars: 60, note: "terse" } },
+  };
+  assert.equal(
+    lengthTarget(narrow, seqForTier(narrow, "full")).max,
+    60,
+    "a tier may not outrun the character's own ceiling",
+  );
+});
+
+test("keyboard punctuation in a thumb-typed message is caught", () => {
+  assert.ok(failingCodes("gold coiling above 2400, the range breaks up").includes("TYPOGRAPHY") === false);
+  assert.ok(failingCodes("coiling above 2400 — the range breaks up").includes("TYPOGRAPHY"));
+  assert.ok(failingCodes("flows lag; price is what is left").includes("TYPOGRAPHY"));
+  assert.ok(failingCodes("maybe that holds, maybe not").includes("TYPOGRAPHY") === false);
 });
 
 test("assistant tics and formatting are caught", () => {
@@ -264,7 +307,8 @@ function rubricLine(failed: string[], confidence: number): string {
 const HYBRID = resolveGateConfig({ mode: "hybrid", sampleRate: 1, warmupTurns: 0 });
 
 /** Shares content tokens with the default quoted message, so ADDRESSEE passes. */
-const CLEAN_LINE = "the dollar's next move is already priced, I think";
+/** Fitted to a normal turn's target, so the subject of these tests is the rubric. */
+const CLEAN_LINE = fitLine("the dollar's next move is already priced, I think", PERSONA, SEQ);
 
 async function judgeVerdict(text: string, extra: Partial<Parameters<typeof runGate>[0]> = {}) {
   return runGate({

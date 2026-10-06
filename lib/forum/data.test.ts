@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { cannedDraft } from "./drafts";
+import { lengthTarget, typographyFault } from "./register";
 import { dataStore } from "./test-utils";
 import type { AgendaEvent, Side } from "./types";
 
@@ -169,39 +170,74 @@ test("world highlights point at real topics", async () => {
   }
 });
 
-test("canned drafts stay inside every persona's register", async () => {
+test("canned drafts fit the turn they stand in for, and never read as a memo", async () => {
   const [personas, topics, world] = await Promise.all([
     store.readPersonas(),
     store.readTopics(),
     store.readWorld(),
   ]);
 
+  // Across a run of seqs, because the length target changes per turn: a canned line
+  // that only fits one tier is a canned line that fails on three turns out of four.
   for (const persona of personas) {
     for (const topic of topics) {
       for (const side of SIDES) {
-        const event: AgendaEvent = {
-          kind: "THREAD",
-          reason: "test",
-          sender: persona.id,
-          topic,
-          side,
-          quoted: "so where does that leave the book?",
-          authoredBy: "responder",
-        };
-        const text = cannedDraft({ persona, event, world, seq: 3, attempt: 1 });
-        const { minChars, maxChars } = persona.sheet.register;
+        for (let seq = 1; seq <= 12; seq += 1) {
+          const event: AgendaEvent = {
+            kind: "THREAD",
+            reason: "test",
+            sender: persona.id,
+            topic,
+            side,
+            quoted: "so where does that leave the book?",
+            authoredBy: "responder",
+          };
+          const text = cannedDraft({ persona, event, world, seq, attempt: 1 });
+          const target = lengthTarget(persona, seq);
+          const where = `${persona.id}/${topic.id}/${side}/seq ${seq}`;
 
-        assert.ok(text.length > 0, `${persona.id} produced an empty draft`);
-        assert.ok(
-          text.length >= minChars,
-          `${persona.id}/${topic.id}/${side} is under the band (${text.length} < ${minChars}): "${text}"`,
-        );
-        assert.ok(
-          text.length <= maxChars,
-          `${persona.id}/${topic.id}/${side} is over the band (${text.length} > ${maxChars}): "${text}"`,
-        );
-        assert.equal(text.includes("{"), false, `${persona.id} left a placeholder unfilled: "${text}"`);
+          assert.ok(text.length > 0, `${persona.id} produced an empty draft`);
+          assert.ok(
+            text.length >= target.min && text.length <= target.max,
+            `${where} missed its ${target.tier} target (${target.min}-${target.max}, got ${text.length}): "${text}"`,
+          );
+          assert.equal(
+            typographyFault(text),
+            "",
+            `${where} used keyboard punctuation: "${text}"`,
+          );
+          assert.equal(text.includes("{"), false, `${persona.id} left a placeholder unfilled: "${text}"`);
+        }
       }
     }
   }
+});
+
+test("every member of the room is a person, and the UI agrees with the Voice", async () => {
+  const personas = await store.readPersonas();
+  const config = await store.readConfig();
+
+  for (const persona of personas) {
+    assert.notEqual(persona.bot, true, `${persona.id} is marked as a bot and would be badged in the chat`);
+    assert.doesNotMatch(
+      `${persona.name} ${persona.role}`,
+      /\b(AI|AxAI|engine|bot|assistant|model)\b/i,
+      `${persona.id} advertises itself as a machine: "${persona.name} · ${persona.role}"`,
+    );
+  }
+
+  // The engine is still a mechanism, but it speaks as a member of the roster now, so
+  // there is nothing in the transcript to label.
+  const engine = personas.find((p) => p.id === config.agenda.enginePersona);
+  assert.ok(engine, `engine persona ${config.agenda.enginePersona} is not on the roster`);
+  assert.ok(!engine!.bot);
+
+  // The chat UI renders names and roles from its own module, so a roster edited in
+  // one place and not the other shows the wrong person on screen.
+  const { PERSONAS } = await import("../community-chat");
+  assert.deepEqual(
+    PERSONAS.map((p) => `${p.id}|${p.name}|${p.role}|${p.online}`),
+    personas.map((p) => `${p.id}|${p.name}|${p.role}|${p.online}`),
+    "lib/community-chat.ts and data/forum/personas.json disagree about the roster",
+  );
 });

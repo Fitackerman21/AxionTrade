@@ -1,14 +1,16 @@
 /**
- * Voice-through-persona demo for the Axion community chat.
+ * Display metadata and the fallback transcript for the Axion community chat.
  *
- * These ten turns are the P1 acceptance surface: two personas — Jev and Mara —
- * carry the conversation, and each reply should read like the persona answered
- * the room itself rather than filled a template slot. The replay is kept so the
- * page still has a fallback when the room is empty, unreachable, or running on a
- * host without a driver.
+ * Every member of this room is a person. The roster used to carry the engine as a
+ * member — an "AxAI" badge on its avatar and an `engine` chip on its messages — and
+ * that was the loudest thing in the room: one participant visibly not human, in a
+ * room whose entire job is to read as human. The engine still *authors* turns (it
+ * opens the session, reads the tape, recaps a stale gap), but it does so through a
+ * person on the roster, so there is nothing in the transcript to label.
  *
- * When the real Voice lands, this module becomes a loader from data/forum and the
- * hardcoded replay shrinks to a seed only.
+ * The replay is the fallback when the room is empty, unreachable, or running on a
+ * host without a driver. It is written under the same rule as the live room: short,
+ * uneven, dash-free, and nobody explains themselves politely.
  */
 
 /** Chat persona display metadata — the subset the chat UI needs on every turn. */
@@ -30,14 +32,22 @@ data/forum/personas.json; here it still carries the same display fields the room
 already uses. Two of those personas are the ones getting a real Voice first. */
 export const PERSONAS: ChatPersona[] = [
   {
-    id: "jev",
-    name: "Jev",
-    role: "AxAI engine · online 24/7",
+    id: "rafa",
+    name: "Rafa Duarte",
+    role: "Index futures · Chicago",
     g1: "#2e90fa",
     g2: "#00c896",
     color: "#9fc6ff",
     online: true,
-    bot: true,
+  },
+  {
+    id: "jess",
+    name: "Jess T.",
+    role: "Options flow · Austin",
+    g1: "#f59e0b",
+    g2: "#ef4444",
+    color: "#fdba74",
+    online: true,
   },
   {
     id: "mara",
@@ -73,7 +83,7 @@ export const PERSONAS: ChatPersona[] = [
     g1: "#f59e0b",
     g2: "#ef4444",
     color: "#fcd34d",
-    online: true,
+    online: false,
   },
   {
     id: "priya",
@@ -82,7 +92,7 @@ export const PERSONAS: ChatPersona[] = [
     g1: "#ec4899",
     g2: "#8b5cf6",
     color: "#f9a8d4",
-    online: false,
+    online: true,
   },
   {
     id: "kofi",
@@ -109,7 +119,7 @@ export const PERSONAS: ChatPersona[] = [
     g1: "#fb7185",
     g2: "#f59e0b",
     color: "#fda4af",
-    online: false,
+    online: true,
   },
   {
     id: "nadia",
@@ -139,68 +149,64 @@ export interface ReplayMessage {
 export type ReplaySource = Omit<ReplayMessage, "t">;
 
 /**
- * The two personas getting a real Voice first, plus the conversation that shows
- * whether Jev and Mara sound like themselves or like placeholders.
+ * The fallback transcript, in the same voice as the live room.
  *
- * Jev keeps doing what the engine does: short session reports, conviction
- * percentages, and a bias toward path rather than target. Mara keeps doing what
- * she does: warm, a little loud, and impatient about being beaten by a screen.
- * The point of this list is that the next reply from either one should carry the
- * same posture as the last one, not merely fit the same character sheet.
+ * Read it as a spec for the tone: uneven lengths, one-word beats next to full
+ * sentences, lowercase where the persona is lowercase, no em dashes and no tidy
+ * wrap-ups. If a line here sounds like it was written for a brochure, the room will
+ * sound like it too, because the prompt hands these out as the model's own history.
  */
 export const REPLAY: ReplaySource[] = [
   {
     id: 1,
-    from: "jev",
-    text: "Morning. AxAI started the 4h planning cycle on the ride in — conviction band 50 to 96 percent, book flat on the open. Nobody trades the band, they trade what breaks it.",
+    from: "rafa",
+    text: "tape's thin before the open. flat until 10",
   },
   {
     id: 2,
     from: "mara",
-    text: "Good morning room. Gold has been doing that thing where it looks boring right up until it isn’t, so I’m watching it more than I want to admit 🔋",
+    text: "morning room 🔋 gold's been doing that thing where it looks boring right up until it isn't",
   },
   {
     id: 3,
-    from: "mara",
-    text: "It’s been coiling all week and my patience is the only thing holding the line. Small size, clean mind, let the range tell me what it is.",
+    from: "rafa",
+    text: "coiled all week and it still means nothing until it breaks. I'd rather be bored than early",
   },
   {
     id: 4,
-    from: "jev",
-    text: "XAU read from the book: range is real, conviction 62 percent — not enough to press, enough to hold what we have. I don’t trade boredom, I trade the break of it.",
+    from: "sol",
+    text: "lol it's been coiled for six days and everyone in here is still writing essays about it",
   },
   {
     id: 5,
     from: "mara",
-    text: "That’s the closest thing to a plan I’ve heard all week and I’m taking it literally. I’ve been here before when gold whispers and then shouts at whichever idiot is leaning the wrong way.",
+    text: "small size, clean mind. let the range tell me what it is",
   },
   {
     id: 6,
-    from: "jev",
-    text: "Fill logged from the terminal: AxAI went long XAU at 2,391.4, conviction 74 percent. Stop structure is shared in the terminal, not in this chat.",
-    ticker: "XAU",
+    from: "kofi",
+    text: "cable first, gold second. that's just how it is",
   },
   {
     id: 7,
-    from: "mara",
-    text: "My first thought on seeing that fill was unreasonable and I’m not proud of it — I wanted to be in before the bot again. Then I remembered my own rule and put the thumb back on the brake.",
+    from: "jess",
+    text: "what was the flow though",
   },
   {
     id: 8,
-    from: "jev",
-    text: "Session update: six fills, book net long, aggregate conviction 68 percent. Equity is up 1.9 percent on the cycle, which is a good number and also not the one I’m chasing right now.",
-    ticker: "AXN",
+    from: "rafa",
+    text: "thin. that's the flow. two prints in the last hour and both were hedges",
+    ticker: "XAU",
   },
   {
     id: 9,
-    from: "mara",
-    text: "You can tell it isn’t a flex because it isn’t phrased like one. That’s literally the healthiest thing I’ve read all week coming out of something that doesn’t drink coffee.",
+    from: "nadia",
+    text: "half size into the number. that's the whole job",
   },
   {
     id: 10,
-    from: "jev",
-    text: "I’ll be here when the next planning cycle opens in four hours. The book is trimmed 30 percent into 2,410 on XAU and the rest is running with a trailed stop — path matters more than target.",
-    ticker: "XAU",
+    from: "dmitri",
+    text: "that's not the driver. rates are",
   },
 ];
 

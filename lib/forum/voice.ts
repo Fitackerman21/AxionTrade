@@ -23,6 +23,7 @@
 import { cannedDraft } from "./drafts";
 import { FallbackProvider, OpenRouterProvider, openRouterKeys } from "./provider";
 import type { ChatProvider } from "./provider";
+import { lengthTarget, TEXTING_RULE } from "./register";
 import { hashPick } from "./rng";
 import type { AgendaEvent, Persona, TurnRecord, WorldState } from "./types";
 
@@ -69,6 +70,25 @@ export interface VoiceDraftResult {
 
 const NL = "\n";
 
+/**
+ * The marker a double-texting turn puts between its two messages.
+ *
+ * A visible sentinel rather than a blank line, because a blank line is also how a
+ * model formats a memo — and "two paragraphs" is one of the shapes the Gate
+ * rejects. `splitBeats` is exported so `advance()` splits the same way the prompt
+ * asked for.
+ */
+export const BEAT_BREAK = "|||";
+
+/** The two messages of a burst, or a single-element array for an ordinary turn. */
+export function splitBeats(text: string): string[] {
+  return text
+    .split(BEAT_BREAK)
+    .map((beat) => beat.trim())
+    .filter((beat) => beat !== "")
+    .slice(0, 2);
+}
+
 /** How the turn is delivered. One hint per turn, chosen so repeat turns differ. */
 const DELIVERY_HINTS: readonly string[] = [
   "Answer them in your own words — one clear thought, not a report and not a list.",
@@ -95,6 +115,12 @@ export interface VoiceFlaw {
    */
   drift?: boolean;
   /**
+   * true when following it means sending two messages, not one. `advance()` splits
+   * on `BEAT_BREAK` and publishes each half as its own turn, so double-texting is a
+   * real pair of bubbles rather than one message with a line break in it.
+   */
+  burst?: boolean;
+  /**
    * Flaws that need material in the character file. A persona with no slang list,
    * or no results of its own, is never told to reach for either — that is how a
    * persona avoids inventing a vocabulary or a track record it does not have.
@@ -119,6 +145,10 @@ const SLANG_FLAW =
 const HUMAN_FLAWS: readonly VoiceFlaw[] = [
   { text: "Just answer in your own voice. Nothing special needed." },
   { text: "Just answer in your own voice. Nothing special needed." },
+  // The beats. Half of what makes a group chat read as people is that not every
+  // message is a sentence: sometimes it is "nah", "fair", "lol" or an emoji.
+  { text: "React, do not explain. Two or three words, or one emoji, or a single word of agreement or dismissal. Nothing more." },
+  { text: "Answer with the shortest thing that is still true. No context, no reason, no follow-up." },
   { text: "Just answer — short, the way you'd type it between two other things." },
   { text: "Answer the room, then get back to your screen." },
   {
@@ -150,7 +180,11 @@ const HUMAN_FLAWS: readonly VoiceFlaw[] = [
   { text: "Somebody in here is wrong and you have no patience for it today. Say so plainly." },
   { text: "Dunk on the worst take in the room instead of answering the question." },
   { text: "Type it like a text: lowercase, no full stop at the end, a typo you cannot be bothered to fix." },
-  { text: "Send it in two short beats, the way you double-text when you are typing fast." },
+  { text: "Say something that does not need a reply. Not everything has to move the conversation on." },
+  {
+    text: `Send it as two messages, the way you double-text when you are typing fast. Write the first, then a line with only ${BEAT_BREAK}, then the second. Keep both short and do not restate the first.`,
+    burst: true,
+  },
   { text: "Change your mind halfway through the sentence and leave it like that." },
   { text: "Be slightly too honest for a trading chat, then move on like you did not say it." },
   { text: "Sound bored. You have seen this setup before and you are not impressed." },
@@ -174,6 +208,17 @@ export function flawFor(persona: Persona, seq: number, engine = false): VoiceFla
   return roll;
 }
 
+/**
+ * Does this turn's flaw license two messages instead of one?
+ *
+ * `advance()` asks before it splits, so a stray marker in some other turn's text is
+ * never treated as a burst — only the turns that were actually asked to double-text
+ * can produce one.
+ */
+export function isBurstTurn(persona: Persona, seq: number, engine = false): boolean {
+  return flawFor(persona, seq, engine).burst === true;
+}
+
 const VOICE_SYSTEM = [
   "You are one real person in a private traders' group chat.",
   "You are NOT an assistant and NOT a bot. Never say or imply that you are an AI or a model.",
@@ -192,7 +237,8 @@ const VOICE_SYSTEM = [
   // aphorism, and the clipped slogan fragment. Both are banned by shape, not by
   // example alone, because the shape is what the model reaches for.
   "Never write in slogans or aphorisms. 'It is not narrative, it is levels', 'I do not analyze shares, I analyze the plan', 'Patience trade, no touching stops' are machine-shaped and no trader texts like that. No parallel-contrast sentence (not X, it is Y), no slogan opened with someone's name, no three clipped fragments in a row.",
-  "Talk in plain sentences, the way you would say it out loud with your mouth. Uneven, trailing, half-finished is fine; polished, quotable and perfectly balanced is not.",
+  "Talk in plain sentences, the way you would say it out loud with your mouth. Uneven, trailing, half-finished is fine. Polished, quotable and perfectly balanced is not.",
+  TEXTING_RULE,
   // The other half of the same tell: advice that arrives with a label on it, or a
   // message split into paragraphs like a memo, is a document, not a text.
   "One message is one thought in one paragraph. Never label your own line ('Rule:', 'Reminder:', 'Note:', 'Takeaway:', 'Bottom line:'), never split it into paragraphs with a blank line, and never sign it off.",
@@ -277,7 +323,7 @@ function turnUser(args: {
   critique?: string;
 }): string {
   const { event, world, persona, seq, recent, memory, critique } = args;
-  const { minChars, maxChars } = persona.sheet.register;
+  const target = lengthTarget(persona, seq);
   const engine = event.authoredBy === "engine";
   const quoted =
     event.quoted == null
@@ -307,7 +353,8 @@ function turnUser(args: {
     `<how you send it>${flaw}</how you send it>`,
     "",
     `Write ONE chat message as ${persona.name}.`,
-    `Hard rules: ${minChars}-${maxChars} characters. Plain text only — no name prefix, no quotes, no markdown, no *asterisk actions*.`,
+    `Length for this one: ${target.label}. Roughly ${target.min} to ${target.max} characters; the length matters as much as the words.`,
+    "Plain text only. No name prefix, no quotes, no markdown, no *asterisk actions*.",
     "Only mention a price or level that is already in the chat above or in <today>. Do not invent numbers, tickers or facts.",
   ]
     .filter((part) => part !== "")

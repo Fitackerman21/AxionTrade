@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { advance, previewHumanReply } from "./advance";
+import { catchUp } from "./catchup";
 import { publish } from "./publisher";
 import type { ChatProvider, ChatRequest } from "./provider";
 import { FileStore } from "./store";
 import type { ForumStore } from "./store";
+import { lengthTarget, typographyFault } from "./register";
 import {
   createFixture,
+  fitLine,
   makeTurn,
   TEST_BASE,
   TEST_CONFIG,
@@ -16,7 +19,7 @@ import {
   TEST_WORLD,
 } from "./test-utils";
 import type { Fixture } from "./test-utils";
-import { flawFor } from "./voice";
+import { BEAT_BREAK, flawFor, isBurstTurn } from "./voice";
 import type { ForumConfig, GateConfig, MemoryConfig, Persona } from "./types";
 
 /** A minute after the seeded turns, so nothing looks stale and time moves forward. */
@@ -79,6 +82,17 @@ function driftingTurn(): { id: string; seq: number } {
   throw new Error("no drifting turn found in the searched range");
 }
 
+/** The first pair in the same range whose flaw licenses a double-text. */
+function burstTurn(): { id: string; seq: number } {
+  for (let seq = 2; seq <= 30; seq += 1) {
+    if (seq % 5 === 0) continue;
+    for (const persona of TEST_PERSONAS.filter((p) => ["jev", "dmitri", "sol"].includes(p.id))) {
+      if (isBurstTurn(persona, seq)) return { id: persona.id, seq };
+    }
+  }
+  throw new Error("no bursting turn found in the searched range");
+}
+
 /** The first pair in the same range whose flaw stays on subject. */
 function anchoredTurn(): { id: string; seq: number } {
   for (let seq = 2; seq <= 11; seq += 1) {
@@ -97,13 +111,19 @@ async function seedTurns(fixture: Fixture, count: number): Promise<void> {
   }
 }
 
-/** A register band no canned line can satisfy, so the Gate always rejects it. */
-function unreachableRegisters(): Persona[] {
-  return TEST_PERSONAS.map((persona) => ({
-    ...persona,
-    sheet: { ...persona.sheet, register: { minChars: 1000, maxChars: 2000, note: "unreachable" } },
-  }));
-}
+/**
+ * A draft no turn can accept: longer than the widest length target there is.
+ *
+ * The old way to force a Gate rejection was a register band nothing could satisfy —
+ * a persona registered for 1000-2000 characters. Tiers are absolute now, so every
+ * persona has a reachable target and the rejection has to come from the draft
+ * instead: this is over the widest ceiling there is, on any turn, so every attempt
+ * fails LENGTH.
+ */
+const OVERSIZED = Array.from(
+  { length: 10 },
+  () => "coiling above the level into the dollar's next move",
+).join(" ");
 
 function paced(humanReplySec: [number, number]): ForumConfig {
   return { ...TEST_CONFIG, scheduling: { ...TEST_CONFIG.scheduling, humanReplySec } };
@@ -188,11 +208,49 @@ test("an identical timestamp is still allowed to advance", async () => {
 test("a turn is skipped while another driver holds the lease", async () => {
   const fixture = await createFixture();
   try {
-    await fixture.store.acquireLease("worker:999", 60_000, BASE);
+    // The lease is held on the real clock, not the room's simulated one (see
+    // `advance`), so a test leases it with real time as well.
+    await fixture.store.acquireLease("worker:999", 60_000, Date.now());
     const blocked = await advance(fixture.store, { now: BASE });
 
     assert.equal(blocked.status, "lease-held");
     assert.deepEqual(await fixture.store.readTurns(10), []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a catch-up burst is not wedged by the previous burst's lease", async () => {
+  // A regression test for a room that stops dead. A catch-up burst back-dates each
+  // turn so the timestamps are plausible, which means the lease it left behind had
+  // an expiry *ahead* of the next burst's first turn. Comparing that row against the
+  // simulated clock made every later turn "lease-held": the room reported `ran: 0`
+  // on every tick while owing twenty turns. The lease is on real time now, so a row
+  // left by an earlier driver is reclaimable.
+  // Driven on the real clock, the way the deployed room is: the wedge only exists
+  // when the room's clock is *behind* real time, which is what falling behind means.
+  const realNow = Date.now();
+  const fixture = await createFixture({
+    config: { ...TEST_CONFIG, runtime: { ...TEST_CONFIG.runtime, catchUpMaxTurns: 4 } },
+  });
+  try {
+    // A room that has been idle for ten minutes.
+    await fixture.store.appendTurn({ ...makeTurn(1, { sender: "mara" }), t: realNow - 600_000 });
+    await fixture.store.appendTurn({
+      ...makeTurn(2, { sender: "sol", topicId: TEST_TOPICS[0].id }),
+      t: realNow - 580_000,
+    });
+    // The row a previous burst would have left behind: its expiry written from the
+    // room's own (back-dated) clock, so it sits behind real now but *ahead* of the
+    // next burst's first turn.
+    await fixture.store.acquireLease("tick:previous", 30_000, realNow - 580_000 + 45_000);
+
+    const report = await catchUp(fixture.store, { now: realNow, driver: "tick" });
+    assert.ok(report.ran > 0, `the burst must run, not stall (${report.reason})`);
+    assert.ok(
+      report.statuses.every((status) => status !== "lease-held"),
+      `a stale lease must not block the burst: ${report.statuses.join(",")}`,
+    );
   } finally {
     await fixture.cleanup();
   }
@@ -261,7 +319,7 @@ test("a sender nobody covers gets an engine stage direction instead of silence",
   }
 });
 
-test("everything published stays inside the persona's register", async () => {
+test("everything published stays inside the length its turn asked for", async () => {
   const fixture = await createFixture();
   try {
     for (let n = 0; n < 8; n += 1) {
@@ -269,7 +327,9 @@ test("everything published stays inside the persona's register", async () => {
     }
 
     const turns = await fixture.store.readTurns(20);
-    assert.equal(turns.length, 8);
+    // A double-text turn publishes two records, so the log is longer than the
+    // number of turns that ran. That is the point of the check below.
+    assert.ok(turns.length >= 8);
 
     for (const turn of turns) {
       const message = turn.message;
@@ -277,13 +337,20 @@ test("everything published stays inside the persona's register", async () => {
       if (message.system) continue;
       const persona = TEST_PERSONAS.find((p) => p.id === message.sender);
       assert.ok(persona);
+      // A second beat belongs to the turn it continues: same target, same speaker.
+      const target = lengthTarget(persona, message.continuationOf ?? turn.seq);
       assert.ok(
-        message.text.length >= persona.sheet.register.minChars,
-        `${persona.id} posted below its register: "${message.text}"`,
+        message.text.length >= target.min,
+        `${persona.id} posted below its ${target.tier} target: "${message.text}"`,
       );
       assert.ok(
-        message.text.length <= persona.sheet.register.maxChars,
-        `${persona.id} posted above its register: "${message.text}"`,
+        message.text.length <= target.max,
+        `${persona.id} posted above its ${target.tier} target: "${message.text}"`,
+      );
+      assert.equal(
+        typographyFault(message.text),
+        "",
+        `${persona.id} posted keyboard punctuation: "${message.text}"`,
       );
     }
   } finally {
@@ -292,7 +359,10 @@ test("everything published stays inside the persona's register", async () => {
 });
 
 test("a person's message is answered even when the Gate rejects every draft", async () => {
-  const fixture = await createFixture({ config: gated(), personas: unreachableRegisters() });
+  const fixture = await createFixture({
+    config: gated(),
+    personas: TEST_PERSONAS.map((p) => ({ ...p, model: "test/model" })),
+  });
   try {
     await fixture.store.appendHumanMessage({
       text: "elephant banjo, anybody?",
@@ -301,7 +371,10 @@ test("a person's message is answered even when the Gate rejects every draft", as
       topicId: TEST_TOPICS[0].id,
     });
 
-    const result = await advance(fixture.store, { now: BASE + 1000 });
+    const result = await advance(fixture.store, {
+      now: BASE + 1000,
+      voiceProvider: voiceSaying(OVERSIZED),
+    });
     assert.equal(result.status, "published");
     assert.equal(result.record?.decision, "APPROVE");
     assert.ok(result.record?.message, "a person must never be left with no reply");
@@ -312,12 +385,18 @@ test("a person's message is answered even when the Gate rejects every draft", as
 });
 
 test("a persona-to-persona turn still goes unpublished when the Gate rejects it", async () => {
-  const fixture = await createFixture({ config: gated(), personas: unreachableRegisters() });
+  const fixture = await createFixture({
+    config: gated(),
+    personas: TEST_PERSONAS.map((p) => ({ ...p, model: "test/model" })),
+  });
   try {
     const opening = await advance(fixture.store, { now: BASE });
     assert.equal(opening.status, "published", "an engine opening bypasses the Gate");
 
-    const second = await advance(fixture.store, { now: BASE + 1000 });
+    const second = await advance(fixture.store, {
+      now: BASE + 1000,
+      voiceProvider: voiceSaying(OVERSIZED),
+    });
     assert.equal(second.status, "unpublished");
     assert.equal(second.record?.decision, "UNPUBLISHED");
     assert.equal(second.record?.message, null);
@@ -327,9 +406,9 @@ test("a persona-to-persona turn still goes unpublished when the Gate rejects it"
 });
 
 test("an ambient turn publishes its template when the Gate rejects every draft", async () => {
-  // A register band no draft can satisfy, so every attempt is rejected and the
-  // room is one line away from a hole in the conversation.
-  const personas = unreachableRegisters().map((persona) => ({ ...persona, model: "test/model" }));
+  // A line that shares nothing with what it answers, so every attempt is rejected
+  // and the room is one line away from a hole in the conversation.
+  const personas = TEST_PERSONAS.map((persona) => ({ ...persona, model: "test/model" }));
   const fixture = await createFixture({ config: gated({ onExhausted: "canned" }), personas });
   try {
     const opening = await advance(fixture.store, { now: BASE });
@@ -354,20 +433,24 @@ test("an ambient turn publishes its template when the Gate rejects every draft",
 
 test("an off-topic turn is not held to the addressee rule", async () => {
   const { id, seq } = driftingTurn();
+  const persona = TEST_PERSONAS.find((p) => p.id === id)!;
   const personas = TEST_PERSONAS.map((p) => (p.id === id ? { ...p, model: "test/model" } : p));
   const fixture = await createFixture({ config: gatedTo([id]), personas });
+  // The subject here is the waived ADDRESSEE rule, so the line is the length its
+  // turn asked for and LENGTH stays out of the way.
+  const line = fitLine(OFF_TOPIC, persona, seq);
   try {
     await seedTurns(fixture, seq - 1);
     const result = await advance(fixture.store, {
       now: BASE,
-      voiceProvider: voiceSaying(OFF_TOPIC),
+      voiceProvider: voiceSaying(line),
     });
 
     assert.equal(result.record?.chosen, id);
     assert.equal(result.status, "published");
     assert.equal(
       result.record?.message?.text,
-      OFF_TOPIC,
+      line,
       "the drifting line must survive the Gate, not be replaced by a template",
     );
     assert.match(result.record?.note ?? "", /addressee rule was waived/);
@@ -378,21 +461,104 @@ test("an off-topic turn is not held to the addressee rule", async () => {
 
 test("the same line is rejected on a turn whose flaw stays on subject", async () => {
   const { id, seq } = anchoredTurn();
+  const persona = TEST_PERSONAS.find((p) => p.id === id)!;
   const personas = TEST_PERSONAS.map((p) => (p.id === id ? { ...p, model: "test/model" } : p));
   const fixture = await createFixture({
     config: gatedTo([id], { onExhausted: "canned" }),
     personas,
   });
+  // Same length as the drifting turn, so the only thing that differs is the rule.
+  const line = fitLine(OFF_TOPIC, persona, seq);
   try {
     await seedTurns(fixture, seq - 1);
     const result = await advance(fixture.store, {
       now: BASE,
-      voiceProvider: voiceSaying(OFF_TOPIC),
+      voiceProvider: voiceSaying(line),
     });
 
     assert.match(result.record?.note ?? "", /published the fallback line instead of a gap/);
+    // The subject rule is what held it, not the length of the line.
+    assert.match(result.record?.note ?? "", /ADDRESSEE/);
     assert.ok(result.record?.message, "the room still speaks");
-    assert.notEqual(result.record?.message?.text, OFF_TOPIC, "the Gate held this one to its subject");
+    assert.notEqual(result.record?.message?.text, line, "the Gate held this one to its subject");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a double-text turn lands as two messages, tied to the first", async () => {
+  const { id, seq } = burstTurn();
+  const persona = TEST_PERSONAS.find((p) => p.id === id)!;
+  const personas = TEST_PERSONAS.map((p) => (p.id === id ? { ...p, model: "test/model" } : p));
+  const fixture = await createFixture({ config: gatedTo([id]), personas });
+
+  // One line, cut in half and rejoined by the marker the prompt asks for. The joined
+  // version is what the Gate reads, so it has to fit the turn like any other line —
+  // and answer the message, which is why the seeded line is the topic itself.
+  // The base mentions the topic *and* the topic's friction line, because which of
+  // the two this turn is answering depends on the agenda, not on the test.
+  const joined = fitLine(
+    "watching the gold range all morning, flows still lag price here and nothing has broken either way",
+    persona,
+    seq,
+  );
+  // Cut on a word boundary: the joined halves are what the Gate reads, and a word
+  // split down the middle would not be a word at all.
+  const cut = joined.slice(0, Math.floor(joined.length / 2)).lastIndexOf(" ");
+  const first = joined.slice(0, cut).trim();
+  const second = joined.slice(cut).trim();
+
+  try {
+    for (let n = 1; n < seq; n += 1) {
+      await fixture.store.appendTurn(
+        makeTurn(n, { sender: "mara", text: "gold coiling into the dollar's next move" }),
+      );
+    }
+    const result = await advance(fixture.store, {
+      now: BASE,
+      voiceProvider: voiceSaying(`${first} ${BEAT_BREAK} ${second}`),
+    });
+
+    assert.equal(result.status, "published");
+    assert.equal(result.record?.chosen, id);
+
+    const turns = await fixture.store.readTurns(40);
+    const pair = turns.filter((t) => t.seq >= seq);
+    assert.equal(pair.length, 2, "a double-text is two records");
+    assert.equal(pair[0]?.message?.text, first);
+    assert.equal(pair[1]?.message?.text, second);
+    assert.equal(pair[1]?.message?.continuationOf, seq, "the second beat points at the first");
+    assert.equal(pair[1]?.message?.sender, id, "same person, two bubbles");
+    assert.equal(pair[1]?.message?.replyToSeq, pair[0]?.message?.replyToSeq);
+    // The pair is one act of speaking, so the first record's trace is not repeated.
+    assert.deepEqual(pair[1]?.attempts, []);
+    assert.match(pair[1]?.note ?? "", /second beat of seq \d+/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a burst marker on a turn that was not asked to double-text is just text", async () => {
+  const { id, seq } = anchoredTurn();
+  const persona = TEST_PERSONAS.find((p) => p.id === id)!;
+  const personas = TEST_PERSONAS.map((p) => (p.id === id ? { ...p, model: "test/model" } : p));
+  const fixture = await createFixture({ config: gatedTo([id]), personas });
+  const line = `${fitLine("watching the gold range all morning, flows still lag price here", persona, seq)} ${BEAT_BREAK} and that is it`;
+  try {
+    for (let n = 1; n < seq; n += 1) {
+      await fixture.store.appendTurn(
+        makeTurn(n, { sender: "mara", text: "gold coiling into the dollar's next move" }),
+      );
+    }
+    const result = await advance(fixture.store, {
+      now: BASE,
+      voiceProvider: voiceSaying(line),
+    });
+
+    const turns = await fixture.store.readTurns(40);
+    const after = turns.filter((t) => t.seq >= seq);
+    assert.equal(after.length, 1, "only the turn that was asked to burst may split");
+    assert.equal(result.record?.message?.text, line);
   } finally {
     await fixture.cleanup();
   }
@@ -691,15 +857,22 @@ test("a rejected draft's reason is handed to the next attempt", async () => {
   });
   try {
     await personSays(fixture.store, "read on gold?", BASE);
-    // LENGTH fails first (the band is a single sentence wide), so the retry must be
-    // told about it rather than being asked to try again blind (§8.4's REVISE).
+    // A two-word non-answer, so the first attempt is rejected on its merits; the
+    // retry must be told *which* rule it broke rather than asked to try again blind
+    // (§8.4's REVISE arrow).
     const short = voiceRecording("no");
     const result = await advance(fixture.store, { now: BASE + 1000, voiceProvider: short.provider });
 
-    assert.equal(short.seen.length, 2, "the retired attempt happened twice");
+    assert.equal(short.seen.length, 2, "the rejected attempt happened twice");
     const retry = short.seen[1]?.messages[0]?.content ?? "";
     assert.match(retry, /<your last attempt was rejected for this reason>/);
-    assert.match(retry, /LENGTH/);
+
+    // Whichever codes fired are the codes the retry is told about — asserted against
+    // the record rather than against one hard-coded rule, so the test proves the
+    // reason is carried across, not that a particular check happens to be strict.
+    const firstCodes = result.record?.attempts[0]?.codes ?? [];
+    assert.ok(firstCodes.length > 0, "the first attempt has to be rejected for something");
+    for (const code of firstCodes) assert.match(retry, new RegExp(code));
     assert.match(result.record?.note ?? "", /retry\/retries, each carrying the rejection reason/);
   } finally {
     await fixture.cleanup();

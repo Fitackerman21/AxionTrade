@@ -21,6 +21,8 @@ export interface BuildMessageArgs {
   system?: boolean;
   /** the message this one answers, for the UI's quoted strip */
   replyToSeq?: number;
+  /** set on the second bubble of a double-text (see `TurnRecord` in types.ts) */
+  continuationOf?: number;
 }
 
 export function buildMessage(args: BuildMessageArgs): ForumMessage {
@@ -36,6 +38,7 @@ export function buildMessage(args: BuildMessageArgs): ForumMessage {
     side: args.side,
     system: args.system ?? false,
     ...(args.replyToSeq === undefined ? {} : { replyToSeq: args.replyToSeq }),
+    ...(args.continuationOf === undefined ? {} : { continuationOf: args.continuationOf }),
   };
 }
 

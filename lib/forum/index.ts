@@ -33,6 +33,7 @@ export {
   turnsOwed,
 } from "./clock";
 export { buildMessage, publish, publishUnpublished } from "./publisher";
+export { contentTokens } from "./gate";
 export {
   DEFAULT_GATE_CONFIG,
   GATE_CODES,
@@ -76,7 +77,16 @@ export { respondersFor } from "./permissions";
 export type { PermissionLookup } from "./permissions";
 export { cannedDraft } from "./drafts";
 export type { DraftContext } from "./drafts";
-export { RECENT_CHAT_MESSAGES, flawFor, voiceDraft } from "./voice";
+export {
+  BEAT_BREAK,
+  flawFor,
+  isBurstTurn,
+  RECENT_CHAT_MESSAGES,
+  splitBeats,
+  voiceDraft,
+} from "./voice";
+export { lengthFault, lengthTarget, TEXTING_RULE, typographyFault } from "./register";
+export type { LengthTarget } from "./register";
 export type { VoiceDraftOptions, VoiceDraftResult, VoiceFlaw } from "./voice";
 export {
   clampDigest,

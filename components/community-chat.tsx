@@ -32,7 +32,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot,
   CheckCheck,
   CornerUpLeft,
   Mic,
@@ -178,7 +177,7 @@ function Avatar({ p, size = 34 }: { p: ChatPersona; size?: number }) {
       }}
       aria-hidden
     >
-      {p.bot ? <Bot className="h-1/2 w-1/2 text-[#071018]" /> : initials(p.name)}
+      {initials(p.name)}
       {p.online && (
         <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-background bg-gain" />
       )}
@@ -244,15 +243,7 @@ function Bubble({
         {!outgoing && first && (
           <p className="text-[13.5px] leading-tight font-semibold" style={{ color: sender.color }}>
             {sender.name}
-            {sender.bot && (
-              <span className="ml-1.5 rounded bg-brand/25 px-1 py-px align-middle text-[10px] font-medium text-brand">
-                AxAI
-              </span>
-            )}
           </p>
-        )}
-        {row.system && (
-          <p className="text-[11px] font-medium tracking-wide text-muted uppercase">engine</p>
         )}
         {quoted && (
           <button

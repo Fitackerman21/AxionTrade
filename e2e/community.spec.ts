@@ -22,10 +22,11 @@ const MESSAGE_ROW = "div.flex.items-end.gap-2";
 
 /** `allow["human"]` in data/forum/config.json — who may answer a person. */
 const PERMITTED: Record<string, string> = {
-  Jev: "jev",
   "Mara Okafor": "mara",
   Solene: "sol",
   "Dmitri V.": "dmitri",
+  "Rafa Duarte": "rafa",
+  "Jess T.": "jess",
 };
 
 const QUESTION = "Evening room — what's the read on gold into the close?";
@@ -178,8 +179,13 @@ test("a person can quote a message and the quote renders above their bubble", as
   await expect(page.getByTestId("room-status")).toContainText("live", { timeout: 120_000 });
 
   // Pick a real room message and answer that specific line (the desktop path for a
-  // swipe: the arrow that appears on hover).
-  const target = page.locator('[data-testid="message"]').last();
+  // swipe: the arrow that appears on hover). The row is pinned by its seq: the room
+  // keeps talking, so `.last()` resolves to a *different* message a second later and
+  // the quote would be asserted against a line that was never quoted.
+  const lastRow = page.locator('[data-testid="message"]').last();
+  const targetSeq = await lastRow.getAttribute("data-seq");
+  expect(targetSeq, "a live message row should carry its seq").toBeTruthy();
+  const target = page.locator(`[data-testid="message"][data-seq="${targetSeq}"]`);
   // Read the bubble's own line, not the row: a row also carries the avatar initials,
   // the sender name and — if it is itself a reply — its own quoted strip.
   const targetText = (await target.getByTestId("message-text").innerText())

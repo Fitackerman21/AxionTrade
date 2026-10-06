@@ -15,7 +15,8 @@ import { compactMemory, memoryNote } from "./archivist";
 import type { CompactionResult } from "./archivist";
 import { cannedDraft } from "./drafts";
 import { foldTurn, injectionText, memoryKey, needsCompaction } from "./memory";
-import { RECENT_CHAT_MESSAGES, voiceDraft } from "./voice";
+import { isBurstTurn, RECENT_CHAT_MESSAGES, splitBeats, voiceDraft } from "./voice";
+import { lengthTarget, typographyFault } from "./register";
 import { resolveGateConfig, runGate } from "./gate";
 import type { GateVerdict } from "./gate";
 import { respondersFor } from "./permissions";
@@ -107,16 +108,55 @@ export function processId(): number {
 }
 
 /**
- * Does a published line sit inside the persona's own register band?
+ * Does a published line sit inside the register this turn was asked for?
  *
  * The Gate enforces this for responder drafts, but an engine turn bypasses the
- * Gate, so its line is checked here instead of being clamped: a book update cut
- * off mid-sentence would read worse than the template it replaced.
+ * Gate, so its line is checked here instead of being clamped: a tape read cut off
+ * mid-sentence would read worse than the template it replaced. The check is the
+ * same one the Gate runs — the turn's length target plus the thumb-typography rule
+ * (`register.ts`) — so an engine line is held to the standard a human line is.
  */
-function withinRegister(persona: Persona, text: string): boolean {
-  const { minChars, maxChars } = persona.sheet.register;
+function withinRegister(persona: Persona, text: string, seq: number): boolean {
+  const target = lengthTarget(persona, seq);
   const length = text.trim().length;
-  return length >= minChars && length <= maxChars;
+  return length >= target.min && length <= target.max && typographyFault(text) === "";
+}
+
+/**
+ * The second bubble of a double-text (spec §8.1, the burst flaw).
+ *
+ * It is its own log record rather than a newline inside one message, because a
+ * messenger shows two bubbles — and because a message with a line break in it is one
+ * of the shapes the Gate rejects. The record keeps the first beat's event and
+ * recipients so the pair reads as one act of speaking.
+ */
+function continuationRecord(record: TurnRecord, text: string): TurnRecord {
+  const seq = record.seq + 1;
+  const t = record.t + 1500;
+  const first = record.message;
+
+  return {
+    ...record,
+    seq,
+    t,
+    // The verdict is the first beat's; a second bubble is not a second review.
+    attempts: [],
+    message: first
+      ? buildMessage({
+          seq,
+          t,
+          sender: first.sender,
+          primaryRecipient: first.primaryRecipient,
+          text,
+          topicId: first.topicId,
+          side: first.side,
+          system: first.system,
+          replyToSeq: first.replyToSeq,
+          continuationOf: record.seq,
+        })
+      : null,
+    note: `double-text, second beat of seq ${record.seq}`,
+  };
 }
 
 function stageDirection(event: AgendaEvent, world: WorldState): string {
@@ -252,8 +292,17 @@ export async function advance(
     }
   }
 
+  // The lease is the one thing on the **real** clock.
+  //
+  // `now` is the room's simulated time, and a catch-up burst back-dates it so each
+  // turn carries a plausible timestamp. A lease compared against that clock cannot
+  // be reclaimed: the compare-and-swap keeps losing to a row whose expiry was
+  // written by the previous burst (`last.t + gap + ttl` is always ahead of the next
+  // burst's first turn), so the room stops dead — caught live, with 22 turns owed
+  // and `ran: 0` on every tick. Who may write *right now* is a real-world question.
+  const leaseNow = Date.now();
   const owner = `${driver}:${processId()}`;
-  if (!(await store.acquireLease(owner, LEASE_TTL_MS, now))) {
+  if (!(await store.acquireLease(owner, LEASE_TTL_MS, leaseNow))) {
     return { status: "lease-held", record: null, reason: "another driver holds the lease" };
   }
 
@@ -346,6 +395,12 @@ export async function advance(
     let voiceFallback: string | null = null;
     /** the last draft was licensed to leave the subject it was answering (§8.1) */
     let voiceDrift = false;
+    /**
+     * The beats of the approved draft. One element for an ordinary turn; two when
+     * the flaw licensed a double-text, in which case the second is published as its
+     * own bubble after the first.
+     */
+    let beats: string[] = [];
 
     // ---- steps 8-10's substrate (spec §7): who this turn is remembering ------
     const memoryConfig = config.memory;
@@ -403,17 +458,28 @@ export async function advance(
       // A persona with no model is meant to run canned; only a configured Voice
       // that failed is worth flagging on the turn.
       if (voice.fallback && persona.model) voiceFallback = voice.reason;
+
+      // A double-texting turn writes two beats around the marker the prompt asked
+      // for. They are split here rather than after the Gate, because the Gate judges
+      // what the room actually says: one person's message, not a marker.
+      if (isBurstTurn(persona, seq, event.authoredBy === "engine")) {
+        beats = splitBeats(voice.text);
+        if (beats.length > 1) return beats.join(" ");
+      }
+      beats = [voice.text];
       return voice.text;
     };
 
     if (engineTurn) {
       const drafted = await speak(enginePersona);
-      if (withinRegister(enginePersona, drafted)) {
+      if (withinRegister(enginePersona, drafted, seq)) {
         text = drafted;
       } else {
         // The Gate is skipped for engine turns, so this is the only place a line
         // outside the persona's band can be caught before it is published.
         text = cannedDraft({ persona: enginePersona, event, world, seq, attempt: 1 });
+        // The replaced line is gone, so its beats are too.
+        beats = [text];
         notes.push(`engine line fell outside ${enginePersona.id}'s register; used the template`);
       }
     }
@@ -503,6 +569,7 @@ export async function advance(
           // the conversation. The template line is register-safe by construction,
           // so it is published instead of nothing.
           text = cannedDraft({ persona: chosenPersona, event, world, seq, attempt: maxAttempts + 1 });
+          beats = [text];
           decision = "APPROVE";
           notes.push(
             `gate exhausted after ${maxAttempts} attempts (${verdict.codes.join(", ")}); published the fallback line instead of a gap`,
@@ -521,6 +588,11 @@ export async function advance(
       // Gate off: the Director owns the single draft, so the Voice runs exactly once.
       text = await speak(responder);
     }
+
+    // The Gate and memory saw the line as one message; the log gets the bubbles the
+    // person would actually have sent.
+    if (beats.length > 1) notes.push("double-text: published as two messages");
+    if (beats.length === 0) beats = [text];
 
     if (voiceFallback) notes.push(`voice fallback: ${voiceFallback}`);
     // §8.4 records what the Gate did; the drift licence is part of that trace.
@@ -604,7 +676,9 @@ export async function advance(
               sender: chosen,
               // The engine addresses the room; a responder answers someone specific.
               primaryRecipient: event.authoredBy === "engine" ? "room" : event.sender,
-              text,
+              // The first bubble of the turn: the whole line, or the first beat of a
+              // double-text (the second is published as its own record below).
+              text: beats.length > 1 ? beats[0]! : text,
               topicId: event.topic.id,
               side: event.side,
               system,
@@ -631,6 +705,7 @@ export async function advance(
 
     if (decision === "APPROVE") {
       await publish(store, record);
+      if (beats.length > 1) await publish(store, continuationRecord(record, beats[1]!));
       return { status: "published", record };
     }
 
