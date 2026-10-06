@@ -10,7 +10,7 @@
  * in-memory conversation object survives between turns.
  */
 
-import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { humanMessageRecord } from "./human";
@@ -20,7 +20,9 @@ import type {
   ForumMessage,
   Heartbeat,
   Lease,
+  MemoryFile,
   Persona,
+  PersonaId,
   Side,
   Topic,
   TurnRecord,
@@ -39,6 +41,22 @@ export interface ForumStore {
   appendTurn(record: TurnRecord): Promise<void>;
   /** The human path: a person speaks, the Director answers next turn. */
   appendHumanMessage(args: HumanMessageArgs): Promise<TurnRecord>;
+  /**
+   * One (persona, companion) thread of Agent 2's memory (spec §7). Null when the
+   * persona has never spoken to that companion, which is the state that makes a
+   * file: an untouched thread costs nothing to carry.
+   */
+  readMemory(persona: PersonaId, companion: string): Promise<MemoryFile | null>;
+  /**
+   * Replace a thread's file and keep the previous version under `_versions`.
+   * Callers write the *whole* file — never a partial update — so a crash can only
+   * lose the newest write, not corrupt the thread (§7.5).
+   */
+  writeMemory(file: MemoryFile): Promise<void>;
+  /** The snapshot written before version `version`, for rollback and review. */
+  readMemoryVersion(persona: PersonaId, companion: string, version: number): Promise<MemoryFile | null>;
+  /** Every thread, newest first — the observability half (`?debug=1`, §13.1). */
+  listMemory(persona?: PersonaId): Promise<MemoryFile[]>;
   acquireLease(owner: string, ttlMs: number, now: number): Promise<boolean>;
   releaseLease(owner: string, now: number): Promise<void>;
   readLease(): Promise<Lease | null>;
@@ -55,6 +73,44 @@ export interface HumanMessageArgs {
   t: number;
   topicId: string;
   side?: Side;
+  /** the seq of the message this one is a reply to, when a person quoted one */
+  replyToSeq?: number;
+}
+
+/** A memory file needs a key that is safe as a path segment and as a row value. */
+function memoryFileFor(root: string, persona: PersonaId, companion: string): string {
+  const safe = (part: string): string => part.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return path.join(root, "memory", safe(persona), `${safe(companion)}.json`);
+}
+
+function versionFileFor(
+  root: string,
+  persona: PersonaId,
+  companion: string,
+  version: number,
+): string {
+  const safe = (part: string): string => part.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return path.join(root, "memory", "_versions", safe(persona), safe(companion), `v${version}.json`);
+}
+
+/** How many superseded versions of a thread are kept (spec §7.5: the last ten). */
+export const MEMORY_VERSIONS_KEPT = 10;
+
+async function readJsonFile<T>(file: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(file, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function writeJsonFile(file: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  // Write-then-rename: a reader either sees the whole previous file or the whole
+  // new one, never a half-written thread.
+  const temporary = `${file}.new`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await rename(temporary, file);
 }
 
 /** The public projection — published messages only, never internals (spec §13.2). */
@@ -231,6 +287,67 @@ export class FileStore implements ForumStore {
       await unlink(this.file("heartbeat.json")).catch(() => undefined);
     }
   }
+
+  async readMemory(persona: PersonaId, companion: string): Promise<MemoryFile | null> {
+    return readJsonFile<MemoryFile>(memoryFileFor(this.root, persona, companion));
+  }
+
+  /**
+   * Snapshot, then replace. The old file is kept under `_versions/v<old>` before the
+   * new one lands, so a bad compaction is one copy away from being undone (§7.5).
+   */
+  async writeMemory(file: MemoryFile): Promise<void> {
+    const target = memoryFileFor(this.root, file.persona, file.companion);
+    const previous = await readJsonFile<MemoryFile>(target);
+
+    // Only a genuine version bump is worth keeping: an ordinary per-turn fold
+    // rewrites the same version, and snapshotting those would fill the history
+    // with mid-stream buffers and — because the snapshot is keyed by the version —
+    // would let a stale one stand in for the real pre-compaction file, which is the
+    // state a rollback must restore (spec §7.5).
+    if (previous && file.version > previous.version) {
+      await writeJsonFile(versionFileFor(this.root, file.persona, file.companion, previous.version), previous);
+    }
+    await writeJsonFile(target, file);
+
+    // Keep the version history bounded; the oldest snapshot is the one to drop.
+    const directory = path.join(this.root, "memory", "_versions", file.persona, file.companion);
+    const snapshots = (await readdir(directory).catch(() => [] as string[]))
+      .filter((name) => /^v\d+\.json$/.test(name))
+      .sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
+    for (const stale of snapshots.slice(0, Math.max(0, snapshots.length - MEMORY_VERSIONS_KEPT))) {
+      await unlink(path.join(directory, stale)).catch(() => undefined);
+    }
+  }
+
+  async readMemoryVersion(
+    persona: PersonaId,
+    companion: string,
+    version: number,
+  ): Promise<MemoryFile | null> {
+    return readJsonFile<MemoryFile>(versionFileFor(this.root, persona, companion, version));
+  }
+
+  async listMemory(persona?: PersonaId): Promise<MemoryFile[]> {
+    const base = path.join(this.root, "memory");
+    const personas = persona ? [persona] : await readdir(base).catch(() => [] as string[]);
+    const files: MemoryFile[] = [];
+
+    for (const id of personas) {
+      if (id === "_versions") continue;
+      const names = await readdir(path.join(base, id)).catch(() => [] as string[]);
+      for (const name of names.filter((n) => n.endsWith(".json"))) {
+        const file = await readMemoryFileAt(path.join(base, id, name));
+        if (file) files.push(file);
+      }
+    }
+
+    return files.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+}
+
+async function readMemoryFileAt(file: string): Promise<MemoryFile | null> {
+  return readJsonFile<MemoryFile>(file);
 }
 
 export const DEFAULT_FORUM_ROOT = "data/forum";

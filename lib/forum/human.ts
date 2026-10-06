@@ -41,6 +41,9 @@ export function humanMessageRecord(seq: number, args: HumanMessageArgs): TurnRec
       topicId: args.topicId,
       side,
       system: false,
+      // A person can quote an earlier message; the UI renders it as the strip
+      // above their bubble, and the responder is told what it is answering.
+      ...(args.replyToSeq === undefined ? {} : { replyToSeq: args.replyToSeq }),
     },
     memoryWrites: [],
     worldVersion: "",

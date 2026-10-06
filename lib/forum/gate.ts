@@ -181,6 +181,27 @@ function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
   return union === 0 ? 0 : intersection / union;
 }
 
+/**
+ * Machine aphorisms.
+ *
+ * The balanced construction is the single most recognisable "a model wrote this"
+ * tell in this room: `it's not narrative, it's levels`, `I don't analyze shares, I
+ * analyze the plan`. It is banned by *shape* rather than by example, because the
+ * shape is what a model reaches for once it has been asked to sound confident, and
+ * new examples keep appearing. A chat line that happens to land on one is corrected
+ * by the retry, which now carries this reason back to the Voice (§8.4).
+ */
+const APHORISM_PATTERNS: Array<[RegExp, string]> = [
+  [
+    /\b(?:it|that|this)(?:'s| is| are)\s+not\s+[^.,!?;\n]{2,40},?\s+(?:it|that|this)(?:'s| is| are)\b/i,
+    "the not-X-it-is-Y aphorism",
+  ],
+  [
+    /\bi\s+(?:do not|don'?t|never)\s+(?:trade|analy[sz]e|chase|watch|buy|sell|answer|read|take|do)\b[^.,!?;\n]{2,40},\s*i\s+(?:trade|analy[sz]e|chase|watch|buy|sell|answer|read|take|do)\b/i,
+    "the I-do-not-X-I-do-Y aphorism",
+  ],
+];
+
 /** First few content words — a cheap, stable "opener" fingerprint. */
 function openerOf(text: string): string {
   return tokenize(text)
@@ -209,6 +230,14 @@ const META_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:ooc|out of character)\b/i, "out-of-character note"],
   [/\b(?:as the narrator|narrator\s*:)\b/i, "narration"],
   [/\bthis (?:persona|character|agent) (?:is|would|should|will)\b/i, "talks about itself as a construct"],
+  // A labelled fragment ("Risk desk rule: …") and a two-paragraph message are the
+  // shapes of a memo. Both read as a model writing advice rather than a person
+  // typing a line, and both are cheap to catch.
+  [
+    /^\s*(?:[a-z]+[ \t]+){0,3}(?:rule|reminder|note|takeaway|bottom line|key point|lesson|pro tip|tl;?dr|discipline|checklist|hot take)\b[^.\n]{0,20}:/im,
+    "labelled advice fragment",
+  ],
+  [/\n\s*\n/, "two-paragraph message in a chat"],
   [/\bthe (?:user|reader|audience) (?:is|may|will|can|should)\b/i, "addresses the reader"],
   [/\[\s*(?:stage|narration|system)\b/i, "narration tag"],
   [/\bend of (?:response|message)\b/i, "meta sign-off"],
@@ -324,6 +353,10 @@ function checkFormulaic(
     if (lower.includes(phrase.toLowerCase())) {
       return { code: "FORMULAIC", detail: `banned phrase "${phrase}"` };
     }
+  }
+
+  for (const [pattern, why] of APHORISM_PATTERNS) {
+    if (pattern.test(ctx.text)) return { code: "FORMULAIC", detail: why };
   }
 
   const opener = openerOf(ctx.text);

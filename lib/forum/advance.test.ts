@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 import { advance, previewHumanReply } from "./advance";
 import { publish } from "./publisher";
-import type { ChatProvider } from "./provider";
+import type { ChatProvider, ChatRequest } from "./provider";
+import { FileStore } from "./store";
+import type { ForumStore } from "./store";
 import {
   createFixture,
   makeTurn,
@@ -15,7 +17,7 @@ import {
 } from "./test-utils";
 import type { Fixture } from "./test-utils";
 import { flawFor } from "./voice";
-import type { ForumConfig, GateConfig, Persona } from "./types";
+import type { ForumConfig, GateConfig, MemoryConfig, Persona } from "./types";
 
 /** A minute after the seeded turns, so nothing looks stale and time moves forward. */
 const BASE = TEST_BASE + 60_000;
@@ -439,6 +441,266 @@ test("the typing preview names the responder without writing anything", async ()
 
     await advance(fixture.store, { now: BASE + 61_000 });
     assert.equal(await previewHumanReply(fixture.store, BASE + 62_000), null);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Agent 2: memory files, the size check and compaction (spec §7, steps 8-10)
+ * ------------------------------------------------------------------ */
+
+const MEMORY: MemoryConfig = {
+  enabled: true,
+  recentTurns: 10,
+  compactionTokens: 500,
+  keepRecentTurns: 2,
+  maxDigestChars: 300,
+  models: ["archivist/one"],
+};
+
+function withMemory(
+  overrides: Partial<MemoryConfig> = {},
+  config: ForumConfig = TEST_CONFIG,
+): ForumConfig {
+  return { ...config, memory: { ...MEMORY, ...overrides } };
+}
+
+/** A Voice that answers with a fixed line and keeps every request it was given. */
+function voiceRecording(text: string): { provider: ChatProvider; seen: ChatRequest[] } {
+  const seen: ChatRequest[] = [];
+  return {
+    seen,
+    provider: {
+      id: "test-voice",
+      model: "test/voice",
+      family: "test",
+      chat: async (request) => {
+        seen.push(request);
+        return { text, model: "test/voice", usage: { tokensIn: 1, tokensOut: 1, cost: 0 } };
+      },
+    },
+  };
+}
+
+/** A store whose memory writes fail, for the "memory must not stall the room" path. */
+function storeWithBrokenMemory(store: FileStore): ForumStore {
+  const broken: ForumStore = Object.create(store) as ForumStore;
+  broken.writeMemory = async () => {
+    throw new Error("the store is down");
+  };
+  return broken;
+}
+
+async function personSays(
+  store: { appendHumanMessage: (args: {
+    text: string;
+    sender: string;
+    t: number;
+    topicId: string;
+    replyToSeq?: number;
+  }) => Promise<unknown> },
+  text: string,
+  at: number,
+  replyToSeq?: number,
+): Promise<void> {
+  await store.appendHumanMessage({
+    text,
+    sender: "human",
+    t: at,
+    topicId: TEST_TOPICS[0].id,
+    replyToSeq,
+  });
+}
+
+test("a published reply is folded into the responder's private thread", async () => {
+  const fixture = await createFixture({ config: withMemory() });
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    const result = await advance(fixture.store, { now: BASE + 1000 });
+    const chosen = result.record?.chosen ?? "";
+
+    assert.equal(result.status, "published");
+    assert.deepEqual(result.record?.memoryWrites, [`${chosen}:human`]);
+
+    const file = await fixture.store.readMemory(chosen, "human");
+    assert.ok(file, "the thread must exist after the turn");
+    assert.equal(file.recent.length, 2, "both sides of the exchange are recorded (§7.4)");
+    assert.deepEqual(file.recent.map((entry) => entry.role), ["them", "me"]);
+    assert.equal(file.recent[1]?.text, result.record?.message?.text);
+    assert.match(result.record?.note ?? "", /memory 2 recent/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("the Voice is handed what the persona remembers about this companion", async () => {
+  const maraVoiced = TEST_PERSONAS.map((p) => (p.id === "mara" ? { ...p, model: "test/model" } : p));
+  const fixture = await createFixture({
+    config: withMemory({}, withPermissions({ allow: { human: ["mara"] } })),
+    personas: maraVoiced,
+  });
+  try {
+    await fixture.store.writeMemory({
+      persona: "mara",
+      companion: "human",
+      seq: 1,
+      version: 1,
+      updatedAt: BASE - 5000,
+      compactions: 1,
+      digest: "You told them last week you were long gold and would not move the stop.",
+      recent: [
+        { seq: 1, t: BASE - 5000, role: "them", text: "are you still long gold from last week" },
+        { seq: 1, t: BASE - 5000, role: "me", text: "still long, same stop" },
+      ],
+    });
+    await personSays(fixture.store, "still in that gold trade?", BASE);
+
+    const voice = voiceRecording("same stop, still long");
+    const result = await advance(fixture.store, { now: BASE + 1000, voiceProvider: voice.provider });
+    const prompt = voice.seen[0]?.messages[0]?.content ?? "";
+
+    assert.equal(result.record?.chosen, "mara");
+    assert.match(prompt, /<what you remember about human>/);
+    assert.match(prompt, /would not move the stop/);
+    assert.match(prompt, /Never recite it, never say that you remember it/);
+    // The model is told what it is answering, and the transcript is still there.
+    assert.match(prompt, /<message from human>/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("Agent 2 compacts the thread when it outgrows its budget, and the file is versioned", async () => {
+  const fixture = await createFixture({ config: withMemory({ compactionTokens: 1 }) });
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    const digest = "Notes: still long gold, stop unchanged, and dmitri still does not buy the flows story.";
+    const archive = voiceRecording(digest);
+
+    const result = await advance(fixture.store, {
+      now: BASE + 1000,
+      archivistProvider: archive.provider,
+    });
+    const chosen = result.record?.chosen ?? "";
+    const file = await fixture.store.readMemory(chosen, "human");
+
+    assert.equal(file?.digest, digest);
+    assert.equal(file?.version, 1);
+    assert.equal(file?.compactions, 1);
+    assert.equal(file?.recent.length, MEMORY.keepRecentTurns, "the tail is trimmed to the budget");
+    assert.match(result.record?.note ?? "", /agent 2 compacted the human thread/);
+    assert.ok(
+      result.record?.usage?.some((entry) => entry.provider === "archivist"),
+      "the compaction call is accounted for on the turn (§11)",
+    );
+    // The character file is fixed (v0 requirement #2): compaction writes memory,
+    // and the roster the store hands out is byte-for-byte what the fixture wrote.
+    assert.deepEqual(
+      (await fixture.store.readPersonas()).find((p) => p.id === chosen),
+      TEST_PERSONAS.find((p) => p.id === chosen),
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a memory failure is reported on the turn and never stalls the room", async () => {
+  const fixture = await createFixture({ config: withMemory() });
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    const result = await advance(storeWithBrokenMemory(fixture.store), { now: BASE + 1000 });
+
+    assert.equal(result.status, "published");
+    assert.ok(result.record?.message, "the room still speaks");
+    assert.match(result.record?.note ?? "", /memory write failed/);
+    assert.deepEqual(result.record?.memoryWrites, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("threads are per companion, so one person cannot read another's notes", async () => {
+  const fixture = await createFixture({
+    config: withMemory({}, withPermissions({ allow: { human: ["mara"], mara: ["dmitri"] } })),
+  });
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    await advance(fixture.store, { now: BASE + 1000 });
+    await advance(fixture.store, { now: BASE + 2000 });
+
+    const files = await fixture.store.listMemory();
+    assert.deepEqual(
+      files.map((file) => `${file.persona}:${file.companion}`).sort(),
+      ["dmitri:mara", "mara:human"],
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("the room runs without memory when the room does not configure it", async () => {
+  const fixture = await createFixture();
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    const result = await advance(fixture.store, { now: BASE + 1000 });
+
+    assert.equal(result.status, "published");
+    assert.match(result.record?.note ?? "", /memory disabled/);
+    assert.deepEqual(await fixture.store.listMemory(), []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a reply carries the seq of the message it answers", async () => {
+  const fixture = await createFixture();
+  const fresh = await createFixture();
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    const result = await advance(fixture.store, { now: BASE + 1000 });
+
+    assert.equal(result.record?.message?.replyToSeq, 1, "the answer quotes the person's message");
+    assert.equal(result.record?.event.kind, "HUMAN");
+
+    // What the UI's swipe-to-reply sends: a quote that points at a real message.
+    const quoted = await fixture.store.appendHumanMessage({
+      text: "and the stop?",
+      sender: "human",
+      t: BASE + 2000,
+      topicId: TEST_TOPICS[0].id,
+      replyToSeq: 1,
+    });
+    assert.equal(quoted.message?.replyToSeq, 1);
+
+    // An engine opening answers nothing, so it carries no quote.
+    const opening = await advance(fresh.store, { now: BASE });
+    assert.equal(opening.record?.trigger, "IDLE");
+    assert.equal(opening.record?.message?.replyToSeq, undefined);
+  } finally {
+    await fixture.cleanup();
+    await fresh.cleanup();
+  }
+});
+
+test("a rejected draft's reason is handed to the next attempt", async () => {
+  const fixture = await createFixture({
+    // The Gate on, and exactly one persona allowed to answer the person.
+    config: { ...withPermissions({ allow: { human: ["mara"] } }), gate: gate() },
+    personas: TEST_PERSONAS.map((p) => (p.id === "mara" ? { ...p, model: "test/model" } : p)),
+  });
+  try {
+    await personSays(fixture.store, "read on gold?", BASE);
+    // LENGTH fails first (the band is a single sentence wide), so the retry must be
+    // told about it rather than being asked to try again blind (§8.4's REVISE).
+    const short = voiceRecording("no");
+    const result = await advance(fixture.store, { now: BASE + 1000, voiceProvider: short.provider });
+
+    assert.equal(short.seen.length, 2, "the retired attempt happened twice");
+    const retry = short.seen[1]?.messages[0]?.content ?? "";
+    assert.match(retry, /<your last attempt was rejected for this reason>/);
+    assert.match(retry, /LENGTH/);
+    assert.match(result.record?.note ?? "", /retry\/retries, each carrying the rejection reason/);
   } finally {
     await fixture.cleanup();
   }

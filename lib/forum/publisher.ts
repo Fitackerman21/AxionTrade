@@ -19,6 +19,8 @@ export interface BuildMessageArgs {
   side: Side;
   mentions?: string[];
   system?: boolean;
+  /** the message this one answers, for the UI's quoted strip */
+  replyToSeq?: number;
 }
 
 export function buildMessage(args: BuildMessageArgs): ForumMessage {
@@ -33,6 +35,7 @@ export function buildMessage(args: BuildMessageArgs): ForumMessage {
     topicId: args.topicId,
     side: args.side,
     system: args.system ?? false,
+    ...(args.replyToSeq === undefined ? {} : { replyToSeq: args.replyToSeq }),
   };
 }
 

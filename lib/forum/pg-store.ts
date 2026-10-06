@@ -24,12 +24,15 @@ import { Pool } from "pg";
 
 import { humanMessageRecord } from "./human";
 import { ROOM_CONFIG, ROOM_PERSONAS, ROOM_TOPICS, ROOM_WORLD } from "./room-data";
+import { MEMORY_VERSIONS_KEPT } from "./store";
 import type { ForumStore, HumanMessageArgs } from "./store";
 import type {
   ForumConfig,
   Heartbeat,
   Lease,
+  MemoryFile,
   Persona,
+  PersonaId,
   Topic,
   TurnRecord,
   WorldState,
@@ -53,6 +56,23 @@ const SCHEMA = `
     id         text   primary key,
     owner      text   not null,
     expires_at bigint not null
+  );
+  -- Agent 2's memory files (spec §7): one row per (persona, companion) thread,
+  -- plus the snapshots that make a bad compaction reversible.
+  create table if not exists forum_memory (
+    persona    text   not null,
+    companion  text   not null,
+    version    int    not null default 0,
+    file       jsonb  not null,
+    updated_at bigint not null,
+    primary key (persona, companion)
+  );
+  create table if not exists forum_memory_versions (
+    persona    text  not null,
+    companion  text  not null,
+    version    int   not null,
+    file       jsonb not null,
+    primary key (persona, companion, version)
   );
 `;
 
@@ -259,6 +279,95 @@ export class PgStore implements ForumStore {
       HEARTBEAT_ID,
       owner,
     ]);
+  }
+
+  async readMemory(persona: PersonaId, companion: string): Promise<MemoryFile | null> {
+    await this.ensure();
+    const { rows } = await this.pool.query<{ file: MemoryFile }>(
+      "select file from forum_memory where persona = $1 and companion = $2",
+      [persona, companion],
+    );
+    return rows[0]?.file ?? null;
+  }
+
+  /**
+   * Snapshot-then-replace, in one transaction: a reader sees either the whole
+   * previous thread or the whole new one, and a crash cannot leave the row and its
+   * history disagreeing (spec §7.5, "never truncate-then-write").
+   */
+  async writeMemory(file: MemoryFile): Promise<void> {
+    await this.ensure();
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const previous = await client.query<{ file: MemoryFile; version: number }>(
+        "select file, version from forum_memory where persona = $1 and companion = $2 for update",
+        [file.persona, file.companion],
+      );
+      const old = previous.rows[0];
+      // Only a genuine version bump is worth keeping: an ordinary per-turn fold
+      // rewrites the same version, and snapshotting those would fill the history
+      // with mid-stream buffers and — because the key is the version — would let a
+      // stale one shadow the real pre-compaction file, which is the state a
+      // rollback must restore (spec §7.5).
+      if (old && file.version > old.version) {
+        await client.query(
+          `insert into forum_memory_versions (persona, companion, version, file)
+           values ($1, $2, $3, $4)
+           on conflict (persona, companion, version) do nothing`,
+          [file.persona, file.companion, old.version, old.file],
+        );
+      }
+
+      await client.query(
+        `insert into forum_memory (persona, companion, version, file, updated_at)
+         values ($1, $2, $3, $4, $5)
+         on conflict (persona, companion) do update
+           set version = excluded.version, file = excluded.file, updated_at = excluded.updated_at`,
+        [file.persona, file.companion, file.version, JSON.stringify(file), file.updatedAt],
+      );
+
+      // Bounded history: keep the newest snapshots, drop the rest.
+      await client.query(
+        `delete from forum_memory_versions
+          where persona = $1 and companion = $2
+            and version <= (select max(version) from forum_memory_versions
+                             where persona = $1 and companion = $2) - $3`,
+        [file.persona, file.companion, MEMORY_VERSIONS_KEPT],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async readMemoryVersion(
+    persona: PersonaId,
+    companion: string,
+    version: number,
+  ): Promise<MemoryFile | null> {
+    await this.ensure();
+    const { rows } = await this.pool.query<{ file: MemoryFile }>(
+      "select file from forum_memory_versions where persona = $1 and companion = $2 and version = $3",
+      [persona, companion, version],
+    );
+    return rows[0]?.file ?? null;
+  }
+
+  async listMemory(persona?: PersonaId): Promise<MemoryFile[]> {
+    await this.ensure();
+    const { rows } = persona
+      ? await this.pool.query<{ file: MemoryFile }>(
+          "select file from forum_memory where persona = $1 order by updated_at desc",
+          [persona],
+        )
+      : await this.pool.query<{ file: MemoryFile }>(
+          "select file from forum_memory order by updated_at desc",
+        );
+    return rows.map((row) => row.file);
   }
 
   /** Release the pool. Not part of `ForumStore`; used by tests and short-lived tools. */

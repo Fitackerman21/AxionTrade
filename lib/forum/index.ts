@@ -76,6 +76,20 @@ export { respondersFor } from "./permissions";
 export type { PermissionLookup } from "./permissions";
 export { cannedDraft } from "./drafts";
 export type { DraftContext } from "./drafts";
-export { flawFor, voiceDraft } from "./voice";
+export { RECENT_CHAT_MESSAGES, flawFor, voiceDraft } from "./voice";
 export type { VoiceDraftOptions, VoiceDraftResult, VoiceFlaw } from "./voice";
+export {
+  clampDigest,
+  companionLabel,
+  emptyMemory,
+  estimateTokens,
+  foldTurn,
+  injectionText,
+  memoryKey,
+  memoryTokens,
+  needsCompaction,
+} from "./memory";
+export type { MemoryTurn } from "./memory";
+export { buildArchivistPrompt, compactMemory, memoryNote, resolveArchivistProvider } from "./archivist";
+export type { ArchivistPrompt, CompactionResult } from "./archivist";
 export { hashPick, hashString, mulberry32, orderByWeightThenSeed } from "./rng";

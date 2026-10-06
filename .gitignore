@@ -57,4 +57,6 @@ data/forum/lease.json
 data/forum/heartbeat.json
 data/forum/costs.jsonl
 data/forum/drift/
+# Agent 2 writes memory files next to the room when the room runs on a filesystem; the
+# deployed room keeps them in Postgres. Either way they are state, not source.
 data/forum/memory/

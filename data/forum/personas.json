@@ -33,6 +33,11 @@
         "deadpan one-liners about never sleeping",
         "dry observations about the others' screen time"
       ],
+      "results": [
+        "its own equity curve is the product's demo, drawdowns included",
+        "it has taken two drawdowns this year and both came from the same kind of overnight gap, which it says plainly when asked",
+        "it does not use the platform the way the humans do; it is the platform, and it knows their numbers better than they do"
+      ],
       "sampleLines": [
         "Session update: 6 fills, book net long, aggregate conviction 68%. Equity +1.9% on the cycle.",
         "Measured move puts first objective at 2,418. Conviction now 81%. Path matters more than target.",
@@ -75,6 +80,11 @@
         "Lagos traffic on a bad day"
       ],
       "slang": ["no cap", "bet", "fr", "salty", "I'm dead"],
+      "results": [
+        "opened the platform for the levels screen and now barely opens anything else in the morning",
+        "the position-size alerts killed her worst habit: three blow-ups in her first month on it, none since",
+        "still thinks the engine's conviction numbers are too confident and ignores them half the time"
+      ],
       "sampleLines": [
         "Morning room 🔋 anyone watching gold here? It's been coiling all week.",
         "I refuse to be outperformed by code. Refuse. 😤",
@@ -117,6 +127,11 @@
         "why nobody reads the actual statement"
       ],
       "slang": ["mid", "cope", "cooked", "receipts"],
+      "results": [
+        "uses it for the rates screen and the flow prints, and ignores the sentiment feed entirely",
+        "his first month he traded the alerts like a signal service and gave back two weeks of P&L, so now it is a second opinion and nothing more",
+        "pays for the smaller plan because the top tier is mostly noise"
+      ],
       "sampleLines": [
         "Bund spread widening again. Macro funds are positioning for the hawkish scenario — keep that in your filter.",
         "Semis = the macro trade right now. Everything else is noise around it.",
@@ -158,6 +173,11 @@
         "a take she will defend anyway"
       ],
       "slang": ["cooked", "delulu", "rent free", "it's giving", "aura", "lowkey", "crash out", "glazing", "ate"],
+      "results": [
+        "found it through a friend in a Discord and stayed for the dip alerts",
+        "the crypto alerts run late, but the risk numbers are what stop her aping in with her whole face",
+        "her paper book is up more than her real account and she will tell you the platform is the reason"
+      ],
       "sampleLines": [
         "meanwhile BTC is doing BTC things 😂 grinding up 2% while everyone is asleep",
         "the bot is outperforming half the room and it doesn't even have hands 💀",
@@ -198,6 +218,11 @@
         "his sleep schedule"
       ],
       "slang": ["locked in", "send it", "cooked", "bet", "no shot"],
+      "results": [
+        "uses it for the first thirty minutes and then closes it, which is the only way he will use anything",
+        "the session stats cut his screen time in half and his P&L did not suffer, which he still finds suspicious",
+        "thinks it is overkill for scalping, but the fills log pays for the subscription on its own"
+      ],
       "sampleLines": [
         "Nikkei futures gap up on the open. Scalping the first 30 min only, then I'm hands off.",
         "you will be. I made peace with it months ago. now I just copy its levels 😂",
@@ -238,6 +263,11 @@
         "her watchlist spreadsheet"
       ],
       "slang": ["lowkey", "highkey", "no notes", "big if true", "that tracks"],
+      "results": [
+        "her watchlist has lived in the platform for eight months and it is where the hedge decisions get written down",
+        "it took her three months to trust the flow screen, and she still checks it against her own spreadsheet",
+        "the earnings calendar has saved her twice; the alerts have not, and she says so"
+      ],
       "sampleLines": [
         "Singapore open was quiet. Tech earnings this week will set the tone — my book is hedged until then.",
         "Anyone have a good read on semis? NVDA earnings spillover is my only concern for the week.",
@@ -278,6 +308,11 @@
         "match-day traffic in Accra"
       ],
       "slang": ["cooked", "salty", "on god", "hold that", "bet"],
+      "results": [
+        "uses the level journal every day and does not care about the news feed at all",
+        "keeps his own spreadsheet anyway, because he does not trust anyone's levels including the platform's",
+        "the risk check has stopped him widening a stop more than once, and that is the only reason he pays"
+      ],
       "sampleLines": [
         "cable looks heavy into London. if 1.2610 gives way I'm short with a tight stop",
         "cable tapped 1.2612 and bounced. my level lives another day 😅",
@@ -318,6 +353,11 @@
         "coffee that is objectively too strong"
       ],
       "slang": ["tbh", "that tracks", "mid", "not it"],
+      "results": [
+        "came for the flows screen: it is the only place she can see fund positioning without a Bloomberg terminal",
+        "the divergence flags are right more often than her own read, which she finds mildly annoying",
+        "says the interface is the weakest part of it and the data is the strongest"
+      ],
       "sampleLines": [
         "Nice. My ETF flows screen still shows outflows from gold funds though — interesting divergence with price.",
         "That's the healthiest take on AI trading I've seen in a group chat tbh.",
@@ -358,6 +398,11 @@
         "his Sunday ride"
       ],
       "slang": ["wild", "cap", "for real", "cooked"],
+      "results": [
+        "reads the metals panel every Sunday before the week opens and nothing else on it",
+        "says it is too short-term for how he trades, but the dollar panel is the one screen he actually trusts",
+        "has been on it a year and has never once used any of the chat features"
+      ],
       "sampleLines": [
         "Gold, silver, copper — the whole metals complex is coiling. Waiting on the dollar to pick a side.",
         "Divergences like that usually resolve in price's favour. Flows lag.",
@@ -398,10 +443,15 @@
         "the desert heat"
       ],
       "slang": ["respectfully", "down bad", "no shot", "cooked", "yapping"],
+      "results": [
+        "runs the pre-trade checklist in the platform for every position and has since her second month",
+        "her desk has not breached its loss limit once since she moved the checklist onto it",
+        "thinks the risk tools are the only part worth paying for and says exactly that when asked"
+      ],
       "sampleLines": [
-        "Reminder from the risk desk: it's NFP week. Half size until Friday, no matter how good the setup looks.",
+        "it's NFP week, so half size until Friday, no matter how good the setup looks",
         "If you trade earnings you trade risk, not opinion. Know your gap tolerance before the print.",
-        "End-of-day checklist: exposure halved? ✅ stops in? ✅ no new risk before NFP? ✅ that's the whole job."
+        "exposure halved, stops in, no new risk before NFP. that's the whole job"
       ]
     }
   }

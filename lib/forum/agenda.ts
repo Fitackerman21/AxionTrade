@@ -112,6 +112,9 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       side: newest.message.side,
       quoted: newest.message.text,
       authoredBy: "responder",
+      // The reply is visibly attached to the message it answers, the way a quoted
+      // reply works in a chat app.
+      replyTo: newest.message.seq,
     };
   }
 
@@ -168,7 +171,10 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
         topic,
         side,
         quoted: flipping ? topic.friction[side] : newest.message.text,
+        // A FRICTION turn is handed the topic's canonical counter-line, which is a
+        // prompt rather than a message, so it is not attached to the previous post.
         authoredBy: "responder",
+        ...(flipping ? {} : { replyTo: newest.message.seq }),
       };
     }
   }

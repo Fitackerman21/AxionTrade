@@ -55,6 +55,13 @@ export interface PersonaSheet {
    */
   slang?: string[];
   /**
+   * What this persona has actually got out of Axion — the platform-benefits half of
+   * the character file. Real and specific, allowed to be mixed: a room that only
+   * ever praises the product reads as an advert, which is the opposite of the
+   * point.
+   */
+  results?: string[];
+  /**
    * Claims this persona must never make (spec §8.1 CONTINUITY). Plain substrings,
    * matched case-insensitively — e.g. "we are long semis" for a desk that is short.
    */
@@ -67,6 +74,54 @@ export interface Persona extends PersonaDisplay {
   model?: string;
   /** used when the primary provider is down (spec §10.3) */
   fallbackModel?: string;
+}
+
+/** One turn as one persona remembers it, from one companion's thread (spec §7.2). */
+export interface MemoryEntry {
+  seq: number;
+  t: number;
+  /** "me" is the persona speaking, "them" is the companion */
+  role: "me" | "them";
+  text: string;
+  topicId?: string;
+}
+
+/**
+ * One (persona, companion) thread — the mutable half of a personality (spec §7).
+ *
+ * The character file is fixed and bundled; this is the file that gets rewritten,
+ * which is why every write bumps `version` and keeps a snapshot for rollback.
+ */
+export interface MemoryFile {
+  persona: PersonaId;
+  companion: string;
+  /** highest turn seq folded in */
+  seq: number;
+  /** verbatim buffer, oldest first, capped at `memory.recentTurns` */
+  recent: MemoryEntry[];
+  /** the rolling paragraph Agent 2 writes; null until the first compaction */
+  digest: string | null;
+  /** bumped on every write; version snapshots are numbered from it */
+  version: number;
+  updatedAt: number;
+  /** how many times Agent 2 has rewritten this thread */
+  compactions: number;
+  /** the model that wrote the current digest */
+  compactedBy?: string;
+}
+
+/** Agent 2's tunables (spec §7.5). Present in config.json as the room's `memory` block. */
+export interface MemoryConfig {
+  enabled: boolean;
+  /** verbatim entries kept per thread */
+  recentTurns: number;
+  /** estimated tokens (chars/4) of digest + buffer before Agent 2 is called */
+  compactionTokens: number;
+  /** verbatim entries kept after a compaction */
+  keepRecentTurns: number;
+  maxDigestChars: number;
+  /** archivist chain, ordered; candidates sharing the persona's family are dropped */
+  models: string[];
 }
 
 export interface Topic {
@@ -188,6 +243,8 @@ export interface ForumConfig {
   };
   /** Optional so a room written before P2 still loads; defaults come from gate.ts */
   gate?: GateConfig;
+  /** Optional: a room with no `memory` block runs with no memory files (§7.5) */
+  memory?: MemoryConfig;
 }
 
 /** Is a worker alive right now? */
@@ -223,6 +280,8 @@ export interface AgendaEvent {
    * someone responding to a companion — so no candidate set is consulted.
    */
   authoredBy: "engine" | "responder";
+  /** the turn being answered, when this event is a reply to a specific message */
+  replyTo?: number;
 }
 
 export interface ForumMessage {
@@ -237,6 +296,12 @@ export interface ForumMessage {
   side: Side;
   /** true for engine stage directions, which are not a persona reply */
   system: boolean;
+  /**
+   * The seq of the message this one answers, when it answers one — what the UI
+   * renders as the quoted strip above a bubble, and what a person sets by swiping
+   * a message before replying.
+   */
+  replyToSeq?: number;
 }
 
 /**

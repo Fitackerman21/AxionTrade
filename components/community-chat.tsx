@@ -19,12 +19,22 @@
  * inside the bubble, time inline at the end of the text, avatar rendered only on
  * the last message of a group and bottom-aligned, last bubble in a group gets the
  * squared avatar-side corner.
+ *
+ * Quoted replies work the way they do in a phone messenger: swipe a message to the
+ * right (or hover it and use the arrow on a desktop) to answer that specific line,
+ * the composer shows what you are replying to, and the answer renders with the
+ * original quoted above it. The room's own lines carry the same quote, because
+ * every reply in the log records the message it answered (`replyToSeq`).
+ *
+ * The "… is typing" indicator appears in two places on purpose: in the header, and
+ * as a bubble at the end of the transcript, which is where a messenger puts it.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   CheckCheck,
+  CornerUpLeft,
   Mic,
   MoreVertical,
   Paperclip,
@@ -32,6 +42,7 @@ import {
   Search,
   Send,
   Smile,
+  X,
 } from "lucide-react";
 
 import { BrandMark } from "@/components/brand";
@@ -65,12 +76,16 @@ const GROUP_GAP_MS = 5 * 60_000;
 
 interface Row {
   key: string;
+  /** the room's seq, when this row came from the live log (swipe/quotes need it) */
+  seq?: number;
   from: string;
   text: string;
   ticker?: string;
   /** epoch ms */
   at: number;
   system: boolean;
+  /** the seq of the message this one answers */
+  replyToSeq?: number;
 }
 
 type Source = "live" | "demo" | "unavailable";
@@ -135,12 +150,18 @@ function replayRows(): Row[] {
 function liveRows(messages: readonly ForumMessage[]): Row[] {
   return messages.map((m) => ({
     key: m.id,
+    seq: m.seq,
     from: m.sender,
     text: m.text,
     at: m.t,
     system: m.system,
+    ...(m.replyToSeq === undefined ? {} : { replyToSeq: m.replyToSeq }),
   }));
 }
+
+/** How far a message must be dragged before it counts as a reply. */
+const SWIPE_TRIGGER_PX = 48;
+const SWIPE_MAX_PX = 96;
 
 /** Deterministic 0/1 so sticker arrows stay stable across renders. */
 const up = (id: number) => id % 2 === 0;
@@ -184,12 +205,17 @@ function Bubble({
   first,
   last,
   outgoing,
+  quoted,
+  onJump,
 }: {
   row: Row;
   sender: ChatPersona;
   first: boolean;
   last: boolean;
   outgoing: boolean;
+  /** the message this one answers, when it is still on screen */
+  quoted?: Row;
+  onJump?: (seq: number) => void;
 }) {
   // Telegram corner logic: 12px everywhere, except the avatar-side bottom
   // corner of the last bubble in a group which is squared to 4px.
@@ -228,12 +254,30 @@ function Bubble({
         {row.system && (
           <p className="text-[11px] font-medium tracking-wide text-muted uppercase">engine</p>
         )}
+        {quoted && (
+          <button
+            type="button"
+            data-testid="quoted"
+            onClick={() => quoted.seq !== undefined && onJump?.(quoted.seq)}
+            className={`mb-1 flex w-full items-baseline gap-1.5 overflow-hidden rounded-md border-l-2 px-2 py-1 text-left ${
+              outgoing ? "border-white/60 bg-black/20" : "border-brand bg-black/20"
+            }`}
+          >
+            <span
+              className="shrink-0 text-[12px] font-semibold"
+              style={{ color: outgoing ? "#cfe3ff" : personaFor(quoted.from).color }}
+            >
+              {personaFor(quoted.from).name}
+            </span>
+            <span className="truncate text-[12px] opacity-80">{quoted.text}</span>
+          </button>
+        )}
         {row.ticker && (
           <div className="mt-1">
             <TickerChip ticker={row.ticker} id={row.at} />
           </div>
         )}
-        <p className="text-[14.5px] leading-[1.35] break-words">
+        <p data-testid="message-text" className="text-[14.5px] leading-[1.35] break-words">
           {row.text}
           <span
             className={`ml-2 inline-block translate-y-0.5 text-[11px] whitespace-nowrap ${
@@ -284,7 +328,19 @@ export function CommunityChat() {
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [typing, setTyping] = useState<PendingReply | null>(null);
+  /** the message being answered, set by a swipe or the hover arrow */
+  const [replyTo, setReplyTo] = useState<Row | null>(null);
+  /** the in-progress swipe: which row, and how far it has been dragged */
+  const [swipe, setSwipe] = useState<{ key: string; dx: number } | null>(null);
+  const dragRef = useRef<{ key: string; x0: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  /** Live rows by seq, so a quoted strip can resolve the message it points at. */
+  const bySeq = useMemo(() => {
+    const map = new Map<number, Row>();
+    for (const row of rows) if (row.seq !== undefined) map.set(row.seq, row);
+    return map;
+  }, [rows]);
 
   const adopt = useCallback((data: RoomResponse) => {
     if (data.messages && data.messages.length > 0) {
@@ -340,11 +396,14 @@ export function CommunityChat() {
 
     setSending(true);
     setNotice(null);
+    // The quote is sent with the message, so the room knows what is being answered
+    // and the bubble can render the strip above it.
+    const quoted = replyTo?.seq;
     try {
       const response = await fetch("/api/forum/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(quoted === undefined ? { text } : { text, replyTo: quoted }),
       });
       const data = (await response.json()) as RoomResponse;
 
@@ -354,6 +413,7 @@ export function CommunityChat() {
       }
 
       setDraft("");
+      setReplyTo(null);
       const live = adopt(data);
       // `deferred` is the normal path and is not worth a notice — the typing
       // indicator is the feedback. A notice only appears if the room took the
@@ -440,12 +500,104 @@ export function CommunityChat() {
               const next = i < rows.length - 1 ? rows[i + 1] : null;
               const first = !prev || prev.from !== row.from || row.at - prev.at > GROUP_GAP_MS;
               const last = !next || next.from !== row.from || next.at - row.at > GROUP_GAP_MS;
+              const quoted = row.replyToSeq === undefined ? undefined : bySeq.get(row.replyToSeq);
+              const dragging = swipe?.key === row.key ? swipe.dx : 0;
+
               return (
-                <div key={row.key} className={first ? "mt-3" : "mt-[2px]"}>
-                  <Bubble row={row} sender={sender} first={first} last={last} outgoing={outgoing} />
+                <div
+                  key={row.key}
+                  data-seq={row.seq}
+                  data-testid="message"
+                  className={`group relative ${first ? "mt-3" : "mt-[2px]"} ${
+                    row.seq !== undefined && row.seq === replyTo?.seq ? "rounded-lg bg-brand/10" : ""
+                  }`}
+                  style={{
+                    transform: dragging ? `translateX(${dragging}px)` : undefined,
+                    transition: dragging ? "none" : "transform 120ms ease-out",
+                    touchAction: "pan-y",
+                  }}
+                  // Swipe right to reply, the way a phone messenger does it.
+                  onPointerDown={(event) => {
+                    if (event.pointerType === "mouse") return;
+                    dragRef.current = { key: row.key, x0: event.clientX };
+                  }}
+                  onPointerMove={(event) => {
+                    const drag = dragRef.current;
+                    if (!drag || drag.key !== row.key) return;
+                    const dx = Math.max(0, Math.min(SWIPE_MAX_PX, event.clientX - drag.x0));
+                    if (dx > 4) setSwipe({ key: row.key, dx });
+                  }}
+                  onPointerUp={() => {
+                    const dx = swipe?.key === row.key ? swipe.dx : 0;
+                    dragRef.current = null;
+                    setSwipe(null);
+                    if (dx >= SWIPE_TRIGGER_PX) setReplyTo(row);
+                  }}
+                  onPointerCancel={() => {
+                    dragRef.current = null;
+                    setSwipe(null);
+                  }}
+                >
+                  {dragging > 4 && (
+                    <span
+                      aria-hidden
+                      data-testid="swipe-reply"
+                      className="absolute top-1/2 left-1 -translate-y-1/2 text-brand"
+                      style={{ opacity: Math.min(1, dragging / SWIPE_TRIGGER_PX) }}
+                    >
+                      <CornerUpLeft className="h-5 w-5" />
+                    </span>
+                  )}
+                  <Bubble
+                    row={row}
+                    sender={sender}
+                    first={first}
+                    last={last}
+                    outgoing={outgoing}
+                    quoted={quoted}
+                    onJump={(seq) =>
+                      scrollRef.current
+                        ?.querySelector(`[data-seq="${seq}"]`)
+                        ?.scrollIntoView({ block: "center", behavior: "smooth" })
+                    }
+                  />
+                  {row.seq !== undefined && (
+                    <button
+                      type="button"
+                      aria-label={`Reply to ${sender.name}`}
+                      data-testid="reply-action"
+                      onClick={() => setReplyTo(row)}
+                      // Hover affordance for a mouse: a swipe needs a thumb.
+                      className={`absolute top-1/2 -translate-y-1/2 rounded-full bg-surface-2 p-1.5 text-muted opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 ${
+                        outgoing ? "left-1" : "right-1"
+                      }`}
+                    >
+                      <CornerUpLeft className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               );
             })}
+
+            {/* `items-center` on purpose: the transcript's message rows are matched by
+                the e2e spec with `div.flex.items-end.gap-2`, and a typing bubble is not
+                a message. */}
+            {typing && source === "live" && (
+              <div data-testid="typing-row" className="mt-3 flex items-center gap-2">
+                <span className="w-[34px] shrink-0">
+                  <Avatar p={personaFor(typing.sender)} />
+                </span>
+                <div className="rounded-[12px] rounded-bl-[4px] bg-surface-2 px-3 py-2 text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.35)]">
+                  <span className="text-[13px] font-semibold" style={{ color: personaFor(typing.sender).color }}>
+                    {personaFor(typing.sender).name}
+                  </span>
+                  <span className="ml-1.5 align-middle text-[12px] text-muted">is typing…</span>
+                  <span className="ml-2 inline-flex align-middle">
+                    <TypingDots />
+                  </span>
+                </div>
+              </div>
+            )}
 
             {notice && (
               <div className="mt-3 flex justify-center">
@@ -469,6 +621,27 @@ export function CommunityChat() {
         </div>
 
         {/* ---------- composer ---------- */}
+        {replyTo && (
+          <div
+            data-testid="reply-bar"
+            className="flex items-center gap-2 border-t border-border/70 bg-surface-2/70 px-3 py-1.5 sm:px-4"
+          >
+            <CornerUpLeft className="h-4 w-4 shrink-0 text-brand" />
+            <span className="text-[12px] font-semibold text-brand">
+              Replying to {personaFor(replyTo.from).name}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[12px] text-muted">{replyTo.text}</span>
+            <button
+              type="button"
+              aria-label="Cancel reply"
+              data-testid="reply-cancel"
+              onClick={() => setReplyTo(null)}
+              className="rounded-full p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         <footer className="flex items-center gap-1.5 border-t border-border/70 bg-surface px-3 py-2.5 sm:px-4">
           <button
             type="button"

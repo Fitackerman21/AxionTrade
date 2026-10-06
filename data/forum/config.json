@@ -39,6 +39,19 @@
     "staleAfterMin": 90,
     "heartbeatTtlSec": 60
   },
+  "memory": {
+    "enabled": true,
+    "recentTurns": 24,
+    "compactionTokens": 500,
+    "keepRecentTurns": 6,
+    "maxDigestChars": 700,
+    "models": [
+      "google/gemma-4-31b-it",
+      "cohere/command-a-plus",
+      "upstage/solar-pro4",
+      "inclusionai/ling-3.0-flash"
+    ]
+  },
   "gate": {
     "mode": "deterministic",
     "maxAttempts": 3,

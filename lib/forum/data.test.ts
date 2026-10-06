@@ -83,6 +83,26 @@ test("the room's slang is American, never a persona's home dialect", async () =>
   }
 });
 
+test("no character sheet teaches a memo shape", async () => {
+  const personas = await store.readPersonas();
+  // The sheets are the voice anchor: a labelled line in one of them comes back out
+  // as "Risk desk rule: …" in the room, which is the shape §4.2's third rule exists
+  // to stop. This is the guard on the data that rule depends on.
+  const labelled =
+    /(^|\s)(rule|reminder|note|takeaway|bottom line|key point|lesson|pro tip|tl;?dr|discipline|checklist|hot take)[^.\n]{0,32}:/i;
+
+  for (const persona of personas) {
+    const { sampleLines, banter, results } = persona.sheet;
+    for (const line of [...sampleLines, ...(banter ?? []), ...(results ?? [])]) {
+      assert.equal(
+        labelled.test(line),
+        false,
+        `${persona.id}'s sheet teaches a labelled fragment: "${line}"`,
+      );
+    }
+  }
+});
+
 test("the matrix only names personas that exist, and nobody answers themselves", async () => {
   const [config, personas] = await Promise.all([store.readConfig(), store.readPersonas()]);
   const ids = new Set(personas.map((p) => p.id));

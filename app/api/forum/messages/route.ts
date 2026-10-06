@@ -102,6 +102,10 @@ export async function GET(request: Request) {
  * until the reply lands. A room configured with a zero-length window replies
  * inline instead.
  *
+ * `replyTo` (a message seq) is optional and is what the UI sends when somebody
+ * quotes an earlier message: it is stored on the message and echoed back, so the
+ * bubble renders the quoted strip and the responder is told what it is answering.
+ *
  * Safe alongside a worker: `advance()` takes the turn lease, so a worker already
  * driving the room simply wins and the reply arrives on its next tick.
  */
@@ -137,11 +141,23 @@ export async function POST(request: Request) {
     const topic = topics[0];
     if (!topic) throw new Error("forum: the topic deck is empty");
 
+    // A quote must point at a message that exists: anything else is dropped rather
+    // than stored as a dangling reference the UI cannot resolve.
+    const requestedReplyTo = Number((body as { replyTo?: unknown } | null)?.replyTo);
+    const lastTurn = await store.readLastTurn();
+    const replyToSeq =
+      Number.isInteger(requestedReplyTo) &&
+      requestedReplyTo > 0 &&
+      requestedReplyTo <= (lastTurn?.seq ?? 0)
+        ? requestedReplyTo
+        : undefined;
+
     const accepted = await store.appendHumanMessage({
       text,
       sender: HUMAN_SENDER,
       t: now,
       topicId: topic.id,
+      replyToSeq,
     });
 
     // This almost always returns `deferred`: a person's reply is paced 30–60s out
@@ -160,7 +176,7 @@ export async function POST(request: Request) {
         lastTurnAt: last?.t ?? null,
         nextExpectedAt: pending ? pending.dueAt : last ? nextTurnAt(last.t, config.scheduling.gapSec) : null,
         pending,
-        accepted: { seq: accepted.seq, text },
+        accepted: { seq: accepted.seq, text, replyToSeq: replyToSeq ?? null },
         reply: {
           status: reply.status,
           chosen: reply.record?.chosen ?? null,

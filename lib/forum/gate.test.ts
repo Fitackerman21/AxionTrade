@@ -100,10 +100,47 @@ test("assistant tics and formatting are caught", () => {
   assert.ok(failingCodes("- gold up\n- semis down").includes("ASSISTANT_TICS"));
 });
 
+test("the machine aphorism is caught as formulaic", () => {
+  // The two shapes taken verbatim from the live transcript: they read as a model
+  // being confident rather than a trader typing.
+  assert.ok(
+    failingCodes("Nadia, it's not narrative, it's levels.").includes("FORMULAIC"),
+    "the not-X-it-is-Y shape must fail",
+  );
+  assert.ok(
+    failingCodes("I don't analyze shares, I analyze the plan.").includes("FORMULAIC"),
+    "the I-do-not-X-I-do-Y shape must fail",
+  );
+  assert.ok(failingCodes("it is not a breakout, it is a wick").includes("FORMULAIC"));
+
+  // A plain sentence that merely contains the words must survive, or the check
+  // would punish normal disagreement.
+  assert.equal(
+    failingCodes("gold is coiling and I am not adding here").includes("FORMULAIC"),
+    false,
+  );
+  assert.equal(
+    failingCodes("I do not chase it, and the stop stays where it is").includes("FORMULAIC"),
+    false,
+  );
+});
+
 test("meta narration is caught", () => {
   assert.ok(failingCodes("*smiles* the desk is quiet today").includes("META"));
   assert.ok(failingCodes("(nods) the range holds for now").includes("META"));
   assert.ok(failingCodes("OOC: I will answer as the persona now").includes("META"));
+  // The labelled-advice and memo shapes, taken from a live line.
+  assert.ok(
+    failingCodes("Risk desk rule: the event is the opportunity, not the obstacle.").includes("META"),
+  );
+  assert.ok(failingCodes("Half size is the trade.\n\nNobody moves.").includes("META"));
+
+  // ...but a colon inside a sentence, and a normal one-liner, are fine.
+  assert.equal(failingCodes("the note on the screen says half size").includes("META"), false);
+  assert.equal(
+    failingCodes("nobody moves until the print and then we reload").includes("META"),
+    false,
+  );
 });
 
 test("instructions aimed at another speaker are caught", () => {

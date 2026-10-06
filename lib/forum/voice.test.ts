@@ -363,6 +363,48 @@ test("a persona's own slang reaches the prompt, and a persona without any gets n
   }
 });
 
+test("the prompt bans the machine aphorism and licenses occasional platform talk", async () => {
+  const withResults: Persona = {
+    ...voiced(),
+    sheet: { ...MARA.sheet, results: ["the position-size alerts killed her worst habit"] },
+  };
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({ persona: withResults, event: eventOf(), world: TEST_WORLD, seq: 6, provider });
+
+  const system = seen[0]!.system ?? "";
+  assert.match(system, /Never write in slogans or aphorisms/);
+  assert.match(system, /it is not narrative, it is levels|It is not narrative, it is levels/i);
+  assert.match(system, /You have used this platform long enough to have real results/);
+  assert.match(system, /the position-size alerts killed her worst habit/);
+});
+
+test("memory and a rejection reason both reach the prompt when they exist", async () => {
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({
+    persona: voiced(),
+    event: eventOf(),
+    world: TEST_WORLD,
+    seq: 8,
+    memory: "You told them you were long gold and would not move the stop.",
+    critique: "LENGTH: 2 chars, under mara's 40-char floor",
+    provider,
+  });
+
+  const user = seen[0]!.messages[0]!.content ?? "";
+  assert.match(user, /<what you remember about jev>/);
+  assert.match(user, /would not move the stop/);
+  assert.match(user, /<your last attempt was rejected for this reason>LENGTH/);
+  assert.match(user, /Do not rephrase the rejected one/);
+});
+
+test("with no memory and no critique the prompt stays clean", async () => {
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({ persona: voiced(), event: eventOf(), world: TEST_WORLD, seq: 8, provider });
+  const user = seen[0]!.messages[0]!.content ?? "";
+  assert.doesNotMatch(user, /<what you remember about/);
+  assert.doesNotMatch(user, /rejected for this reason/);
+});
+
 test("a canned draft never claims the drift licence", async () => {
   const drifting = [1, 2, 3, 4, 5, 6, 7, 8].find((seq) => flawFor(MARA, seq).drift);
   const result = await voiceDraft({

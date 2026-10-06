@@ -11,8 +11,11 @@
  */
 
 import { nextEvent } from "./agenda";
+import { compactMemory, memoryNote } from "./archivist";
+import type { CompactionResult } from "./archivist";
 import { cannedDraft } from "./drafts";
-import { voiceDraft } from "./voice";
+import { foldTurn, injectionText, memoryKey, needsCompaction } from "./memory";
+import { RECENT_CHAT_MESSAGES, voiceDraft } from "./voice";
 import { resolveGateConfig, runGate } from "./gate";
 import type { GateVerdict } from "./gate";
 import { respondersFor } from "./permissions";
@@ -29,6 +32,7 @@ import type {
   Attempt,
   Decision,
   ForumConfig,
+  MemoryFile,
   Persona,
   PersonaId,
   TurnGate,
@@ -81,6 +85,20 @@ export interface AdvanceOptions {
   judge?: ChatProvider;
   /** inject the Voice's provider (tests, dry runs); by default it comes from the persona's model */
   voiceProvider?: ChatProvider;
+  /** inject Agent 2's provider; by default the archivist chain resolves from config (§7.5) */
+  archivistProvider?: ChatProvider;
+}
+
+/**
+ * The oldest message the Voice's transcript window already shows.
+ *
+ * Memory is injected *behind* that boundary: an older digest plus older verbatim
+ * lines. Forward of it the transcript is exact and current, so repeating it in the
+ * memory block would cost tokens to say the same thing twice.
+ */
+function transcriptWindowSeq(turns: readonly TurnRecord[]): number {
+  const posted = turns.filter((turn) => turn.message);
+  return posted[Math.max(0, posted.length - RECENT_CHAT_MESSAGES)]?.seq ?? 0;
 }
 
 /** Used for lease ownership; 0 where there is no process to name. */
@@ -329,12 +347,36 @@ export async function advance(
     /** the last draft was licensed to leave the subject it was answering (§8.1) */
     let voiceDrift = false;
 
+    // ---- steps 8-10's substrate (spec §7): who this turn is remembering ------
+    const memoryConfig = config.memory;
+    const memoryEnabled = Boolean(memoryConfig?.enabled);
+    // A responder answers a companion; the engine addresses the room, and a stage
+    // direction is nobody's conversation, so neither writes a companion thread.
+    const companion = responder ? event.sender : null;
+    let memoryFile: MemoryFile | null = null;
+    let memoryReadFailure: string | null = null;
+
+    if (memoryEnabled && companion && chosenPersona) {
+      try {
+        memoryFile = await store.readMemory(chosenPersona.id, companion);
+      } catch (error) {
+        // Losing memory must not lose the turn (§10.5): the room speaks, and the
+        // failure is visible on the turn rather than silent.
+        memoryReadFailure = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    const memoryBlock =
+      memoryFile && memoryConfig
+        ? injectionText(memoryFile, transcriptWindowSeq(turns))
+        : "";
+
     /**
      * Draft one line in the persona's voice and account for it. The Voice is the
      * only model call a turn makes outside the Gate, so its cost is recorded the
      * same way the judge's is (§11).
      */
-    const speak = async (persona: Persona, attempt = 1): Promise<string> => {
+    const speak = async (persona: Persona, attempt = 1, critique?: string): Promise<string> => {
       const voice = await voiceDraft({
         persona,
         event,
@@ -342,6 +384,8 @@ export async function advance(
         seq,
         attempt,
         recent: turns,
+        memory: persona.id === chosenPersona?.id ? memoryBlock : "",
+        critique,
         provider: options.voiceProvider,
       });
       voiceUsed = voice.usedVoice;
@@ -398,8 +442,11 @@ export async function advance(
         event.kind === "HUMAN" ? Math.min(gateConfig.maxAttempts, 2) : gateConfig.maxAttempts;
 
       let verdict: GateVerdict | null = null;
+      // §8.4's REVISE arrow: the rejection that failed attempt n is handed to the
+      // Voice for attempt n+1, so a retry aims at a fault instead of re-rolling.
+      let critique: string | undefined;
       for (let n = 1; n <= maxAttempts; n += 1) {
-        text = await speak(chosenPersona, n);
+        text = await speak(chosenPersona, n, critique);
         // A turn the Voice licensed to drift is not held to ADDRESSEE: changing
         // the subject is a human move, and failing it here would replace exactly
         // the lines the room was asked for with the canned ones.
@@ -427,6 +474,10 @@ export async function advance(
         gateNotes.push(...verdict.notes);
         if (verdict.usage) usage.push(verdict.usage);
         if (verdict.decision === "APPROVE") break;
+        critique = verdict.detail ?? verdict.codes.join(", ");
+      }
+      if (attempts.length > 1) {
+        notes.push(`${attempts.length - 1} retry/retries, each carrying the rejection reason`);
       }
 
       const gateMode: TurnGate["mode"] =
@@ -475,6 +526,58 @@ export async function advance(
     // §8.4 records what the Gate did; the drift licence is part of that trace.
     if (gated && voiceDrift) notes.push("off-topic turn; the addressee rule was waived for it");
 
+    // ---- steps 8-10: fold the exchange into memory, then compact if needed ----
+    let memoryWrites: string[] = [];
+    let memorySummary = memoryEnabled ? "memory: nothing to record" : "memory disabled";
+    if (memoryReadFailure) {
+      memorySummary = `memory read failed: ${memoryReadFailure.slice(0, 120)}`;
+    } else if (memoryEnabled && memoryConfig && companion && chosenPersona && responder && decision === "APPROVE") {
+      const key = memoryKey(chosenPersona.id, companion);
+      try {
+        const folded = foldTurn(
+          memoryFile,
+          chosenPersona.id,
+          companion,
+          {
+            seq,
+            t: now,
+            // Only a turn that is actually answering a message records one: a
+            // FRICTION prompt is the topic's canonical line, not something said.
+            incoming:
+              event.replyTo !== undefined && event.quoted
+                ? { text: event.quoted, topicId: event.topic.id }
+                : undefined,
+            outgoing: { text, topicId: event.topic.id },
+          },
+          memoryConfig,
+        );
+
+        // Step 9 checks the size; step 10 calls Agent 2. A compaction that fails
+        // leaves the buffer alone and the thread intact (§7.5).
+        let written: CompactionResult = { file: folded, model: null, usage: null, skipped: null };
+        if (needsCompaction(folded, memoryConfig)) {
+          written = await compactMemory({
+            persona: chosenPersona,
+            file: folded,
+            config: memoryConfig,
+            provider: options.archivistProvider,
+          });
+          if (written.usage) usage.push(written.usage);
+          notes.push(
+            written.model
+              ? `agent 2 compacted the ${companion} thread`
+              : `agent 2 did not compact: ${written.skipped ?? "unknown"}`,
+          );
+        }
+
+        await store.writeMemory(written.file);
+        memoryWrites = [key];
+        memorySummary = memoryNote(written.file, written);
+      } catch (error) {
+        memorySummary = `memory write failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 120)}`;
+      }
+    }
+
     const record: TurnRecord = {
       seq,
       t: now,
@@ -505,9 +608,11 @@ export async function advance(
               topicId: event.topic.id,
               side: event.side,
               system,
+              // The quoted strip under a bubble is the seq of what it answers.
+              replyToSeq: event.replyTo,
             })
           : null,
-      memoryWrites: [],
+      memoryWrites,
       gate,
       usage: usage.length > 0 ? usage : undefined,
       worldVersion: world.version,
@@ -517,7 +622,7 @@ export async function advance(
         `gate ${gateConfig.mode}`,
         `voice ${voiceUsed ? "on" : "off"}`,
         voiceModel ? `voiceModel ${voiceModel}` : "",
-        "memory disabled (P3)",
+        memorySummary,
       ]
         .filter(Boolean)
         .join("; "),

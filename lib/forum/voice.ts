@@ -35,6 +35,13 @@ export interface VoiceDraftOptions {
   attempt?: number;
   /** recent log, newest last — lets the line connect to the room, not just the quote */
   recent?: readonly TurnRecord[];
+  /**
+   * Agent 2's memory of this companion, already rendered (§7.3). Only the part the
+   * shared transcript cannot show: an older digest plus older verbatim lines.
+   */
+  memory?: string;
+  /** why the previous attempt was rejected (spec §8.4's REVISE arrow) */
+  critique?: string;
   /** injectable keys; when absent the environment's keys are used (pass `[]` for none) */
   keys?: string[];
   /** injectable provider; when absent one is built from `model` + keys */
@@ -87,6 +94,12 @@ export interface VoiceFlaw {
    * Gate's ADDRESSEE check (spec §8.1).
    */
   drift?: boolean;
+  /**
+   * Flaws that need material in the character file. A persona with no slang list,
+   * or no results of its own, is never told to reach for either — that is how a
+   * persona avoids inventing a vocabulary or a track record it does not have.
+   */
+  needs?: "slang" | "results";
 }
 
 /**
@@ -124,7 +137,15 @@ const HUMAN_FLAWS: readonly VoiceFlaw[] = [
     text: "Open a completely unrelated thought. It can just sit there — you do not have to justify it.",
     drift: true,
   },
-  { text: SLANG_FLAW, drift: true },
+  { text: SLANG_FLAW, drift: true, needs: "slang" },
+  {
+    text: "Say one concrete thing about what you actually get out of this platform — something it has done for you, or something about it that still annoys you. No selling, no features list.",
+    needs: "results",
+  },
+  {
+    text: "Mention a real result you have had lately, the way you would tell a friend — including the part that did not work.",
+    needs: "results",
+  },
   { text: "Be a bit of a dick about it. Needle whoever is being smug." },
   { text: "Somebody in here is wrong and you have no patience for it today. Say so plainly." },
   { text: "Dunk on the worst take in the room instead of answering the question." },
@@ -148,7 +169,8 @@ const HUMAN_FLAWS: readonly VoiceFlaw[] = [
 export function flawFor(persona: Persona, seq: number, engine = false): VoiceFlaw {
   const roll = hashPick(HUMAN_FLAWS, `flaw:${persona.id}:${seq}`) ?? HUMAN_FLAWS[0]!;
   if (engine) return HUMAN_FLAWS[0]!;
-  if (roll.text === SLANG_FLAW && !(persona.sheet.slang?.length ?? 0)) return HUMAN_FLAWS[0]!;
+  if (roll.needs === "slang" && !(persona.sheet.slang?.length ?? 0)) return HUMAN_FLAWS[0]!;
+  if (roll.needs === "results" && !(persona.sheet.results?.length ?? 0)) return HUMAN_FLAWS[0]!;
   return roll;
 }
 
@@ -166,6 +188,17 @@ const VOICE_SYSTEM = [
   // explicit, because a persona written as Lagos or Accra will otherwise reach
   // for pidgin that nobody in a US room would say.
   "Slang is American and current — 'cooked', 'locked in', 'mid', 'delulu', 'aura', 'rent free', 'glazing', 'crash out', 'no cap', 'down bad', 'yapping', 'touch grass', whatever people your age actually say. Never explain it, never put it in quotes, and never use slang from another country, another language or a local dialect.",
+  // The single most recognisable "a model wrote this" tell: the balanced
+  // aphorism, and the clipped slogan fragment. Both are banned by shape, not by
+  // example alone, because the shape is what the model reaches for.
+  "Never write in slogans or aphorisms. 'It is not narrative, it is levels', 'I do not analyze shares, I analyze the plan', 'Patience trade, no touching stops' are machine-shaped and no trader texts like that. No parallel-contrast sentence (not X, it is Y), no slogan opened with someone's name, no three clipped fragments in a row.",
+  "Talk in plain sentences, the way you would say it out loud with your mouth. Uneven, trailing, half-finished is fine; polished, quotable and perfectly balanced is not.",
+  // The other half of the same tell: advice that arrives with a label on it, or a
+  // message split into paragraphs like a memo, is a document, not a text.
+  "One message is one thought in one paragraph. Never label your own line ('Rule:', 'Reminder:', 'Note:', 'Takeaway:', 'Bottom line:'), never split it into paragraphs with a blank line, and never sign it off.",
+  // Testimonials: real, occasional, mixed. A room that only praises the product
+  // reads as an advert, which is exactly what it must not be.
+  "You have used this platform long enough to have real results and real complaints about it. Now and then — not often — you mention one concrete detail about what it has actually done for you or for your week. Never as an advert: no percentage you cannot back, no feature list, no telling anyone they should try it.",
 ].join(" ");
 
 /** The persona's character sheet, re-injected every turn so voice survives compaction. */
@@ -189,6 +222,11 @@ function personaSystem(persona: Persona): string {
   if (sheet.slang && sheet.slang.length > 0) {
     lines.push(`Slang you actually reach for (at most one per message): ${sheet.slang.join("; ")}.`);
   }
+  if (sheet.results && sheet.results.length > 0) {
+    lines.push(
+      `Your own results on this platform, which you bring up rarely and only as a concrete detail: ${sheet.results.join("; ")}.`,
+    );
+  }
   if (sheet.forbiddenClaims && sheet.forbiddenClaims.length > 0) {
     lines.push(`Never claim: ${sheet.forbiddenClaims.join("; ")}.`);
   }
@@ -199,11 +237,19 @@ function personaSystem(persona: Persona): string {
   return lines.join(NL);
 }
 
+/**
+ * How many messages of the shared transcript reach the Voice. Exported because the
+ * memory block asks the same question from the other side: anything newer than this
+ * window is already in the transcript, so sending it again would be paying twice.
+ */
+export const RECENT_CHAT_MESSAGES = 10;
+
+/** A slice of the actual transcript, so the line is a reply and not a monologue. */
 function recentChat(recent: readonly TurnRecord[] | undefined, me: string): string {
   if (!recent || recent.length === 0) return "";
   const lines = recent
     .filter((turn) => turn.message)
-    .slice(-10)
+    .slice(-RECENT_CHAT_MESSAGES)
     .map((turn) => {
       const message = turn.message!;
       const who = message.sender === me ? "you" : message.sender;
@@ -221,13 +267,16 @@ function recentChat(recent: readonly TurnRecord[] | undefined, me: string): stri
  * a `<message from ...>`, while an engine turn is given the tape and its own read
  * of it, so it does not appear to be answering itself.
  */
-function turnUser(
-  event: AgendaEvent,
-  world: WorldState,
-  persona: Persona,
-  seq: number,
-  recent?: readonly TurnRecord[],
-): string {
+function turnUser(args: {
+  event: AgendaEvent;
+  world: WorldState;
+  persona: Persona;
+  seq: number;
+  recent?: readonly TurnRecord[];
+  memory?: string;
+  critique?: string;
+}): string {
+  const { event, world, persona, seq, recent, memory, critique } = args;
   const { minChars, maxChars } = persona.sheet.register;
   const engine = event.authoredBy === "engine";
   const quoted =
@@ -241,6 +290,10 @@ function turnUser(
   const chat = recentChat(recent, persona.id);
 
   return [
+    memory ? `<what you remember about ${event.sender}>${NL}${memory}${NL}</what you remember>` : "",
+    memory
+      ? `You may use what you remember, the way a person uses a memory of a real conversation. Never recite it, never say that you remember it, never list it back.`
+      : "",
     chat,
     `<what the room is on>${event.topic.title}</what the room is on>`,
     `<your side>${event.topic.sides[event.side]}</your side>`,
@@ -248,6 +301,9 @@ function turnUser(
     quoted,
     "",
     hint,
+    critique
+      ? `<your last attempt was rejected for this reason>${critique}${NL}Write a different line that fixes exactly that. Do not rephrase the rejected one.`
+      : "",
     `<how you send it>${flaw}</how you send it>`,
     "",
     `Write ONE chat message as ${persona.name}.`,
@@ -277,7 +333,20 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
   try {
     const response = await provider.chat({
       system: personaSystem(persona),
-      messages: [{ role: "user", content: turnUser(event, world, persona, seq, opts.recent) }],
+      messages: [
+        {
+          role: "user",
+          content: turnUser({
+            event,
+            world,
+            persona,
+            seq,
+            recent: opts.recent,
+            memory: opts.memory,
+            critique: opts.critique,
+          }),
+        },
+      ],
       // A line is one short message, not a problem to think about. Qwen is a
       // reasoning model, and left on it spends the whole budget on a scratchpad
       // and returns empty `content` — the same failure the Gate's judge hit, which

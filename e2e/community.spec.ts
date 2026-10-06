@@ -36,6 +36,12 @@ interface Row {
   name: string | null;
   /** `<avatar initials> <name> <message> <clock>` for a persona row */
   text: string;
+  /**
+   * The bubble's own line, without the avatar/name/clock — and without a quoted
+   * strip. This is what makes "the room said something" a real assertion: a row that
+   * only echoed the visitor's quoted words would otherwise pass.
+   */
+  own: string;
 }
 
 async function readRows(page: Page): Promise<Row[]> {
@@ -50,6 +56,9 @@ async function readRows(page: Page): Promise<Row[]> {
         outgoing: el.className.includes("justify-end"),
         name: nameEl?.childNodes[0]?.textContent?.trim() ?? null,
         text: el.innerText.replace(/\s+/g, " ").trim(),
+        own: (el.querySelector('[data-testid="message-text"]')?.textContent ?? "")
+          .replace(/\s+/g, " ")
+          .trim(),
       };
     }),
   );
@@ -135,22 +144,79 @@ test("the live community page answers a person, after a visible composing pause"
     `the reply did not come from a permitted responder: ${JSON.stringify(reply!.text)}`,
   ).toContain(name);
 
-  // Strip the avatar initials, the "AxAI" badge, the name and the trailing clock;
-  // what is left is the message itself.
-  const message = reply!.text
-    .replace(/^[A-Z]{2}\s*/, "")
-    .replace("AxAI", "")
-    .replace(name!, "")
-    .replace(/\d{2}:\d{2}.*$/, "")
-    .trim();
-  expect(message.length, `the reply has no substance: ${JSON.stringify(reply!.text)}`).toBeGreaterThan(
-    15,
-  );
+  // The bubble's own line — not the quoted strip, not the name, not the clock.
+  const message = reply!.own;
+  expect(
+    message.length,
+    `the reply has no substance of its own: ${JSON.stringify(reply!.text)}`,
+  ).toBeGreaterThan(15);
+  expect(
+    message.includes(QUESTION),
+    `the reply is the visitor's own words echoed back: ${JSON.stringify(message)}`,
+  ).toBe(false);
 
-  // Once the reply has landed, the typing bubble is gone.
+  // The room's own answer quotes the person's message, the way a messenger does.
+  await expect(page.getByTestId("quoted").first()).toBeVisible({ timeout: 15_000 });
+
+  // Once the reply has landed, the typing bubble is gone — in the header and in the
+  // transcript, which is where a messenger shows it.
   await expect(page.getByTestId("typing")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId("typing-row")).toHaveCount(0, { timeout: 15_000 });
 
   console.log(
     `\n[community] You: ${QUESTION}\n[community] ${name} (${PERMITTED[name!]}) replied: ${message}\n`,
   );
+});
+
+test("a person can quote a message and the quote renders above their bubble", async ({ page }) => {
+  await page.goto("/community");
+  await expect(page.getByTestId("room-status")).toContainText("live", { timeout: 120_000 });
+
+  // Pick a real room message and answer that specific line (the desktop path for a
+  // swipe: the arrow that appears on hover).
+  const target = page.locator('[data-testid="message"]').last();
+  // Read the bubble's own line, not the row: a row also carries the avatar initials,
+  // the sender name and — if it is itself a reply — its own quoted strip.
+  const targetText = (await target.getByTestId("message-text").innerText())
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 30);
+  await target.getByTestId("reply-action").click({ force: true });
+
+  const bar = page.getByTestId("reply-bar");
+  await expect(bar).toBeVisible({ timeout: 10_000 });
+  await expect(bar).toContainText("Replying to");
+
+  const QUOTE_REPLY = "fair point — but what's the stop on that?";
+  await page.getByPlaceholder("Message the community…").fill(QUOTE_REPLY);
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (res) => res.url().includes("/api/forum/messages") && res.request().method() === "POST",
+      { timeout: 120_000 },
+    ),
+    page.getByRole("button", { name: "Send" }).click(),
+  ]);
+
+  const body = (await response.json()) as {
+    accepted?: { seq: number; text: string; replyToSeq: number | null };
+    error?: string;
+  };
+  expect(body.error, `the room refused the reply: ${body.error}`).toBeUndefined();
+  expect(body.accepted?.text).toBe(QUOTE_REPLY);
+  expect(body.accepted?.replyToSeq, "the quote must be stored on the message").toBeGreaterThan(0);
+
+  // The composer clears once the message is taken.
+  await expect(bar).toHaveCount(0, { timeout: 15_000 });
+
+  // The person's own bubble now renders the quoted strip. Bound to the seq the POST
+  // returned, not to the text: the room is persistent, so an earlier run's identical
+  // message would otherwise satisfy the assertion.
+  const quoted = page.locator(`[data-seq="${body.accepted?.seq}"] [data-testid="quoted"]`);
+  await expect(quoted).toBeVisible({ timeout: 15_000 });
+  expect(
+    (await quoted.innerText()).replace(/\s+/g, " "),
+    "the strip must carry the quoted message",
+  ).toContain(targetText);
+
+  console.log(`\n[community] quoted ${JSON.stringify(targetText)}… \n[community] You: ${QUOTE_REPLY}\n`);
 });

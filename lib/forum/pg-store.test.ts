@@ -17,15 +17,53 @@ import { PgStore } from "./pg-store";
 import { openForumStore } from "./store";
 import { makeTurn, TEST_BASE, TEST_TOPICS } from "./test-utils";
 
-const URL = process.env.TEST_DATABASE_URL;
-/** No server named: skip these rather than failing the suite. */
-const skip = URL ? false : "needs TEST_DATABASE_URL";
+/**
+ * Is this a database the suite is allowed to wipe?
+ *
+ * This file *truncates the turn log* before every test, so pointing it at a live
+ * room deletes that room's transcript — which is exactly what happens when someone
+ * pastes a production `DATABASE_URL` into `TEST_DATABASE_URL`. Only a loopback
+ * host is trusted, and anything else needs a deliberate override.
+ */
+export function localDatabase(url: string): boolean {
+  try {
+    // `URL` is shadowed by this module's connection const, so the global is explicit.
+    const { hostname } = new globalThis.URL(url);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
 
-const store = URL ? new PgStore({ connectionString: URL, maxConnections: 4 }) : null;
-const admin = URL ? new Pool({ connectionString: URL, max: 1 }) : null;
+const URL = process.env.TEST_DATABASE_URL;
+/** A deliberate, visible act: tests may only wipe a remote room if told to. */
+const remoteAllowed = process.env.TEST_DATABASE_URL_ALLOW_REMOTE === "1";
+/**
+ * The whole file is inert unless this holds — not just the assertions.
+ *
+ * `skip` keeps the tests from running, but the truncating `beforeEach` hook runs
+ * regardless of it, so the guard has to own the connections too. Skipping the
+ * tests while the hook still wiped the room is exactly the bug this prevents.
+ */
+const active = Boolean(URL) && (localDatabase(URL!) || remoteAllowed);
+/** No server named: skip these rather than failing the suite. */
+const skip = active
+  ? false
+  : URL
+    ? "TEST_DATABASE_URL is not a local database, and this suite truncates it"
+    : "needs TEST_DATABASE_URL";
+
+if (URL && !active) {
+  console.warn(
+    `forum: refusing to truncate ${new globalThis.URL(URL).host} — set TEST_DATABASE_URL_ALLOW_REMOTE=1 to override`,
+  );
+}
+
+const store = active ? new PgStore({ connectionString: URL!, maxConnections: 4 }) : null;
+const admin = active ? new Pool({ connectionString: URL!, max: 1 }) : null;
 
 beforeEach(async () => {
-  if (!store || !admin) return;
+  if (!active || !store || !admin) return;
   // Ensure the schema exists before truncating; then give every test a clean room.
   await store.readLastTurn();
   await admin.query("truncate forum_turns, forum_lease, forum_heartbeat");
@@ -34,6 +72,13 @@ beforeEach(async () => {
 after(async () => {
   await store?.end();
   await admin?.end();
+});
+
+test("a live room is never truncated by accident", () => {
+  assert.equal(localDatabase("postgres://forum:forum@127.0.0.1:5432/forum"), true);
+  assert.equal(localDatabase("postgres://u:p@localhost:5432/forum"), true);
+  assert.equal(localDatabase("postgres://u:p@db.abcdefghijklm.supabase.co:5432/postgres"), false);
+  assert.equal(localDatabase("not a url"), false);
 });
 
 test("the room definition ships with the build, not the filesystem", { skip }, async () => {
