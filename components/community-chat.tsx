@@ -51,7 +51,8 @@ import {
   REPLAY_INDEXED,
   type ChatPersona,
 } from "@/lib/community-chat";
-import type { ForumMessage } from "@/lib/forum/types";
+import { REACTION_EMOJI } from "@/lib/forum/reactions";
+import type { ForumMessage, MessageReactions } from "@/lib/forum/types";
 
 const byId = new Map(PERSONAS.map((p) => [p.id, p]));
 
@@ -85,6 +86,8 @@ interface Row {
   system: boolean;
   /** the seq of the message this one answers */
   replyToSeq?: number;
+  /** the reaction chips on this bubble, one per emoji */
+  reactions?: MessageReactions[];
 }
 
 type Source = "live" | "demo" | "unavailable";
@@ -96,6 +99,12 @@ interface PendingReply {
   /** true when the engine will post a stage direction instead */
   system: boolean;
   dueAt: number;
+  /**
+   * When the typing bubble may appear. The room reads the message first and the read
+   * scales with how long it is, so the indicator is not there in the same frame the
+   * message lands — which is the thing no pair of thumbs can do (§9).
+   */
+  typingAt: number;
 }
 
 interface RoomResponse {
@@ -103,6 +112,7 @@ interface RoomResponse {
   pending?: PendingReply | null;
   error?: string;
   reply?: { status: string; chosen: string | null; dueAt?: number | null } | null;
+  reaction?: { seq: number; emoji: string; on: boolean } | null;
 }
 
 function initials(name: string) {
@@ -155,6 +165,7 @@ function liveRows(messages: readonly ForumMessage[]): Row[] {
     at: m.t,
     system: m.system,
     ...(m.replyToSeq === undefined ? {} : { replyToSeq: m.replyToSeq }),
+    ...(m.reactions && m.reactions.length > 0 ? { reactions: m.reactions } : {}),
   }));
 }
 
@@ -206,6 +217,7 @@ function Bubble({
   outgoing,
   quoted,
   onJump,
+  onReact,
 }: {
   row: Row;
   sender: ChatPersona;
@@ -215,6 +227,7 @@ function Bubble({
   /** the message this one answers, when it is still on screen */
   quoted?: Row;
   onJump?: (seq: number) => void;
+  onReact?: (seq: number, emoji: string) => void;
 }) {
   // Telegram corner logic: 12px everywhere, except the avatar-side bottom
   // corner of the last bubble in a group which is squared to 4px.
@@ -279,6 +292,28 @@ function Bubble({
             {outgoing && <CheckCheck className="ml-0.5 inline h-3.5 w-3.5 align-[-2px] text-white/70" />}
           </span>
         </p>
+        {row.reactions && row.reactions.length > 0 && (
+          <div data-testid="reactions" className="mt-1 flex flex-wrap items-center gap-1">
+            {row.reactions.map((reaction) => {
+              const mine = reaction.by.includes(YOU.id);
+              return (
+                <button
+                  key={reaction.emoji}
+                  type="button"
+                  data-testid={`reaction-${reaction.emoji}`}
+                  aria-label={`${reaction.emoji} ${reaction.by.length}`}
+                  onClick={() => row.seq !== undefined && onReact?.(row.seq, reaction.emoji)}
+                  className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
+                    mine ? "bg-brand/35 ring-1 ring-brand/70" : "bg-black/20 hover:bg-black/30"
+                  }`}
+                >
+                  <span className="text-[13px]">{reaction.emoji}</span>
+                  <span className="tabular-nums">{reaction.by.length}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -319,6 +354,8 @@ export function CommunityChat() {
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [typing, setTyping] = useState<PendingReply | null>(null);
+  /** the seq whose emoji palette is open, if any */
+  const [reacting, setReacting] = useState<number | null>(null);
   /** the message being answered, set by a swipe or the hover arrow */
   const [replyTo, setReplyTo] = useState<Row | null>(null);
   /** the in-progress swipe: which row, and how far it has been dragged */
@@ -333,13 +370,34 @@ export function CommunityChat() {
     return map;
   }, [rows]);
 
+  /** The timer that shows the typing bubble once the room has finished reading. */
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Adopt the room's projection, holding the typing bubble until the read is done.
+   *
+   * The server owns "is someone typing" and clears it the moment the reply is
+   * published, so a stale bubble cannot outlive the message it promised — but it also
+   * sends when the read finishes (`typingAt`), and a person who just pressed send does
+   * not see a bubble in the same frame. So the bubble is scheduled, not set: nothing on
+   * screen changes until the message has been "read".
+   */
   const adopt = useCallback((data: RoomResponse) => {
     if (data.messages && data.messages.length > 0) {
       setRows(liveRows(data.messages));
       setSource("live");
-      // The server owns "is someone typing": it clears as soon as the reply is
-      // published, so a stale bubble cannot outlive the message it promised.
-      setTyping(data.pending ?? null);
+      const pending = data.pending ?? null;
+      if (typingTimer.current) {
+        clearTimeout(typingTimer.current);
+        typingTimer.current = null;
+      }
+      const wait = pending ? pending.typingAt - Date.now() : 0;
+      if (pending && wait > 0) {
+        setTyping(null);
+        typingTimer.current = setTimeout(() => setTyping(pending), wait);
+      } else {
+        setTyping(pending);
+      }
       setNotice(null);
       return true;
     }
@@ -347,6 +405,13 @@ export function CommunityChat() {
     setTyping(null);
     return false;
   }, []);
+
+  useEffect(
+    () => () => {
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    },
+    [],
+  );
 
   /**
    * Reading refreshes *and* wakes: the endpoint's catch-up is what brings a paused
@@ -430,6 +495,30 @@ export function CommunityChat() {
       setNotice("could not reach the room");
     } finally {
       setSending(false);
+    }
+  };
+
+  /**
+   * Leave (or take back) a reaction on one bubble. It is a write like a message, so it
+   * goes through the same endpoint and adopts the same projection back — the count on
+   * the chip is the server's, never an optimistic guess.
+   */
+  const react = async (seq: number, emoji: string) => {
+    setReacting(null);
+    try {
+      const response = await fetch("/api/forum/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reaction: { seq, emoji } }),
+      });
+      const data = (await response.json()) as RoomResponse;
+      if (!response.ok || data.error) {
+        setNotice(data.error ?? "the room could not take that reaction");
+        return;
+      }
+      adopt(data);
+    } catch {
+      setNotice("could not reach the room");
     }
   };
 
@@ -565,20 +654,56 @@ export function CommunityChat() {
                         ?.querySelector(`[data-seq="${seq}"]`)
                         ?.scrollIntoView({ block: "center", behavior: "smooth" })
                     }
+                    onReact={(seq, emoji) => void react(seq, emoji)}
                   />
                   {row.seq !== undefined && (
-                    <button
-                      type="button"
-                      aria-label={`Reply to ${sender.name}`}
-                      data-testid="reply-action"
-                      onClick={() => setReplyTo(row)}
-                      // Hover affordance for a mouse: a swipe needs a thumb.
-                      className={`absolute top-1/2 -translate-y-1/2 rounded-full bg-surface-2 p-1.5 text-muted opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 ${
+                    <div
+                      className={`absolute top-1/2 flex -translate-y-1/2 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
                         outgoing ? "left-1" : "right-1"
                       }`}
                     >
-                      <CornerUpLeft className="h-4 w-4" />
-                    </button>
+                      <button
+                        type="button"
+                        aria-label={`Reply to ${sender.name}`}
+                        data-testid="reply-action"
+                        onClick={() => setReplyTo(row)}
+                        // Hover affordance for a mouse: a swipe needs a thumb.
+                        className="rounded-full bg-surface-2 p-1.5 text-muted"
+                      >
+                        <CornerUpLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`React to ${sender.name}`}
+                        data-testid="react-action"
+                        onClick={() =>
+                          setReacting(reacting === row.seq ? null : (row.seq ?? null))
+                        }
+                        className="rounded-full bg-surface-2 p-1.5 text-muted"
+                      >
+                        <Smile className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  {reacting === row.seq && row.seq !== undefined && (
+                    <div
+                      data-testid="reaction-palette"
+                      className={`absolute -top-3 z-10 flex items-center gap-0.5 rounded-full border border-border bg-surface px-1.5 py-1 shadow-[0_8px_24px_-6px_rgba(0,0,0,0.7)] ${
+                        outgoing ? "right-1" : "left-1"
+                      }`}
+                    >
+                      {REACTION_EMOJI.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          aria-label={`React with ${emoji}`}
+                          onClick={() => void react(row.seq!, emoji)}
+                          className="rounded-full px-1 text-[16px] leading-none transition-transform hover:scale-125"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
               );

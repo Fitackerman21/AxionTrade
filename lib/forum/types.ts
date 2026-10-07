@@ -62,6 +62,17 @@ export interface PersonaSheet {
    */
   results?: string[];
   /**
+   * The small, petty annoyances this persona has with the platform itself — the
+   * interface being busier than they need, a week spent finding where things live.
+   *
+   * Deliberately cosmetic and deliberately somebody's own opinion: a testimonial that
+   * is pure praise reads as an advert, and the fix is a tiny gripe about the *shape* of
+   * the product rather than a fault in how it works. Nothing here is a claim about
+   * performance, accuracy or money, and the Gate rejects a draft that turns one into
+   * one.
+   */
+  nitpicks?: string[];
+  /**
    * Claims this persona must never make (spec §8.1 CONTINUITY). Plain substrings,
    * matched case-insensitively — e.g. "we are long semis" for a desk that is short.
    */
@@ -145,6 +156,11 @@ export interface WorldState {
   /** content hash + timestamp; recorded on every turn */
   version: string;
   digest: string;
+  /**
+   * The same facts, said several ways (`lexicon.ts: digestFor`). The room picks one
+   * per turn so the substrate stops injecting a single sentence for hours on end.
+   */
+  digests?: string[];
   highlights: WorldHighlight[];
   account?: { value: number; dayPnl: number; dayPnlPct: number };
   positions?: Array<{
@@ -300,11 +316,13 @@ export interface AgendaEvent {
    * visitor asked "is this real" and the room answered with a product claim nobody
    * held: one persona said the fills were "mid as hell" and that she had been "just
    * messing earlier", another told the visitor to use it "if you want to lose money
-   * slowly". A persona's only product facts are the curated lines in its own sheet,
-   * so this turn is written without the testimonial licence, without a fabricated
-   * claim and without advice — and the Gate rejects a draft that breaks any of the
-   * three — because on a public page all three are the product speaking about
-   * itself with a fake voice.
+   * slowly". A persona's only product facts are the curated lines in its own sheet, so
+   * this turn is written as a bounded **testimonial** — what this person gets out of it,
+   * plus at most one petty annoyance about the interface — with no fabricated claim, no
+   * promise and no advice. The Gate rejects a draft that breaks any of those, or that
+   * refuses to answer at all: on a public page a fabricated claim is the product speaking
+   * about itself with a fake voice, and a refusal from eleven daily users is the loudest
+   * bot tell there is.
    */
   productQuestion?: boolean;
 }
@@ -333,6 +351,21 @@ export interface ForumMessage {
    * and the length target all belong to the first record.
    */
   continuationOf?: number;
+  /**
+   * The reactions on this bubble, grouped one chip per emoji (`reactions.ts`).
+   *
+   * Attached when the room is projected for a reader rather than stored on the turn:
+   * a reaction is not part of the turn that wrote the message, it is state about it.
+   */
+  reactions?: MessageReactions[];
+}
+
+/** One bubble's reactions, as the UI draws them. */
+export interface MessageReactions {
+  /** the emoji glyph */
+  emoji: string;
+  /** sender ids that left it, oldest first */
+  by: string[];
 }
 
 /**

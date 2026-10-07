@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { advance, previewHumanReply } from "./advance";
 import { catchUp } from "./catchup";
-import { productDraft } from "./drafts";
+import { PRODUCT_LINES } from "./drafts";
 import { publish } from "./publisher";
 import type { ChatProvider, ChatRequest } from "./provider";
 import { FileStore } from "./store";
@@ -493,14 +493,19 @@ test("a question about the platform gets a plain answer, never the draft it reje
     assert.equal(result.record?.event.kind, "HUMAN");
     assert.equal(result.status, "published", "§9 beats §8.4: the person still gets an answer");
     assert.match(result.record?.note ?? "", /PRODUCT/);
-    assert.equal(
-      result.record?.message?.text,
-      productDraft({ persona, seq, attempt: (result.record?.attempts.length ?? 0) + 1 }),
-      "the invented claim must be replaced by one of the room's own safe lines",
+    // Which of the reviewed lines it lands on is the bank's business (the seed carries
+    // the attempt number, which the retry loop owns); what matters is that it is one of
+    // them and never the rejected draft.
+    const reviewed = [...PRODUCT_LINES.beat, ...PRODUCT_LINES.short, ...PRODUCT_LINES.thought];
+    const published = result.record?.message?.text ?? "";
+    const reviewable = reviewed.some((line) => published === line || published.includes(line));
+    assert.ok(
+      reviewable,
+      `the invented claim must be replaced by one of the room's own reviewed lines, got "${published}"`,
     );
-    assert.notEqual(result.record?.message?.text, invented);
+    assert.notEqual(published, invented);
     assert.match(result.record?.note ?? "", /published a plain answer instead of the draft/);
-    assert.match(result.record?.note ?? "", /answered without the testimonial licence/);
+    assert.match(result.record?.note ?? "", /answered as one user with an opinion/);
   } finally {
     await fixture.cleanup();
   }
@@ -749,6 +754,10 @@ test("the typing preview names the responder without writing anything", async ()
     assert.ok(["jev", "mara"].includes(preview!.sender));
     assert.equal(preview!.system, false);
     assert.ok(preview!.dueAt >= BASE + 30_000);
+    // The bubble is not up in the same frame as the send: the room reads the message
+    // first, and the read scales with how long it is.
+    assert.ok(preview!.typingAt >= BASE + 1_800, "the room reads before it types");
+    assert.ok(preview!.typingAt < preview!.dueAt, "the bubble cannot outlive the answer");
     assert.equal((await fixture.store.readTurns(10)).length, 1);
 
     await advance(fixture.store, { now: BASE + 61_000 });

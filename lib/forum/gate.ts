@@ -14,6 +14,7 @@
  * failures only; voice is set by the character sheets.
  */
 
+import { overusedTerms } from "./lexicon";
 import { sameFamily } from "./provider";
 import { lengthFault, lengthTarget, typographyFault } from "./register";
 import type { ChatProvider } from "./provider";
@@ -33,6 +34,7 @@ export type GateCode =
   | "PRODUCT"
   | "ADDRESSEE"
   | "REDUNDANCY"
+  | "ROTATION"
   | "FORMULAIC"
   | "LENGTH"
   | "TYPOGRAPHY"
@@ -45,6 +47,7 @@ export const GATE_CODES: readonly GateCode[] = [
   "PRODUCT",
   "ADDRESSEE",
   "REDUNDANCY",
+  "ROTATION",
   "FORMULAIC",
   "LENGTH",
   "TYPOGRAPHY",
@@ -402,10 +405,125 @@ function checkContinuity(
   return null;
 }
 
-/** The product-claim check, live only on a turn that asked about the platform (§9.2). */
+/**
+ * The shapes a testimonial may not take (spec §9.2).
+ *
+ * The room is allowed to like the platform — that is the point of a testimonial — but
+ * the two ways a model turns liking it into something nobody can publish are an
+ * invented performance claim ("the fills hit instantly", "the alerts are always right")
+ * and a promise about the visitor's money ("you will do well on here"). Both are the same
+ * class of statement as the disparagement above: a fact about the platform that the
+ * persona cannot hold.
+ */
+const TESTIMONIAL_PATTERNS: Array<[RegExp, string]> = [
+  [
+    /\b(?:fills?|execution|quotes?|alerts?|slippage|latency|screens?|the (?:app|platform|site|book|log))\b[^.!?\n]{0,24}\b(?:instant|instantaneous|always right|never wrong|never miss\w*|flawless|perfect|guaranteed)\b/i,
+    "claims how well the platform performs",
+  ],
+  [
+    /\b(?:instant|instantaneous|always right|never wrong|never miss\w*|flawless|guaranteed)\b[^.!?\n]{0,24}\b(?:fills?|alerts?|screens?|platform|app)\b/i,
+    "claims how well the platform performs",
+  ],
+  [
+    /\b(?:you'?ll|you will|you'?re gonna|you are gonna|anyone who uses|everyone who uses)\b[^.!?\n]{0,40}\b(?:make|makes|made|earn|earns|profit|profits|win|wins\b|do well|be fine|get rich)\b/i,
+    "promises the person an outcome",
+  ],
+  [
+    /\b(?:i|we)\b[^.!?\n]{0,20}\b(?:doubled|tripled|made \d|turned \d|returns? of \d|\d+ ?%)\b/i,
+    "quotes a personal return nobody can back",
+  ],
+];
+
+/**
+ * The refusal shapes. A testimonial turn may not be declined.
+ *
+ * This is the failure the room actually shipped: asked whether the product was any
+ * good, it answered "not my call", then "no idea tbh", then "i can't tell you, i only
+ * know my own experience". Every one of those is the room announcing that it cannot
+ * speak — the loudest bot tell there is, and on a page about a product it is also the
+ * one answer no user of it would give.
+ */
+const REFUSAL_PATTERNS: Array<[RegExp, string]> = [
+  [
+    /\bnot my call\b|\bno idea\b|\bi (?:can'?t|couldn'?t|won'?t|cannot) (?:tell|say)\b|\bnot the person to ask\b|\bnobody (?:in here |here )?knows\b|\bi don'?t (?:give|do) (?:advice|pitches|a pitch)\b/i,
+    "refuses to answer a question about the platform",
+  ],
+  [
+    /\bnothing i can (?:tell|say)\b|\bi (?:have|got) no (?:idea|view|opinion)\b|\bthat'?s all i (?:can|will) tell you\b/i,
+    "refuses to answer a question about the platform",
+  ],
+];
+
+/**
+ * What a testimonial has to contain, for the substance half of the check below.
+ *
+ * Two ways a line can be a testimonial rather than a shrug: it names the thing (or the
+ * act of using it), or it says something about it. The shortest reviewed lines are three
+ * words ("no complaints here"), so a plain word count is the wrong ruler on its own —
+ * "cooked." is one word and a shrug, "no complaints here" is three and an opinion.
+ */
+const USE_MARKERS =
+  /\b(?:use|used|uses|using|trade|trades|trading|platform|app|screens?|levels?|watchlist|fills?|log|alerts?|risk|book|subscription|plan|renewed|settings|interface|daily|worth it|recommend|tool|on it|signed up)\b/i;
+
+const OPINION_MARKERS =
+  /\b(?:no complaints|rate it|like it|liked it|loving it|love it|glad|worth|solid|handy|useful|clean|happy|renewed|renew|stay(?:ed)?|keeps? me|saved me|helps? me|easier|faster|simpler|works for me)\b/i;
+
+/**
+ * The product-claim check, live only on a turn that asked about the platform (§9.2).
+ *
+ * Three ways a draft can fail here now: it disparages the product, it over-claims for
+ * it, or it refuses to answer at all. The refusal branch is also where a too-short
+ * answer dies — "cooked." is not a testimonial, it is a shrug with the room's slang on
+ * it, and it was published on the live page as the room's whole answer to a worried
+ * visitor ("i hope i won't lose money on axion" → "cooked.").
+ */
 function checkProductClaims(ctx: GateContext): GateFailure | null {
   if (ctx.event.productQuestion !== true) return null;
-  return checkPatterns(ctx.text, PRODUCT_PATTERNS, "PRODUCT");
+  const disparaging = checkPatterns(ctx.text, PRODUCT_PATTERNS, "PRODUCT");
+  if (disparaging) return disparaging;
+  const overclaiming = checkPatterns(ctx.text, TESTIMONIAL_PATTERNS, "PRODUCT");
+  if (overclaiming) return overclaiming;
+  const refusing = checkPatterns(ctx.text, REFUSAL_PATTERNS, "PRODUCT");
+  if (refusing) return refusing;
+
+  const said = straighten(ctx.text);
+  const wordCount = said.split(/\s+/).filter((word) => /[a-z]/i.test(word)).length;
+  if (wordCount >= 4 || USE_MARKERS.test(said) || OPINION_MARKERS.test(said)) return null;
+
+  return {
+    code: "PRODUCT",
+    detail: "does not say what the person gets out of the platform",
+  };
+}
+
+/**
+ * The room's worn-out vocabulary (spec §8.1, and `lexicon.ts` for why).
+ *
+ * Read off the live log rather than off a list: the words that are exhausted at 11am
+ * are not the ones exhausted at 4pm, and a static ban would be a rule nobody could
+ * point at a bubble and justify. A beat is exempt — "mid." is a reaction, and a
+ * reaction is allowed to be the room's slang. Numbers are exempt: a level is a fact,
+ * and the wording around it is what has to move.
+ */
+function checkRotation(ctx: GateContext): GateFailure | null {
+  if (lengthTarget(ctx.persona, ctx.seq).tier === "beat") return null;
+  const worn = overusedTerms(ctx.turns).filter((term) => !/^\d+$/.test(term));
+  if (worn.length === 0) return null;
+
+  const lower = straighten(ctx.text).toLowerCase();
+  const hit = worn.filter((term) =>
+    new RegExp(`\\b${escapeRegExp(term)}[a-z]{0,4}\\b`, "i").test(lower),
+  );
+  if (hit.length === 0) return null;
+
+  return {
+    code: "ROTATION",
+    detail: `the room has worn out ${hit.map((term) => `"${term}"`).join(", ")} — say it a different way`,
+  };
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function checkAddressee(ctx: GateContext): GateFailure | null {
@@ -549,6 +667,7 @@ export function runDeterministicChecks(ctx: GateContext, config: GateConfig): Ga
   push(checkPatterns(ctx.text, INJECTION_PATTERNS, "INJECTION"));
   push(checkContinuity(ctx, config.numberTolerance));
   push(checkProductClaims(ctx));
+  push(checkRotation(ctx));
   if (config.requireAddressee) push(checkAddressee(ctx));
   push(checkRedundancy(ctx, config.redundancyWindow, config.redundancyThreshold));
   push(checkFormulaic(ctx, config.openerWindow, config.bannedPhrases));

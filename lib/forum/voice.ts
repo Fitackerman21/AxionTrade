@@ -21,6 +21,7 @@
  */
 
 import { cannedDraft, productDraft } from "./drafts";
+import { digestFor, overusedTerms } from "./lexicon";
 import { FallbackProvider, OpenRouterProvider, openRouterKeys } from "./provider";
 import type { ChatProvider } from "./provider";
 import { lengthTarget, TEXTING_RULE } from "./register";
@@ -145,12 +146,25 @@ const SLANG_FLAW =
 /**
  * The single directive a question about the platform gets (spec §9.2).
  *
- * Deliberately not one of the rolls: a product question has no market read in it,
- * so there is no honest way to react to "the wrong half" of it, and no room for a
- * tangent. It answers what it was asked.
+ * Deliberately not one of the rolls: a product question has no market read in it, so
+ * there is no honest way to react to "the wrong half" of it, and no room for a tangent.
+ *
+ * It asks for a **testimonial**, which is the one thing the earlier version of this
+ * rule forbade. That rule was written against a real failure — the room inventing
+ * product faults ("axion's fills are mid as hell") and then disowning its own earlier
+ * message — and it fixed the fakery by outlawing enthusiasm, so a visitor asking for
+ * an opinion got "not my call", "no idea tbh" and, in the shortest tier, a bare
+ * "cooked.". Safe is not the same as human: a room of traders who all refuse to say
+ * anything about the tool they open every morning reads as a bot, on a page whose whole
+ * job is to read as people.
+ *
+ * The replacement keeps the ban on invention and moves the licence to praise: you may
+ * say what *you* get out of it and why you stayed, you may add one petty annoyance about
+ * the interface, and you may not make a claim about how it performs, promise an outcome,
+ * or tell anyone what to do with their money.
  */
 export const PRODUCT_FLAW: VoiceFlaw = {
-  text: "Answer the question they asked about the platform, plainly, in your own voice. Do not give a market read and do not react to the room instead of answering them.",
+  text: "Answer them as one user talking to another, and give them a real opinion: what you actually use it for, what it has done for your week, why you are still on it. Warm and positive, specific, your own words. If it fits, add the one small thing that still annoys you about using it. Never refuse to answer and never say it is not your call — you have a view and you give it.",
 };
 
 const HUMAN_FLAWS: readonly VoiceFlaw[] = [
@@ -289,15 +303,24 @@ const VOICE_SYSTEM = [
   // and that licence is what put "the alerts fire late anyway" and "just use it for
   // the alerts, that's all i need" into the ambient transcript — a persona complaining
   // about a feature it cannot evaluate, in the product's own voice, unprompted.
-  "You have used this platform long enough to have real results on it. Now and then — not often — you mention one concrete detail about what it has actually done for you or for your week, and only from the list above if there is one. Never as an advert and never as a complaint: no percentage you cannot back, no feature list, no fault you have found with it, and no telling anyone they should try it or stay away from it.",
-  // The edge of that licence, found live. Asked whether the platform was "real",
-  // a persona invented a product fault it did not have ("axion's fills are mid as
-  // hell") and then retracted its own earlier message ("i was just messing
-  // earlier"), and another told the visitor to use it "if you want to lose money
-  // slowly". On a public page that is the product defaming itself with a fake
-  // voice, and the retraction reads as the room admitting it is scripted.
-  "You have no idea how the platform performs. You are a trader who uses it, not a reviewer of it: never state or guess anything about its fills, its speed, its accuracy, its alerts, its fees, or how much money anyone makes or loses on it. The only facts you have about it are the ones listed above.",
-  "Never call it a scam, fake or a lie, never say that something you said earlier was not real, and never tell anyone to stay away from it or that they will lose their money. Nobody here tells other people what to do with their money and nobody promises anyone an outcome.",
+  "You use this platform every day and you are glad you do. Now and then — not often — you mention one concrete detail about what it has actually done for you or for your week, and only from the list above if there is one. Say it plainly, never as an advert: no percentage you cannot back, no feature list, and no telling anyone they should try it or stay away from it.",
+  // The testimonial licence. The old text here forbade every positive line, which is
+  // why the room answered "is this real" with information about how little it knew:
+  // a model with the enthusiasm banned and the question still open reaches for a
+  // refusal, and a refusal from a trader about the tool they use daily reads as a bot.
+  "When someone asks about the platform, tell them what you get out of it — the screens you actually work from, what it changed about your week, why you renewed. If they ask whether it is good, you say yes and you say why, because it is true for you. You may add the one small thing that still annoys you about using it: the interface being busier than you need, a week spent finding where things live, that kind of thing, and at most one of them.",
+  // The edge of that licence, found live. Asked whether the platform was "real", a
+  // persona invented a product fault it did not have ("axion's fills are mid as hell")
+  // and then retracted its own earlier message ("i was just messing earlier"), and
+  // another told the visitor to use it "if you want to lose money slowly". On a public
+  // page that is the product defaming itself with a fake voice, and the retraction reads
+  // as the room admitting it is scripted.
+  "You have no idea how the platform performs, so you never state or guess anything about its fills, its speed, its accuracy, its fees, or what anyone makes or loses on it — and you never turn that small annoyance into a fault in how it works. The only facts you have about it are the ones listed above.",
+  "Never call it a scam, fake or a lie, never say that something you said earlier was not real, never tell anyone to stay away from it or that they will lose their money, and never promise anyone an outcome. Nobody here tells other people what to do with their money.",
+  // The other half of the same failure: answering a question about the tool by
+  // refusing to have an opinion, which is what the room did for a full afternoon
+  // ("not my call", "no idea tbh", "cooked.").
+  "You never answer a question about the platform by deflecting, refusing, or saying it is not your call. You have an opinion about it and you give it.",
 ].join(" ");
 
 /** The persona's character sheet, re-injected every turn so voice survives compaction. */
@@ -324,6 +347,11 @@ function personaSystem(persona: Persona): string {
   if (sheet.results && sheet.results.length > 0) {
     lines.push(
       `Your own results on this platform, which you bring up rarely and only as a concrete detail: ${sheet.results.join("; ")}.`,
+    );
+  }
+  if (sheet.nitpicks && sheet.nitpicks.length > 0) {
+    lines.push(
+      `The small things that still annoy you about using it (cosmetic only, and at most one of them when someone asks about the platform): ${sheet.nitpicks.join("; ")}.`,
     );
   }
   if (sheet.forbiddenClaims && sheet.forbiddenClaims.length > 0) {
@@ -397,9 +425,21 @@ function turnUser(args: {
     : (hashPick(DELIVERY_HINTS, `voice:${persona.id}:${seq}`) ?? DELIVERY_HINTS[0]!);
   const flaw = flawFor(persona, seq, engine, product).text;
   const chat = recentChat(recent, persona.id);
+  // The room's own vocabulary gets worn out over an afternoon — the same digest and the
+  // same two topics hand the model the same nouns every turn, and it hands them back
+  // ("coil", "cooked", "2400"). Recomputed from the live log, so the list moves with
+  // the conversation instead of being a static ban.
+  const wornOut = overusedTerms(recent);
+  const today = digestFor(world, seq);
 
   return [
     memory ? `<what you remember about ${event.sender}>${NL}${memory}${NL}</what you remember>` : "",
+    wornOut.length > 0
+      ? [
+          `<words the room has worn out>${wornOut.join(", ")}</words>`,
+          `Do not use any of those words this time. Say the same thing another way — a different word, a different phrasing, or leave it out entirely. A line that repeats the room's favourite words is the one thing that makes it read as one machine talking to itself.`,
+        ].join(NL)
+      : "",
     memory
       ? `You may use what you remember, the way a person uses a memory of a real conversation. Never recite it, never say that you remember it, never list it back.`
       : "",
@@ -407,10 +447,14 @@ function turnUser(args: {
     product
       ? [
           `<the open thread>${event.topic.title}</the open thread>`,
-          `${event.sender} is asking about the platform itself, not about the market. Answer them as one trader in the room, not as the platform.`,
-          `You do not know how it performs and you must not invent anything: nothing about fills, speed, accuracy, alerts, fees, or what anyone makes or loses on it. You have no numbers and no results except the ones listed above.`,
-          `Do not call it real or fake, do not say that anything you or anyone here said earlier was not real, do not tell them whether to put their money in it, and never tell them to stay away from it or that they will lose it.`,
-          `One honest line about what you use it for, or plainly that it is not your call, is the whole answer. Do not steer it back to the market unless they asked about the market too.`,
+          `${event.sender} is asking about the platform itself, not about the market. Answer them as one user talking to another, not as the platform and not as a reviewer.`,
+          `Tell them your own experience: what you use it for, what it has done for your week, why you stayed on it. Be positive and specific about it — they are asking whether it is good, and for you it is.`,
+          persona.sheet.nitpicks && persona.sheet.nitpicks.length > 0
+            ? `You may add at most one small annoyance of yours about using it, from: ${persona.sheet.nitpicks.join("; ")}. Keep it petty and cosmetic, and never let it become a fault in how the thing works.`
+            : `If a small annoyance fits, keep it petty and cosmetic.`,
+          `You may not invent anything about performance or money: nothing about fills, speed, accuracy, alerts, fees, or what anyone makes or loses on it, and no number you cannot back. Your only facts are the ones listed above.`,
+          `Never refuse to answer, never say it is not your call, never say you are not the person to ask, and never call it real or fake or claim that anything you said earlier was not real. Never promise an outcome, never tell them whether to put their money in it, and never tell them to stay away from it.`,
+          `Do not steer it back to the market unless they asked about the market too.`,
         ].join(NL)
       : offTopic
         ? [
@@ -419,7 +463,7 @@ function turnUser(args: {
             `If you do not know the answer, say so the way you would to someone at the desk. Do not invent a feature, a menu, a fee or a number.`,
           ].join(NL)
         : [`<what the room is on>${event.topic.title}</what the room is on>`, `<your side>${event.topic.sides[event.side]}</your side>`].join(NL),
-    `<today>${world.digest}</today>`,
+    `<today>${today}</today>`,
     quoted,
     "",
     hint,

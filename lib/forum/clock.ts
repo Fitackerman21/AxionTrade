@@ -53,6 +53,44 @@ export function nextTurnAt(lastTurnAt: number, range: readonly [number, number])
   return lastTurnAt + meanGapMs(range);
 }
 
+/*
+ * The reading half of a reply (spec §9's realism rule).
+ *
+ * A person does not start typing the instant a message lands. They read it, and the
+ * longer it is the longer that takes. The live page showed the failure plainly: a
+ * visitor pressed send and the "… is typing" bubble was already there in the same
+ * frame, which is the one thing no human thumb can do. The indicator now starts after
+ * a read of a length proportional to what was sent — about 1.5s for a one-word
+ * question, up to a ceiling for a paragraph — and the reply itself is still paced out
+ * on the 30–60s window, so the typing bubble covers the composing, not the whole wait.
+ */
+
+/** How long a persona spends reading a message before their typing bubble appears. */
+export function readDelayMs(text: string | undefined): number {
+  const chars = (text ?? "").trim().length;
+  // 1.2s to notice plus ~45ms a character, bounded so a wall of text is not "read"
+  // for a minute and a one-liner is never instant.
+  return Math.min(12_000, Math.max(1_800, 1_200 + chars * 45));
+}
+
+/**
+ * When the typing indicator may appear for a person's message.
+ *
+ * Never after the reply is due, and never before the read is over, so the room cannot
+ * be seen typing before it has "read" the question — and cannot still be typing at the
+ * moment the answer lands.
+ */
+export function typingAt(
+  humanTurnAt: number,
+  text: string | undefined,
+  dueAt: number,
+): number {
+  const read = humanTurnAt + readDelayMs(text);
+  const latest = dueAt - 1_000;
+  if (latest <= humanTurnAt) return humanTurnAt;
+  return Math.max(humanTurnAt, Math.min(read, latest));
+}
+
 /**
  * When a person's message is owed its reply (spec §9).
  *

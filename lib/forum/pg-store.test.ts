@@ -14,7 +14,7 @@ import { after, beforeEach, test } from "node:test";
 import { Pool } from "pg";
 
 import { PgStore } from "./pg-store";
-import { openForumStore } from "./store";
+import { messagesWithReactions, openForumStore } from "./store";
 import { makeTurn, TEST_BASE, TEST_TOPICS } from "./test-utils";
 
 /**
@@ -210,6 +210,28 @@ test("the heartbeat is written, read, and cleared only by its owner", { skip }, 
 
   await store!.clearHeartbeat("worker:1");
   assert.equal(await store!.readHeartbeat(), null);
+});
+
+test("a reaction toggles on and off on the deployed store too", { skip }, async () => {
+  await store!.appendTurn(makeTurn(1, { sender: "mara" }));
+
+  assert.equal(await store!.toggleReaction({ seq: 1, emoji: "🔥", by: "human", t: 1000 }), true);
+  assert.deepEqual(await store!.readReactions(), [{ seq: 1, emoji: "🔥", by: "human", t: 1000 }]);
+
+  // The primary key is the toggle: the same triple cannot be inserted twice, so the
+  // second tap removes it rather than counting twice.
+  assert.equal(await store!.toggleReaction({ seq: 1, emoji: "🔥", by: "human", t: 2000 }), false);
+  assert.deepEqual(await store!.readReactions(), []);
+
+  // Two people leaving the same emoji are two rows, and the projection still shows one
+  // chip with a count.
+  await store!.toggleReaction({ seq: 1, emoji: "👍", by: "human", t: 3000 });
+  await store!.toggleReaction({ seq: 1, emoji: "👍", by: "rafa", t: 3001 });
+  const messages = messagesWithReactions(
+    await store!.readTurns(10),
+    await store!.readReactions(),
+  );
+  assert.deepEqual(messages[0]?.reactions, [{ emoji: "👍", by: ["human", "rafa"] }]);
 });
 
 test("DATABASE_URL selects the Postgres store", { skip }, async () => {

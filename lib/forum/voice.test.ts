@@ -391,13 +391,19 @@ test("a question that is not about the thread is answered on its own terms", asy
   assert.doesNotMatch(user, /<your side>/);
 });
 
-test("a question about the platform is answered without the licence to invent one", async () => {
-  // Results on the sheet, because that is the flaw that produced the invented
-  // testimonial: with a licensed "concrete detail about what it has done for you",
-  // the model answered "is this real" with a product fault the persona did not have.
+test("a question about the platform gets a bounded testimonial, never a refusal or a claim", async () => {
+  // Results and nitpicks on the sheet, because those are the only product material a
+  // persona holds. The licence is now to *use* them: the room answers "is this real"
+  // with what it gets out of the thing (and at most one petty annoyance), and the two
+  // things it may still never do are invent a fact about performance and refuse to
+  // answer at all.
   const withResults: Persona = {
     ...voiced(),
-    sheet: { ...MARA.sheet, results: ["the position-size alerts killed her worst habit"] },
+    sheet: {
+      ...MARA.sheet,
+      results: ["the position-size alerts killed her worst habit"],
+      nitpicks: ["the interface is busier than she needs"],
+    },
   };
   const { provider, seen } = fake(() => answer("ok"));
   await voiceDraft({
@@ -416,24 +422,27 @@ test("a question about the platform is answered without the licence to invent on
 
   const user = seen[0]!.messages[0]!.content ?? "";
   assert.match(user, /asking about the platform itself/);
-  assert.match(user, /You do not know how it performs and you must not invent anything/);
-  assert.match(user, /do not say that anything you or anyone here said earlier was not real/);
-  assert.match(user, /never tell them to stay away from it or that they will lose it/);
+  // The ask is a testimonial: an opinion, positive, in the persona's own experience.
+  assert.match(user, /give them a real opinion/);
+  assert.match(user, /Be positive and specific about it/);
+  assert.match(user, /the interface is busier than she needs/, "their own nitpicks are offered");
+  // ...bounded by the two bans that survive: no invented performance fact, no advice.
+  assert.match(user, /You may not invent anything about performance or money/);
+  assert.match(user, /never tell them to stay away from it/);
+  // ...and no refusing, which is what the room actually shipped.
+  assert.match(user, /Never refuse to answer, never say it is not your call/);
   assert.ok(user.includes("Is axion ai trading real"), "the question itself must reach the model");
   // The market stance is withheld here exactly as it is on an off-topic turn.
   assert.doesNotMatch(user, /<your side>/);
 
-  // The testimonial flaw is off the table for the whole turn, and so is every other
-  // roll: each one competes with the restriction, and the weakest model in the roster
-  // answered a trust question with "yeah nah, 2400 mid" on the live page with the
-  // restriction sitting in the prompt above it (§9.2).
+  // The flaw is fixed and there is no dice roll on this turn shape: every other roll
+  // competes with the ask (a beat asks for two words, a drift flaw invites leaving the
+  // subject), and the weakest model in the roster answered a trust question with
+  // "yeah nah, 2400 mid" on the live page with the restriction sitting in the prompt
+  // above it (§9.2).
   for (let seq = 1; seq <= 120; seq += 1) {
-    assert.doesNotMatch(
-      flawFor(withResults, seq, false, true).text,
-      /this platform|real result you have had|American slang/,
-      `turn ${seq} handed a product question the testimonial licence`,
-    );
     assert.equal(flawFor(withResults, seq, false, true), PRODUCT_FLAW);
+    assert.match(flawFor(withResults, seq, false, true).text, /give them a real opinion/);
     assert.equal(isBurstTurn(withResults, seq, false, true), false);
   }
   assert.ok(
@@ -500,8 +509,12 @@ test("the prompt bans the machine aphorism and licenses occasional platform talk
   const system = seen[0]!.system ?? "";
   assert.match(system, /Never write in slogans or aphorisms/);
   assert.match(system, /it is not narrative, it is levels|It is not narrative, it is levels/i);
-  assert.match(system, /You have used this platform long enough to have real results/);
+  assert.match(system, /You use this platform every day and you are glad you do/);
   assert.match(system, /the position-size alerts killed her worst habit/);
+  // The testimonial licence, and the refusal ban that has to sit beside it: a model with
+  // the enthusiasm forbidden and the question still open reaches for "not my call".
+  assert.match(system, /If they ask whether it is good, you say yes and you say why/);
+  assert.match(system, /You never answer a question about the platform by deflecting, refusing/);
 });
 
 test("memory and a rejection reason both reach the prompt when they exist", async () => {

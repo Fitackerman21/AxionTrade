@@ -23,6 +23,11 @@
  * The old way was to quote it. The way people actually do it is to say who they are
  * answering, and `checkAddressee` accepts a sender's name — so that is what the
  * fallback does, and it cannot garble a quotation that no longer exists.
+ *
+ * The bank below also has to survive the *rotation* rule: a canned line that repeats
+ * the words the room has been using all afternoon is the same machine-talking-to-itself
+ * problem the live Voice has (`lexicon.ts`), so the lines lean on plain, ordinary
+ * phrasing rather than the room's flavour of the week.
  */
 
 import { contentTokens } from "./gate";
@@ -77,7 +82,7 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
     ],
     thought: [
       "i'm not chasing this. small size, clean mind, and i let it come to me",
-      "coiled all week and my patience is the only thing holding this together",
+      "stuck all week and my patience is the only thing holding this together",
       "you are all very confident for a room that got the last three of these wrong 😤",
       "i refuse to be outperformed by a screen, so my size stays small and my stop stays where it is",
     ],
@@ -215,36 +220,53 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
 const NOT_A_NAME = new Set(["human", "room", "you", "them"]);
 
 /**
- * What the room says when the question is about the platform itself (spec §9.2).
+ * What the room says when the question is about the platform itself (spec §9.2):
+ * **testimonials**.
  *
- * Shared across the roster on purpose, unlike `REPERTOIRE`: these are the only lines
- * in the room that speak about the product, so they are reviewed as one set rather
- * than as eleven variations on "i use it". The seed still carries the persona, so
- * two members answering in a row do not pick the same line.
+ * Shared across the roster on purpose, unlike `REPERTOIRE`: these are the only lines in
+ * the room that speak about the product, so they are reviewed as one set rather than as
+ * eleven variations on "i use it". The seed still carries the persona, so two members
+ * answering in a row do not pick the same line.
  *
- * Safe by construction, which is what makes this the right thing to publish when a
- * product-question draft is rejected twice. Every line is one person's honest use of
- * the platform or a plain refusal to advise. Nothing claims anything about how it
- * performs, tells anyone what to do with their money, promises an outcome, or repeats
- * a shape the Gate's PRODUCT check rejects.
+ * This bank used to be all refusals — "not my call", "no idea tbh", "nobody in here
+ * knows the business side" — because the rule that produced it existed to stop the
+ * room inventing product faults. It worked, and it produced the opposite failure: a
+ * visitor asking for an opinion about the tool got a room of eleven traders who would
+ * not give one, and in the shortest tier a bare "cooked.". On a page whose whole job is
+ * to read as people, that is worse than the fault it prevented. So the discipline moved
+ * from "say nothing" to **praise, bounded**: what it does for this person, in their own
+ * week, with the small annoyances of a busy interface allowed to show up now and then.
+ *
+ * The bounds are what keep it publishable, and the Gate enforces each one: no claim
+ * about how it performs (fills, speed, accuracy, fees), no number nobody can back, no
+ * promise about anyone's money, no advice, no disparagement, and never a refusal. Every
+ * line is one user's own experience, which is a thing a person may actually say.
  */
 export const PRODUCT_LINES: Repertoire = {
-  beat: ["just use it", "not my call", "no idea tbh", "i just trade on it"],
+  beat: ["worth it for me", "i rate it tbh", "no complaints here", "still on it", "i like it"],
   short: [
-    "i just use it, that's my whole view",
-    "not here to sell anyone on it",
-    "nobody in here knows the business side",
-    "i use it, that's all i can tell you",
-    "no idea, i just trade on the thing",
+    "been on it two years and i am not leaving",
+    "it does what i need it to do",
+    "i open it before i open anything else",
+    "it has been good to me, honestly",
+    "it fits how i trade and that is enough",
+    "the screens i work from are all in there",
+    "renewed it without thinking twice",
+    "the levels screen is where my day starts",
   ],
   thought: [
-    "i'm not the person to ask about that. i use it, and that's the whole of what i know about it",
-    "you won't get a pitch out of me. i'm a trader, i use the thing and i'm not recommending it to anybody",
-    "nobody in this room can promise you anything about your money, and anyone who does is lying to you",
-    "i can't tell you what to do with your money and i'm not going to pretend i can. all i know is that i use it",
-    "i'd rather tell you straight that it isn't my call than sell you something. i trade on it and that is the whole answer from me",
-    "i'm not going to tell you what to do with your money because it isn't my call, and honestly nobody in this room knows the business side of it either",
-    "all i can tell you is what i use it for, and i won't tell you anything here is a sure thing because nothing about trading ever is",
+    "i use it every morning before the open and it has not let me down. the levels screen and the fills log are where my whole routine lives now",
+    "honestly it has been good to me. two years, one plan change, and it is still the first thing i open when london wakes up",
+    "it changed how i size. i used to hand it all back every few months and the guardrail will not let me do that anymore, i love it for that",
+    "no complaints about the thing itself. it took me a week to find where everything lives and the interface is busier than i need, but i am on it daily and i would buy it again",
+    "the flow screen is what i actually pay for. it is not magic and i still do the work, but i am faster than i was and i am not going back",
+    "i came for the levels and stayed for the watchlist. it saves me an hour on a sunday night, and that is worth more to me than it costs",
+    "i would say yes. i have used three of these and this is the one i renewed, mostly because the fills log settles every argument i have in this room",
+    "it is busy. there are more tabs than i will ever open and i still had to ask where half the settings live. i am on it every day anyway, it works for me",
+    "worth it. my whole book is in there and the risk numbers have caught me twice this year before i did something i would regret",
+    "the screen i live in is the flow one. i barely touch the rest and that is fine by me, i do not need everything it ships with",
+    "my own year has been good and a big part of that is the risk numbers keeping me honest. that is my experience of it, only mine",
+    "i do not want to oversell it because it is a tool, not a miracle. i use it daily, it keeps me organised, the interface took a bit of learning and i am glad i did it",
   ],
 };
 

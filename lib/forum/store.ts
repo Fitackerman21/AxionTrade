@@ -15,6 +15,8 @@ import path from "node:path";
 
 import { humanMessageRecord } from "./human";
 import { PgStore } from "./pg-store";
+import { reactionsForTurns } from "./reactions";
+import type { ReactionRecord } from "./reactions";
 import type {
   ForumConfig,
   ForumMessage,
@@ -50,6 +52,20 @@ export interface ForumStore {
   deleteTurns(from: number, to: number): Promise<number>;
   /** The human path: a person speaks, the Director answers next turn. */
   appendHumanMessage(args: HumanMessageArgs): Promise<TurnRecord>;
+  /**
+   * Every reaction in the room, oldest first.
+   *
+   * Reactions live beside the log rather than inside it: a reaction is state about a
+   * message that already exists, so storing it on the turn record would mean rewriting
+   * an append-only log to add an emoji.
+   */
+  readReactions(): Promise<ReactionRecord[]>;
+  /**
+   * Add or remove one sender's reaction on one message, returning whether it is now
+   * present. Toggling is the interaction the chat UI offers (tap the chip you left to
+   * take it back), so the store has to be able to undo it, not just add it.
+   */
+  toggleReaction(reaction: ReactionRecord): Promise<boolean>;
   /**
    * One (persona, companion) thread of Agent 2's memory (spec §7). Null when the
    * persona has never spoken to that companion, which is the state that makes a
@@ -129,6 +145,26 @@ export function messagesFromTurns(turns: readonly TurnRecord[]): ForumMessage[] 
     if (turn.message) messages.push(turn.message);
   }
   return messages;
+}
+
+/**
+ * The same projection, with the room's reactions attached.
+ *
+ * Groups them one chip per emoji, in palette order, so two readers of the same log see
+ * the same row (`reactions.ts`).
+ */
+export function messagesWithReactions(
+  turns: readonly TurnRecord[],
+  reactions: readonly ReactionRecord[],
+): ForumMessage[] {
+  const messages = messagesFromTurns(turns);
+  if (reactions.length === 0) return messages;
+
+  const byMessage = reactionsForTurns(turns, reactions);
+  return messages.map((message) => {
+    const chips = byMessage.get(message.seq);
+    return chips ? { ...message, reactions: chips } : message;
+  });
 }
 
 function isNotFound(error: unknown): boolean {
@@ -235,6 +271,53 @@ export class FileStore implements ForumStore {
     const record = humanMessageRecord(seq, args);
     await this.appendTurn(record);
     return record;
+  }
+
+  async readReactions(): Promise<ReactionRecord[]> {
+    let raw: string;
+    try {
+      raw = await readFile(this.file("reactions.jsonl"), "utf8");
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      throw error;
+    }
+
+    const reactions: ReactionRecord[] = [];
+    const lines = raw.split("\n").filter((line) => line.trim() !== "");
+    for (let i = 0; i < lines.length; i += 1) {
+      try {
+        reactions.push(JSON.parse(lines[i] ?? "") as ReactionRecord);
+      } catch (error) {
+        // Same discipline as the log: a half-written tail is dropped, corruption
+        // anywhere else is real.
+        if (i === lines.length - 1) continue;
+        throw new Error(`forum: reactions.jsonl line ${i + 1} is corrupt`, { cause: error });
+      }
+    }
+    return reactions;
+  }
+
+  /**
+   * Toggle, then rewrite. The file is small (one line per reaction, and only reactions
+   * that are still on a bubble survive), so a rewrite is cheaper than an in-place edit
+   * and it keeps the same write-then-rename discipline as the log and the memory files.
+   */
+  async toggleReaction(reaction: ReactionRecord): Promise<boolean> {
+    const all = await this.readReactions();
+    const already = all.some(
+      (r) => r.seq === reaction.seq && r.emoji === reaction.emoji && r.by === reaction.by,
+    );
+    const kept = all.filter(
+      (r) => !(r.seq === reaction.seq && r.emoji === reaction.emoji && r.by === reaction.by),
+    );
+    const next = already ? kept : [...kept, reaction];
+
+    await mkdir(this.root, { recursive: true });
+    const target = this.file("reactions.jsonl");
+    const temp = `${target}.tmp`;
+    await writeFile(temp, next.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
+    await rename(temp, target);
+    return !already;
   }
 
   async deleteTurns(from: number, to: number): Promise<number> {

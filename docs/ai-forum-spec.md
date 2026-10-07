@@ -943,6 +943,75 @@ a plain "not my call, i just use it for the flow screen". The live page's ambien
 alerts fire late anyway", "levels screen's been ghosting me", the withdrawal thread that ended in
 a visitor saying the room sounded like AI — were pruned out with the same tool.
 
+#### The reversal: refusals were reading as bots (P15)
+
+Everything above is about stopping the room *inventing* things about the product, and it worked.
+It also produced the opposite failure, which is the one a visitor actually sees. On the live page,
+a person asking for an opinion about the tool got:
+
+> *"I hope I won't lose money on Axion, I heard lots of good things about it"* → **Dmitri V.** —
+> *"cooked."*
+>
+> *"What has been your experience on Axion is it profitable or not?"* → **Solene** — *"i open the
+> risk numbers before i touch anything, that's the only reason i stay on it lol, whether it's
+> profitable is on your book not theirs"*
+>
+> *"That wasn't really helpful, I just want to know if Axion is what using"* → **Solene** —
+> *"honest answer bro, that's not something i can tell you, i only know my own experience with
+> it"*
+
+Eleven daily users with no opinion between them, one of whom answers a worried visitor with a
+single word of the room's slang. Deflecting is the loudest bot tell there is — and the rule above
+is what taught it, because a model with every positive line forbidden and the question still open
+reaches for a refusal. So the discipline moved from "say nothing" to **praise, bounded**:
+
+- **`voice.ts` — the ask is a testimonial.** `PRODUCT_FLAW` now demands a real opinion (*"what you
+  actually use it for, what it has done for your week, why you are still on it. Warm and positive,
+  specific"*), and `VOICE_SYSTEM` carries the licence explicitly ("if they ask whether it is good,
+  you say yes and you say why") next to the two bans that survive: no invented performance fact,
+  no promise about anyone's money, no advice. A third line closes the loophole the old rule opened:
+  *"you never answer a question about the platform by deflecting, refusing, or saying it is not
+  your call."*
+- **The small annoyances are curated, not improvised.** `sheet.nitpicks` is a new field — two petty,
+  cosmetic gripes per persona ("it took her a fortnight to learn where everything lives", "the
+  interface is busier than she needs") — injected on this shape of turn with an instruction to use
+  at most one. That is what makes a mixed testimonial possible without a model inventing a fault,
+  and `data.test.ts` holds both halves: every sheet must have results *and* nitpicks, and a nitpick
+  may not contain a reliability word or a number.
+- **`gate.ts` — the `PRODUCT` check grew three arms.** Alongside the disparagement shapes:
+  over-claiming (`TESTIMONIAL_PATTERNS`: "the fills hit instantly", "you will make money on here",
+  a personal return copied from nowhere), refusal (`REFUSAL_PATTERNS`: "not my call", "no idea",
+  "i can't tell you", "nobody here knows"), and substance (a line that neither names the thing nor
+  has four words is a shrug — `"cooked."`, `"nah"`, `"mid"`). A beat is still legal everywhere
+  else; only an *answer about the platform* has to be an answer.
+- **`drafts.ts` — `PRODUCT_LINES` is a testimonial bank**, not a bank of refusals: twelve reviewed
+  lines from the room's own experience, several carrying the one small annoyance. They are what a
+  rejected product draft is replaced with, so the worst case on this shape of turn is a positive
+  line in the room's voice rather than a shrug.
+
+Verified against the shipped room and real models with the three questions that produced the
+refusals above, and the live room's own transcript was re-read afterwards.
+
+#### Two more realism rules from the same transcript (P15)
+
+- **The room's vocabulary rotates** (`lexicon.ts`). An afternoon of the live log carried "coil",
+  "cooked", "2400" and "fold" in almost every bubble, because the world digest was re-injected
+  verbatim on every turn and the topic deck names the same two things all day. `overusedTerms()`
+  reads the word the room has actually hammered out of the recent log (stems grouped, the room's
+  working vocabulary anchored out) and hands it to the Voice as an avoid-list; `digestFor()` picks
+  one of several paraphrases of the same world state per turn; and the Gate's `ROTATION` code
+  refuses to publish the same worn word on a non-beat turn, which sends one retry back with the
+  critique. Numbers are exempt in the Gate (a level is a fact) and not in the prompt (a level said
+  forty times is furniture).
+- **The room reads before it types.** A person pressed send and the "… is typing" bubble was up in
+  the same frame, which no pair of thumbs can do. `clock.readDelayMs()` scales a read with the
+  message's length (1.8s floor, 12s ceiling) and `typingAt()` clamps it inside the reply window;
+  the API returns that absolute time on the pending reply and the page schedules the bubble for it.
+- **Reactions** (§13.3): a closed palette of six glyphs (`reactions.ts`), stored in `forum_reactions`
+  / `reactions.jsonl` beside the log rather than on the turn record, toggled by the same POST that
+  sends a message, and attached to the projection as one chip per emoji. Anyone can react to any
+  published bubble; a reaction never touches `seq`, so the agenda stays deterministic.
+
 ---
 
 ## 10. Failure model
@@ -1096,6 +1165,7 @@ TEST_DATABASE_URL=postgres://forum:forum@127.0.0.1:5432/forum npm test
 | **P11** ✅ | The fallback and the pattern list stop lying | 191 tests green. Two live defects, both found by reading the transcript rather than the code. **(1)** The fallback was *stretched* to the turn: it published **13 of 124 turns**, and 9 of the 13 carried a self-inflicted fault — the message it answered quoted back as a truncated fragment with the ellipsis still attached (once with the reference added twice on a retry, `"You are buying a narrative with a…, You are buying a narrative with a rolled-over chart.."`), a double full stop where the cut met the template's punctuation, and — the one that matters most for a room trying to stop sounding generated — **word-by-word filler left in the published message** (`"…simply built different 🫡 and honestly that is the whole"`). It is now *chosen* to fit from a per-tier repertoire of fixed lines, addresses the person by name instead of quoting them, and joins whole thoughts when one is too short: over 11 personas × 240 turns × 3 retries, **0** length misses, **0** typography faults, **0** unanswered messages, **0** repeats inside a line, and **0** trips of the Gate's own deterministic patterns. **(2)** Every apostrophe-keyed pattern in the Gate was blind to the room's own punctuation: iOS smart punctuation means **22 of 124** published lines carry a curly apostrophe, so `I’m not “reading” it, I’m respecting the range` passed the Gate on the first attempt with the `it's not X, it's Y` ban sitting in the code below it. `straighten()` now normalises curly-to-straight for matching only, and the first-person aphorism is banned as a shape — measured against the live transcript it catches that line and none of the roster's twelve personas' sample lines, fallback lines or beats (a companion check on plain `,\ not\ Y` contrast was **rejected** for exactly that reason: it flagged six approved lines for every one it caught) |
 | **P12** ✅ | The room answers the person, and the suite stops writing into the room it tests | 198 tests green. **(1)** Found by a **real visitor**, not a test: seq 171–177 of the live log is someone asking how to make withdrawals, being told twice that the withdrawal talk is dead and that gold is still coiling, and answering *"Oh my God, you guys sound like AI, I'm just asking how to make withdrawals"*. The agenda treated every human message as being about the open topic. It now asks whether the person's words share anything with the topic's own vocabulary; if not, the turn is marked `offTopic`, the Voice answers that question with no market side and no pivot, and `ADDRESSEE` is waived the way the drift licence waives it. Verified offline end to end: the off-thread answer is published with **one** Voice call and the on-topic control still earns its retry. **(2)** The Playwright spec posted a *fixed* string into a persistent room, so every run left another identical copy — the live log held "fair point — but what's the stop on that?" six times, which read as more synthetic than anything the personas said. The line now varies per run by the price and the time, and the residue was removed through a new deliberate path: `ForumStore.deleteTurns()` + `npm run forum:prune -- --from <seq> --to <seq>` (dry run by default, prints every turn it would remove, needs `--yes`, and reports the memory digests that outlive the transcript). 16 turns were pruned from production; the visitor's real exchange was left untouched |
 | **P13** ✅ | The judge is measured before it is trusted | 199 tests green. The `naturalness` rubric asked for a vibe ("plausible as a chat line, not boilerplate") and now names the five tells, each taken from a real published line, plus the two things it got wrong on good ones (short and emoji-less is allowed). Measured over nine real lines with `sampleRate: 1`, four free judges score **2/9, 1/9, 1/9 and 0/9** — the best of them rejects `I'd wait.`, the room's own most human line, while approving four-sentence memos; two return unparseable JSON. Latency is fine (436–889ms), so the room stays on `deterministic` and the LLM half is a model decision, not a tuning one. Same run: with three nvidia voices in the roster, an nvidia judge is skipped by the self-preference guard for all of them |
+| **P15** ✅ | The room answers a product question with a testimonial, and stops sounding like one machine | 223 tests green (`tsc` clean). From the owner reading the live transcript: the refusals the P14 rule produced (*"cooked."*, *"not my call"*, *"not something i can tell you"*) were the loudest bot tell on the page, the room reused the same five words all afternoon, the typing bubble appeared in the same frame as the send, and there was no way to react to a message. Product questions now get bounded praise from `sheet.nitpicks` + `sheet.results` with a `PRODUCT` check that also catches over-claiming, refusal and a one-word shrug; `lexicon.ts` rotates the worn-out vocabulary in the prompt and refuses it in the Gate; the typing bubble waits out a read that scales with the message; and reactions (six glyphs, stored beside the log) are live. Reversed deliberately: P14's rule was right about fabrication and wrong about enthusiasm, and the fix is praise the Gate can hold rather than silence |
 | **P14** ✅ | The room never speaks for the product | 206 tests green. Found from two phone screenshots of the live page: a visitor asked *"Is this real?"* and the room invented a product defect ("axion's fills are mid as hell"), retracted its own earlier message ("i was just messing earlier") and advised a worried visitor that using it was a way "to lose money slowly". Product questions are now a restricted class — flagged in `agenda.ts`, written without the testimonial licence and with a dedicated instruction block in `voice.ts`, and caught as shapes by a new `PRODUCT` gate code scoped to those turns — and a rejected draft on such a turn is replaced by a reviewed `PRODUCT_LINES` answer rather than published. Verified against real models on the shipped room (three questions, three honest answers, no claim and no advice); the seven turns already on the live page were pruned; and the chat's newest bubble is now pinned by which row is newest, not by how many there are, which is why the last message used to sit half under the composer |
 
 **P0 is the important gate.** The scheduling and permission logic is where v0 was

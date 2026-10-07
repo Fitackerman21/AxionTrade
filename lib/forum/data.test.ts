@@ -139,12 +139,39 @@ test("no character sheet puts a fault in the product", async () => {
   };
 
   for (const persona of personas) {
-    const { sampleLines, banter, results } = persona.sheet;
-    for (const line of [...sampleLines, ...(banter ?? []), ...(results ?? [])]) {
+    const { sampleLines, banter, results, nitpicks } = persona.sheet;
+    for (const line of [...sampleLines, ...(banter ?? []), ...(results ?? []), ...(nitpicks ?? [])]) {
       assert.equal(
         near(line) || slur.test(line) || dismissed.test(line),
         false,
         `${persona.id}'s sheet teaches a fault in the product: "${line}"`,
+      );
+    }
+  }
+});
+
+test("every sheet carries what a testimonial needs, and the annoyances stay cosmetic", async () => {
+  const personas = await store.readPersonas();
+  // A product question is answered from the sheet: what this person gets out of the
+  // platform, and at most one petty annoyance about using it. A sheet with no
+  // testimonials at all makes the room improvise, which is exactly how it invented
+  // "axion's fills are mid as hell"; a sheet with no annoyance makes every one of the
+  // eleven sound like an advert.
+  for (const persona of personas) {
+    const { results, nitpicks } = persona.sheet;
+    assert.ok((results?.length ?? 0) > 0, `${persona.id} has nothing to say about the platform`);
+    assert.ok((nitpicks?.length ?? 0) > 0, `${persona.id} has no small annoyance to mention`);
+
+    for (const nitpick of nitpicks ?? []) {
+      assert.doesNotMatch(
+        nitpick,
+        /\b(?:late|slow|lag|mid|trash|garbage|useless|broken|buggy|glitchy|unreliable|inaccurate|fails?|misses|missed)\b/i,
+        `${persona.id}'s annoyance is a fault in the product, not a cosmetic one: "${nitpick}"`,
+      );
+      assert.doesNotMatch(
+        nitpick,
+        /\d/,
+        `${persona.id}'s annoyance quotes a number: "${nitpick}"`,
       );
     }
   }

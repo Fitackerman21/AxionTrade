@@ -23,13 +23,41 @@
       "side": "b"
     }
   ],
-  "account": { "value": 128450.22, "dayPnl": -1240.55, "dayPnlPct": -0.96 },
+  "account": {
+    "value": 128450.22,
+    "dayPnl": -1240.55,
+    "dayPnlPct": -0.96
+  },
   "positions": [
-    { "symbol": "NVDA", "qty": 120, "avg": 178.4, "last": 171.2, "upnl": -864, "upnlPct": -4.04 },
-    { "symbol": "XAU", "qty": 40, "avg": 2391.4, "last": 2404.1, "upnl": 508, "upnlPct": 0.53 }
+    {
+      "symbol": "NVDA",
+      "qty": 120,
+      "avg": 178.4,
+      "last": 171.2,
+      "upnl": -864,
+      "upnlPct": -4.04
+    },
+    {
+      "symbol": "XAU",
+      "qty": 40,
+      "avg": 2391.4,
+      "last": 2404.1,
+      "upnl": 508,
+      "upnlPct": 0.53
+    }
   ],
   "platform": {
-    "changelog": ["paper fills now include slippage"],
-    "knownIssues": ["chart gaps on a 4h reload"]
-  }
+    "changelog": [
+      "paper fills now include slippage"
+    ],
+    "knownIssues": [
+      "chart gaps on a 4h reload"
+    ]
+  },
+  "digests": [
+    "Risk-off day. Semis led the drawdown, the EURUSD limit is still unfilled, gold is coiling above 2,400.",
+    "Semis dropped first and the rest of the tape followed. The cable order never filled and metals are marking time north of the round number.",
+    "The index complex gave back the open. Gold has done nothing but hold the level while the dollar decides what it is.",
+    "Flows left equities this morning. The metals bid is unchanged and the EURUSD order is still sitting there unfilled."
+  ]
 }

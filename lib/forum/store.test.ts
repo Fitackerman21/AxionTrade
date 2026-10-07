@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
-import { messagesFromTurns } from "./store";
+import { messagesFromTurns, messagesWithReactions } from "./store";
 import { createFixture, makeTurn, TEST_TOPICS, TEST_WORLD } from "./test-utils";
 
 test("turns round-trip through the log in order", async () => {
@@ -183,6 +183,57 @@ test("the world version is available to every turn", async () => {
   const fixture = await createFixture();
   try {
     assert.equal((await fixture.store.readWorld()).version, TEST_WORLD.version);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a reaction is toggled on and off beside the log, never inside it", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.store.appendTurn(makeTurn(1, { sender: "mara" }));
+    const before = await fixture.store.readTurns(10);
+
+    assert.equal(
+      await fixture.store.toggleReaction({ seq: 1, emoji: "🔥", by: "human", t: 1000 }),
+      true,
+    );
+    assert.deepEqual(await fixture.store.readReactions(), [
+      { seq: 1, emoji: "🔥", by: "human", t: 1000 },
+    ]);
+
+    // Tapping the chip you left takes it back.
+    assert.equal(
+      await fixture.store.toggleReaction({ seq: 1, emoji: "🔥", by: "human", t: 2000 }),
+      false,
+    );
+    assert.deepEqual(await fixture.store.readReactions(), []);
+
+    // And the log itself is untouched: `seq` cannot move because somebody tapped an
+    // emoji, which is what keeps the agenda deterministic.
+    assert.deepEqual(await fixture.store.readTurns(10), before);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("the projection carries the chips on the message they belong to", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.store.appendTurn(makeTurn(1, { sender: "mara" }));
+    await fixture.store.appendTurn(makeTurn(2, { sender: "sol" }));
+    await fixture.store.toggleReaction({ seq: 2, emoji: "👍", by: "human", t: 1000 });
+    await fixture.store.toggleReaction({ seq: 2, emoji: "😂", by: "rafa", t: 1001 });
+
+    const messages = messagesWithReactions(
+      await fixture.store.readTurns(10),
+      await fixture.store.readReactions(),
+    );
+    assert.equal(messages[0]?.reactions, undefined);
+    assert.deepEqual(messages[1]?.reactions, [
+      { emoji: "👍", by: ["human"] },
+      { emoji: "😂", by: ["rafa"] },
+    ]);
   } finally {
     await fixture.cleanup();
   }

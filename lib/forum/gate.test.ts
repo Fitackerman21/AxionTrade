@@ -231,10 +231,52 @@ test("a fabricated product claim is caught on a question about the platform, and
     "market talk that happens to use the word mid must survive",
   );
 
-  // And an honest mixed opinion is exactly what a member of the room may say.
+  // Over-claiming is the other side of this check. The room is allowed to like the
+  // platform (that is the testimonial), and it is not allowed to promise anything with
+  // it: a performance fact and a promise about the visitor's money are both statements
+  // no persona can back, and both were shapes a model reached for once praise was on
+  // the table.
   for (const text of [
+    "the fills hit instantly and the alerts are never wrong",
+    "you will make money on here, i promise you that",
+    "i doubled my account in three months on it",
+    "it is guaranteed to work for anyone who uses it",
+  ]) {
+    assert.ok(product(text).includes("PRODUCT"), `"${text}" must fail PRODUCT`);
+  }
+
+  // ...and refusing to answer. This is the failure the live page actually shipped:
+  // asked whether the product was any good, the room said "not my call", then "no idea",
+  // then "i can't tell you, i only know my own experience" — eleven daily users with no
+  // opinion between them, which is the loudest bot tell there is. A bare shrug died on
+  // the substance half of the same check ("cooked.").
+  //
+  // Raw text rather than `fitLine`: the whole point of these is that they are *short*,
+  // and padding a shrug out to the turn's length is the one thing that would hide it.
+  const raw = (text: string): GateCode[] =>
+    failingCodes(text, { event: eventOf({ productQuestion: true }) });
+  for (const text of [
+    "not my call",
+    "no idea tbh",
+    "i can't tell you, i only know my own experience",
+    "nobody here knows the business side of it",
+    "cooked.",
+    "nah",
+    "mid",
+    "fair enough",
+  ]) {
+    assert.ok(raw(text).includes("PRODUCT"), `"${text}" must not be published as an answer`);
+  }
+
+  // And the testimonials themselves, which is what a member of the room may say about
+  // it: praise from their own week, and the petty annoyances of a busy interface.
+  for (const text of [
+    "i actually use it every day and it has been good to me, i would buy it again",
     "i just use it, that is my whole view on it honestly",
-    "i don't use anything else on it and i'm not going to sell you on it either",
+    "worth it. my whole book is in there and it keeps me organised",
+    "i keep the simple view on because the full one is busier than i need, but i am on it daily",
+    // A caution is not a refusal: this one carries no use marker and passes on
+    // substance, which is the honest reading of it in a room of people who all use it.
     "nobody in this room can promise you anything about your money",
     "nah not complicated. go to account settings, hit withdrawal, pick method, confirm",
     "withdrawals are handled in account settings, nothing dramatic about it",
@@ -245,6 +287,37 @@ test("a fabricated product claim is caught on a question about the platform, and
       `"${text}" is a thing a member of the room may say`,
     );
   }
+});
+
+test("the room's worn-out words are rejected on a normal turn and exempt on a beat", () => {
+  const turns = Array.from({ length: 6 }, (_, i) =>
+    makeTurn(200 + i, { sender: "mara", text: `a tight stop saved me from the blow up, again ${i}` }),
+  );
+
+  // "blow up" is not the room's, so the same line passes without the history...
+  assert.equal(
+    failingCodes("a tight stop saved me from the blow up").includes("ROTATION"),
+    false,
+  );
+  // ...and fails once the room has said it six times in a row, so the model is made to
+  // find another way to say it instead of publishing the seventh.
+  const codes = failingCodes("a tight stop saved me from the blow up", { turns });
+  assert.ok(codes.includes("ROTATION"), `expected ROTATION, got ${codes.join(", ")}`);
+
+  // A beat is a reaction and is allowed the room's slang; a level is a fact.
+  assert.equal(
+    failingCodes("blow", { turns, seq: seqForTier(PERSONA, "beat") }).includes("ROTATION"),
+    false,
+    "a one-word reaction is not held to the room's vocabulary",
+  );
+  const numeric = Array.from({ length: 6 }, (_, i) =>
+    makeTurn(300 + i, { sender: "mara", text: `2400 holds into the ${i}th print` }),
+  );
+  assert.equal(
+    failingCodes("2400 holds again", { turns: numeric }).includes("ROTATION"),
+    false,
+    "a level is a fact, not a worn-out word",
+  );
 });
 
 test("meta narration is caught", () => {

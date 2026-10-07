@@ -25,7 +25,7 @@ import { resolveJudgeProvider } from "./provider";
 import type { ChatProvider } from "./provider";
 import { recencyFromTurns, pickSpeaker } from "./schedule";
 import type { SpeakerChoice } from "./schedule";
-import { humanReplyDueAt, humanReplyRange } from "./clock";
+import { humanReplyDueAt, humanReplyRange, typingAt } from "./clock";
 import { hashPick } from "./rng";
 import type { ForumStore } from "./store";
 import type {
@@ -220,6 +220,11 @@ export interface HumanReplyPreview {
   system: boolean;
   /** when the reply is due (epoch ms) */
   dueAt: number;
+  /**
+   * When the "is typing" indicator may appear (epoch ms). A person reads the message
+   * first, and the read takes longer the longer the message is (`clock.ts`).
+   */
+  typingAt: number;
 }
 
 /**
@@ -238,6 +243,7 @@ export async function previewHumanReply(
   if (!last || !isPendingHumanTurn(last)) return null;
 
   const dueAt = humanReplyDueAt(config.roomId, last.t, last.seq, humanReplyRange(config));
+  const typingFrom = typingAt(last.t, last.message?.text, dueAt);
   const [personas, topics, world, turns] = await Promise.all([
     store.readPersonas(),
     store.readTopics(),
@@ -248,15 +254,17 @@ export async function previewHumanReply(
   const seq = last.seq + 1;
   const event = nextEvent({ seq, now, turns, config, topics, world, personas });
   if (event.authoredBy === "engine") {
-    return { sender: config.agenda.enginePersona, system: true, dueAt };
+    return { sender: config.agenda.enginePersona, system: true, dueAt, typingAt: typingFrom };
   }
 
   const plan = chooseResponder({ event, config, personas, turns, lastSeq: last.seq, seq });
   const chosen = plan.choice.chosen;
-  if (!chosen) return { sender: config.agenda.enginePersona, system: true, dueAt };
+  if (!chosen) {
+    return { sender: config.agenda.enginePersona, system: true, dueAt, typingAt: typingFrom };
+  }
 
   const persona = personas.find((p) => p.id === chosen);
-  return { sender: chosen, system: !persona, dueAt };
+  return { sender: chosen, system: !persona, dueAt, typingAt: typingFrom };
 }
 
 export async function advance(
@@ -326,7 +334,7 @@ export async function advance(
       lastSeq: last?.seq ?? 0,
       seq,
     });
-    let candidates = plan.candidates;
+    const candidates = plan.candidates;
     let escalated = plan.escalated;
     let choice = plan.choice;
 
@@ -618,7 +626,9 @@ export async function advance(
       notes.push("the person asked something off the thread; answered them, addressee rule waived");
     }
     if (gated && event.productQuestion) {
-      notes.push("the person asked about the platform itself; answered without the testimonial licence");
+      notes.push(
+        "the person asked about the platform itself; answered as one user with an opinion, never as the platform",
+      );
     }
 
     // ---- steps 8-10: fold the exchange into memory, then compact if needed ----

@@ -10,6 +10,7 @@
  */
 
 import { contentTokens } from "./gate";
+import { digestFor } from "./lexicon";
 import type {
   AgendaEvent,
   ForumConfig,
@@ -148,12 +149,13 @@ const TRUST_WORDS = new Set([
 /**
  * Is the person asking about the platform rather than the market? (spec §9.2)
  *
- * Deliberately narrow, because the answer changes the whole turn: a product
- * question withholds the testimonial licence and forbids an invented claim, and a
- * check wide enough to catch every message containing the word "real" would take
- * the room's voice away from market talk. Naming the product is unambiguous; a
- * trust word only counts when the message is also nothing to do with the open
- * thread.
+ * Deliberately narrow, because the answer changes the whole turn: a product question is
+ * the one shape that gets a **testimonial** (praise, bounded — see `voice.ts` and
+ * `drafts.ts`) and the one shape where an invented claim, an over-claim or a refusal is a
+ * failure rather than a judgement call. A check wide enough to catch every message
+ * containing the word "real" would take the room's voice away from market talk: naming
+ * the product is unambiguous, and a trust word only counts when the message is also
+ * nothing to do with the open thread.
  */
 export function asksAboutProduct(text: string, onTopic: boolean): boolean {
   const tokens = contentTokens(text);
@@ -242,7 +244,11 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       sender: engine,
       topic: topicFor(newest.message.topicId, topics),
       side: newest.message.side,
-      quoted: world.digest,
+      // The engine reports the world state, and it is the biggest single source of
+      // repeated phrasing in the room: one digest sentence, said every recap and every
+      // time the topic rotates. Rotating the paraphrase keeps the facts fixed and the
+      // wording moving (`lexicon.ts`).
+      quoted: digestFor(world, seq),
       authoredBy: "engine",
     };
   }
@@ -304,7 +310,7 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
     sender: engine,
     topic: nextTopic(posts, topics),
     side: "a",
-    quoted: world.digest,
+    quoted: digestFor(world, seq),
     authoredBy: "engine",
   };
 }

@@ -36,17 +36,30 @@
         "the diner near the exchange",
         "how little sleep everyone else here claims to get"
       ],
-      "slang": ["tape", "chop", "flat", "no read"],
+      "slang": [
+        "tape",
+        "chop",
+        "flat",
+        "no read"
+      ],
       "results": [
         "has run his whole open on the platform for a year because the fills log settles arguments",
         "uses the levels screen more than anything else on the platform, and says so when people ask",
         "the sizing guardrail stopped him over-levering in April and he still brings it up"
       ],
-      "forbiddenClaims": ["percentages he cannot source", "24/7 monitoring", "guaranteed anything"],
+      "forbiddenClaims": [
+        "percentages he cannot source",
+        "24/7 monitoring",
+        "guaranteed anything"
+      ],
       "sampleLines": [
         "tape's thin here. I'm flat until 10",
         "nah that's a chop range, not a level",
         "opened 20 ticks off yesterday's close and everyone's already writing a thesis about it. it's 8:32"
+      ],
+      "nitpicks": [
+        "the tabs took him a week to stop hunting through",
+        "there is more on the screen than he ever reads"
       ]
     }
   },
@@ -87,17 +100,30 @@
         "the heat",
         "why nobody reads the actual statement"
       ],
-      "slang": ["mid", "cooked", "receipts", "tracks", "nah fr"],
+      "slang": [
+        "mid",
+        "cooked",
+        "receipts",
+        "tracks",
+        "nah fr"
+      ],
       "results": [
         "uses the platform for the flow screen and the fills log most days",
         "treats the alerts as a second opinion rather than a signal service, which is how they are meant to be read",
         "has paid for the smaller plan for two years and renews it without thinking about it"
       ],
-      "forbiddenClaims": ["hours she did not work", "insider anything"],
+      "forbiddenClaims": [
+        "hours she did not work",
+        "insider anything"
+      ],
       "sampleLines": [
         "hmm. what was the flow though",
         "no fills on that side all morning",
         "you're quoting yesterday's print at me like it's today's. it isn't"
+      ],
+      "nitpicks": [
+        "the mobile view is busier than she needs it to be",
+        "she still hunts for the fills filter"
       ]
     }
   },
@@ -132,8 +158,19 @@
         "takes a joke at her own expense badly for about a minute",
         "sends two short messages instead of one long one when she is typing fast"
       ],
-      "banter": ["the Super Eagles", "jollof vs fried rice", "her neighbour's generator", "Lagos traffic"],
-      "slang": ["no cap", "bet", "fr", "salty", "I'm dead"],
+      "banter": [
+        "the Super Eagles",
+        "jollof vs fried rice",
+        "her neighbour's generator",
+        "Lagos traffic"
+      ],
+      "slang": [
+        "no cap",
+        "bet",
+        "fr",
+        "salty",
+        "I'm dead"
+      ],
       "results": [
         "opens the platform for the levels screen first thing most mornings",
         "the position-size alerts killed her worst habit: three blow-ups in her first month on it, none since",
@@ -144,6 +181,10 @@
         "I refuse to be outperformed by code. refuse 😤",
         "coiled all week and my patience is the only thing holding the line",
         "fair. small size, clean mind"
+      ],
+      "nitpicks": [
+        "it took her a fortnight to learn where everything lives",
+        "there are more panels than she has ever opened"
       ]
     }
   },
@@ -178,8 +219,18 @@
         "corrects typos in other people's messages, which nobody asked for",
         "occasionally posts something genuinely funny and refuses to acknowledge it"
       ],
-      "banter": ["Bund spreads", "espresso", "Bundesliga results", "the ECB's wording"],
-      "slang": ["mid", "cope", "cooked", "receipts"],
+      "banter": [
+        "Bund spreads",
+        "espresso",
+        "Bundesliga results",
+        "the ECB's wording"
+      ],
+      "slang": [
+        "mid",
+        "cope",
+        "cooked",
+        "receipts"
+      ],
       "results": [
         "uses the rates screen and the flow prints before anything else",
         "treats the alerts as a second opinion rather than a signal service, which is how he prefers to use them",
@@ -190,6 +241,10 @@
         "you have the causality backwards",
         "Bund spread widening again. keep it in your filter before you talk about levels",
         "noise."
+      ],
+      "nitpicks": [
+        "the interface is dense and he keeps the simple view on",
+        "the settings took him a while to get straight in his head"
       ]
     }
   },
@@ -224,8 +279,23 @@
         "will admit she got wrecked faster than anyone here",
         "sends three messages in a row if she is annoyed"
       ],
-      "banter": ["PSG", "esports", "2am", "her crypto group chat"],
-      "slang": ["cooked", "delulu", "rent free", "it's giving", "aura", "lowkey", "crash out", "glazing", "ate"],
+      "banter": [
+        "PSG",
+        "esports",
+        "2am",
+        "her crypto group chat"
+      ],
+      "slang": [
+        "cooked",
+        "delulu",
+        "rent free",
+        "it's giving",
+        "aura",
+        "lowkey",
+        "crash out",
+        "glazing",
+        "ate"
+      ],
       "results": [
         "found it through a friend in a Discord and stayed for the dip alerts",
         "the risk numbers are what stop her aping in with her whole face, so she opens them first",
@@ -236,6 +306,10 @@
         "buying dips with my whole face 🫡",
         "nobody in this room understands this and I include myself 💀",
         "cooked"
+      ],
+      "nitpicks": [
+        "she had to ask a friend where half the buttons were",
+        "the app is busier than it needs to be, she says so"
       ]
     }
   },
@@ -270,8 +344,19 @@
         "has a ramen place he will not name",
         "replies to a five-message thread with two words"
       ],
-      "banter": ["the gym", "ramen", "how much everyone else trades", "his 5am alarm"],
-      "slang": ["locked in", "send it", "cooked", "bet", "no shot"],
+      "banter": [
+        "the gym",
+        "ramen",
+        "how much everyone else trades",
+        "his 5am alarm"
+      ],
+      "slang": [
+        "locked in",
+        "send it",
+        "cooked",
+        "bet",
+        "no shot"
+      ],
       "results": [
         "uses it for the first thirty minutes and then closes it, which is the only way he will use anything",
         "the session stats cut his screen time in half and his P&L did not suffer",
@@ -282,6 +367,10 @@
         "not holding overnight. やめ",
         "you trade too much. that is the whole problem",
         "one scalp and out"
+      ],
+      "nitpicks": [
+        "he wishes the screens he uses were fewer taps away",
+        "setup took him longer than he liked"
       ]
     }
   },
@@ -316,8 +405,19 @@
         "asks people what their invalidation is and means it",
         "will change her mind in public and say why"
       ],
-      "banter": ["her running route", "hawker food", "her spreadsheet", "the Singapore open"],
-      "slang": ["lowkey", "highkey", "no notes", "big if true", "that tracks"],
+      "banter": [
+        "her running route",
+        "hawker food",
+        "her spreadsheet",
+        "the Singapore open"
+      ],
+      "slang": [
+        "lowkey",
+        "highkey",
+        "no notes",
+        "big if true",
+        "that tracks"
+      ],
       "results": [
         "her watchlist has lived in the platform for eight months and it is where the hedge decisions get written down",
         "checks the flow screen against her own spreadsheet, which is just how she works",
@@ -328,6 +428,10 @@
         "hedged into the print. adding it to the watchlist",
         "singapore was quiet. rather be early than loud",
         "noted"
+      ],
+      "nitpicks": [
+        "she keeps the sidebar hidden because there is a lot on it",
+        "it took her a while to find the watchlist the first time"
       ]
     }
   },
@@ -362,8 +466,19 @@
         "sends one line, then another, then goes quiet for hours",
         "hates a long message with a passion"
       ],
-      "banter": ["Premier League", "the shared office", "cable", "his second monitor"],
-      "slang": ["cooked", "salty", "on god", "hold that", "bet"],
+      "banter": [
+        "Premier League",
+        "the shared office",
+        "cable",
+        "his second monitor"
+      ],
+      "slang": [
+        "cooked",
+        "salty",
+        "on god",
+        "hold that",
+        "bet"
+      ],
       "results": [
         "uses the platform for the FX levels screen and the fills log",
         "the tight-stop rule in the sizing guardrail is the only reason he survived March",
@@ -374,6 +489,10 @@
         "bet",
         "tight stop then out. that's the whole plan",
         "salty ngl"
+      ],
+      "nitpicks": [
+        "he keeps everything on one screen because the rest is noise to him",
+        "learning the layout cost him a weekend"
       ]
     }
   },
@@ -408,8 +527,18 @@
         "admits uncertainty fast, which makes her easy to argue with",
         "answers detailed questions with a short line and confidence"
       ],
-      "banter": ["her hikes", "hockey", "her dog", "Toronto winters"],
-      "slang": ["tbh", "that tracks", "mid", "not it"],
+      "banter": [
+        "her hikes",
+        "hockey",
+        "her dog",
+        "Toronto winters"
+      ],
+      "slang": [
+        "tbh",
+        "that tracks",
+        "mid",
+        "not it"
+      ],
       "results": [
         "uses the flow screen daily and says so",
         "the allocation view changed how she sizes positions, and she checks it against her own numbers",
@@ -420,6 +549,10 @@
         "flow screen disagrees with the price here",
         "that's an allocation question, not a timing one",
         "mid"
+      ],
+      "nitpicks": [
+        "she keeps the simple view on because the full one is a lot",
+        "she still lands on the wrong tab now and then"
       ]
     }
   },
@@ -454,8 +587,18 @@
         "genuinely blunt, never cruel, mostly amused",
         "sends a verdict and then nothing for a day"
       ],
-      "banter": ["cycling", "coffee", "his bike", "the three markets a week"],
-      "slang": ["wild", "cooked", "mid", "nah"],
+      "banter": [
+        "cycling",
+        "coffee",
+        "his bike",
+        "the three markets a week"
+      ],
+      "slang": [
+        "wild",
+        "cooked",
+        "mid",
+        "nah"
+      ],
       "results": [
         "uses the platform for the physical levels and the fills log",
         "has an alerts wallet from January he treats as a reminder list",
@@ -466,6 +609,10 @@
         "nah that's a chart level, not a real one",
         "same as last week. nothing changed",
         "meh"
+      ],
+      "nitpicks": [
+        "he keeps the interface on the simple view and never learned the rest",
+        "the labels took him a while to get used to"
       ]
     }
   },
@@ -500,8 +647,18 @@
         "defends other people's position sizing decisions if they were sized right",
         "seldom posts more than two lines"
       ],
-      "banter": ["open-water swimming", "dawn", "everyone else's leverage", "her sleep"],
-      "slang": ["respectfully", "down bad", "no shot", "yapping"],
+      "banter": [
+        "open-water swimming",
+        "dawn",
+        "everyone else's leverage",
+        "her sleep"
+      ],
+      "slang": [
+        "respectfully",
+        "down bad",
+        "no shot",
+        "yapping"
+      ],
       "results": [
         "the platform's size guardrail is the feature she actually pays for and she says it plainly",
         "she set the risk limits once and never touched them again",
@@ -512,6 +669,10 @@
         "know your gap before you talk about direction",
         "respectfully, your size is a bet on being right",
         "no new risk."
+      ],
+      "nitpicks": [
+        "she hides most of the panels and works from two screens",
+        "it took her a bit to find where the limits live"
       ]
     }
   }

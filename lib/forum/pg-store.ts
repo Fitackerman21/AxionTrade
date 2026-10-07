@@ -23,6 +23,7 @@
 import { Pool } from "pg";
 
 import { humanMessageRecord } from "./human";
+import type { ReactionRecord } from "./reactions";
 import { ROOM_CONFIG, ROOM_PERSONAS, ROOM_TOPICS, ROOM_WORLD } from "./room-data";
 import { MEMORY_VERSIONS_KEPT } from "./store";
 import type { ForumStore, HumanMessageArgs } from "./store";
@@ -73,6 +74,16 @@ const SCHEMA = `
     version    int   not null,
     file       jsonb not null,
     primary key (persona, companion, version)
+  );
+  -- Emoji reactions, one row per (message, emoji, sender). The primary key *is* the
+  -- toggle: the same triple cannot be inserted twice, so "has this person already
+  -- reacted with this" is a delete-or-insert rather than a read-then-write race.
+  create table if not exists forum_reactions (
+    seq    bigint not null,
+    emoji  text   not null,
+    sender text   not null,
+    t      bigint not null,
+    primary key (seq, emoji, sender)
   );
 `;
 
@@ -224,6 +235,40 @@ export class PgStore implements ForumStore {
     }
 
     throw new Error("forum: could not append the message — the log is too busy");
+  }
+
+  async readReactions(): Promise<ReactionRecord[]> {
+    await this.ensure();
+    const { rows } = await this.pool.query<{ seq: string; emoji: string; sender: string; t: string }>(
+      "select seq, emoji, sender, t from forum_reactions order by t asc, seq asc",
+    );
+    return rows.map((row) => ({
+      seq: Number(row.seq),
+      emoji: row.emoji as ReactionRecord["emoji"],
+      by: row.sender,
+      t: Number(row.t),
+    }));
+  }
+
+  /**
+   * Toggle one sender's reaction on one message. The primary key makes the duplicate
+   * impossible, so the reply is derived from whether the delete removed anything.
+   */
+  async toggleReaction(reaction: ReactionRecord): Promise<boolean> {
+    await this.ensure();
+    const removed = await this.pool.query(
+      "delete from forum_reactions where seq = $1 and emoji = $2 and sender = $3",
+      [reaction.seq, reaction.emoji, reaction.by],
+    );
+    if ((removed.rowCount ?? 0) > 0) return false;
+
+    await this.pool.query(
+      `insert into forum_reactions (seq, emoji, sender, t)
+       values ($1, $2, $3, $4)
+       on conflict (seq, emoji, sender) do nothing`,
+      [reaction.seq, reaction.emoji, reaction.by, reaction.t],
+    );
+    return true;
   }
 
   /**

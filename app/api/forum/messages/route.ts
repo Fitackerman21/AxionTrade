@@ -16,7 +16,8 @@ import { NextResponse } from "next/server";
 import { advance, previewHumanReply } from "@/lib/forum/advance";
 import { catchUp, roomMode } from "@/lib/forum/catchup";
 import { nextTurnAt } from "@/lib/forum/clock";
-import { messagesFromTurns, openForumStore } from "@/lib/forum/store";
+import { isReactionEmoji } from "@/lib/forum/reactions";
+import { messagesWithReactions, openForumStore } from "@/lib/forum/store";
 
 export const dynamic = "force-dynamic";
 /**
@@ -46,8 +47,9 @@ export async function GET(request: Request) {
     const report = shouldWake ? await catchUp(store, { now }) : null;
 
     const turns = await store.readTurns(Number.POSITIVE_INFINITY);
+    const reactions = await store.readReactions();
     const last = turns[turns.length - 1] ?? null;
-    const messages = messagesFromTurns(turns).filter(
+    const messages = messagesWithReactions(turns, reactions).filter(
       (message) => message.seq > (Number.isFinite(since) ? since : 0),
     );
 
@@ -121,6 +123,56 @@ export async function POST(request: Request) {
       body = null;
     }
 
+    // A reaction is not a message: it is state about one that already exists. It takes
+    // the same route because it is the same kind of write (a person acting in the room)
+    // and needs the same projection back, but it never wakes the room and never appends
+    // a turn — so `seq` cannot move because somebody tapped an emoji.
+    const reaction = (body as { reaction?: { seq?: unknown; emoji?: unknown } } | null)?.reaction;
+    if (reaction && typeof reaction === "object") {
+      const seq = Number(reaction.seq);
+      const emoji = reaction.emoji;
+      if (!Number.isInteger(seq) || seq <= 0) {
+        return NextResponse.json({ error: "a reaction needs a message" }, { status: 400, headers: NO_STORE });
+      }
+      if (!isReactionEmoji(emoji)) {
+        return NextResponse.json(
+          { error: "that is not one of the room's reactions" },
+          { status: 400, headers: NO_STORE },
+        );
+      }
+
+      const lastTurn = await store.readLastTurn();
+      if (seq > (lastTurn?.seq ?? 0)) {
+        return NextResponse.json({ error: "no such message" }, { status: 404, headers: NO_STORE });
+      }
+
+      const on = await store.toggleReaction({ seq, emoji, by: HUMAN_SENDER, t: now });
+      const config = await store.readConfig();
+      const turns = await store.readTurns(Number.POSITIVE_INFINITY);
+      const reactions = await store.readReactions();
+      const last = turns[turns.length - 1] ?? null;
+      const pendingReaction = await previewHumanReply(store, now);
+
+      return NextResponse.json(
+        {
+          mode: await roomMode(store, now),
+          roomId: config.roomId,
+          seq: last?.seq ?? 0,
+          lastTurnAt: last?.t ?? null,
+          nextExpectedAt: pendingReaction
+            ? pendingReaction.dueAt
+            : last
+              ? nextTurnAt(last.t, config.scheduling.gapSec)
+              : null,
+          pending: pendingReaction,
+          reaction: { seq, emoji, on },
+          messages: messagesWithReactions(turns, reactions),
+          catchUp: null,
+        },
+        { headers: NO_STORE },
+      );
+    }
+
     const text =
       typeof (body as { text?: unknown } | null)?.text === "string"
         ? ((body as { text: string }).text ?? "").trim()
@@ -165,6 +217,7 @@ export async function POST(request: Request) {
     // runs so a room configured with a zero-length window replies inline.
     const reply = await advance(store, { now: now + 1, driver: "human" });
     const turns = await store.readTurns(Number.POSITIVE_INFINITY);
+    const reactions = await store.readReactions();
     const last = turns[turns.length - 1] ?? null;
     const pending = await previewHumanReply(store, now + 1);
 
@@ -182,7 +235,7 @@ export async function POST(request: Request) {
           chosen: reply.record?.chosen ?? null,
           dueAt: reply.dueAt ?? pending?.dueAt ?? null,
         },
-        messages: messagesFromTurns(turns),
+        messages: messagesWithReactions(turns, reactions),
         catchUp: null,
       },
       { headers: NO_STORE },
