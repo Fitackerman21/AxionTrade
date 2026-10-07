@@ -10,6 +10,7 @@
 
 import { advance, isPendingHumanTurn } from "./advance";
 import type { AdvanceStatus } from "./advance";
+import { runtimeSettings } from "@/lib/admin/runtime";
 import { humanReplyDueAt, humanReplyRange, meanGapMs, turnsOwed } from "./clock";
 import type { ForumStore } from "./store";
 import type { RoomMode } from "./types";
@@ -21,6 +22,8 @@ export interface CatchUpOptions {
   /** report what would happen without writing anything */
   dryRun?: boolean;
   driver?: string;
+  /** admin settings to use instead of fetching them (tests, workers that pre-read) */
+  settings?: import("@/lib/admin/store").AdminSettings;
 }
 
 export interface CatchUpReport {
@@ -67,7 +70,26 @@ export async function catchUp(
 
   const config = await store.readConfig();
   const maxTurns = Math.max(1, options.maxTurns ?? config.runtime.catchUpMaxTurns);
-  const range = config.scheduling.gapSec;
+  // Admin pace multiplies the room's configured cadence — 2 makes the room twice
+  // as slow, 0.5 twice as fast. Clamped so the room can neither stall on a 0 nor
+  // blast through the day in a burst on a 100.
+  const admin = options.settings ?? (await runtimeSettings());
+  const pace = Math.min(4, Math.max(0.25, admin.pace || 1));
+  const range: [number, number] = [
+    Math.round(config.scheduling.gapSec[0] * pace),
+    Math.round(config.scheduling.gapSec[1] * pace),
+  ];
+  if (admin.paused) {
+    return {
+      mode,
+      owed: 0,
+      ran: 0,
+      skipped: 0,
+      recapped: false,
+      statuses: [],
+      reason: "the room is paused by an admin",
+    };
+  }
   const last = await store.readLastTurn();
 
   // An empty log is the room opening, not a gap.

@@ -10,6 +10,10 @@
  * Memory writes still arrive in P3, behind the same seams.
  */
 
+import { runtimeSettings } from "@/lib/admin/runtime";
+import { takeInjection, markInjectionTaken } from "@/lib/admin/store";
+import type { AdminSettings } from "@/lib/admin/store";
+
 import { nextEvent } from "./agenda";
 import { compactMemory, memoryNote } from "./archivist";
 import type { CompactionResult } from "./archivist";
@@ -82,6 +86,11 @@ export interface AdvanceOptions {
   now?: number;
   driver?: string;
   recentTurns?: number;
+  /**
+   * Admin settings to use instead of fetching them. A worker that already read
+   * them passes them in; tests inject them so the admin tables are never needed.
+   */
+  settings?: AdminSettings;
   /** inject the Gate's judge; by default it is resolved from config + env (§8.2) */
   judge?: ChatProvider;
   /** inject the Voice's provider (tests, dry runs); by default it comes from the persona's model */
@@ -275,6 +284,17 @@ export async function advance(
   const driver = options.driver ?? "cli";
   const config = await store.readConfig();
 
+  // Admin pause: the room answers nothing while it is set — not a failed turn,
+  // a deliberate freeze, reported as `deferred` so every driver idles politely.
+  const settings = options.settings ?? (await runtimeSettings());
+  if (settings.paused) {
+    return {
+      status: "deferred",
+      record: null,
+      reason: "the room is paused by an admin",
+    };
+  }
+
   const last = await store.readLastTurn();
   if (last && now < last.t) {
     return {
@@ -323,13 +343,20 @@ export async function advance(
       store.readTurns(options.recentTurns ?? RECENT_TURNS_WINDOW),
     ]);
 
+    // Muted personas (admin) stay on the roster for lookups but are removed
+    // from every candidate pool. The engine persona is exempt: it is the room's
+    // control voice, not a participant an admin would want to silence.
+    const selectable = personas.filter(
+      (p) => !settings.muted.includes(p.id) || p.id === config.agenda.enginePersona,
+    );
+
     const seq = (last?.seq ?? 0) + 1;
     const event = nextEvent({ seq, now, turns, config, topics, world, personas });
 
     const plan = chooseResponder({
       event,
       config,
-      personas,
+      personas: selectable,
       turns,
       lastSeq: last?.seq ?? 0,
       seq,
@@ -492,7 +519,26 @@ export async function advance(
       }
     }
 
-    if (gated && chosenPersona) {
+    // An admin speaking as this persona: the queued line is published verbatim,
+    // the Voice and the Gate are skipped, and the record says why. It still folds
+    // into the persona's memory like any other turn, so the persona keeps the
+    // thread afterwards — the room, and every other persona, read it as them.
+    // A broken admin layer must not break the room, so a failed read is just
+    // "no injection", the same grace `runtimeSettings` grants itself.
+    let injection: { id: number; text: string } | null = null;
+    if (!engineTurn && responder && chosenPersona) {
+      try {
+        injection = await takeInjection(chosenPersona.id);
+      } catch {
+        injection = null;
+      }
+    }
+    if (injection && chosenPersona) {
+      text = injection.text;
+      beats = [text];
+      decision = "APPROVE";
+      notes.push(`admin injection #${injection.id} published as ${chosenPersona.id}; voice and gate skipped`);
+    } else if (gated && chosenPersona) {
       // The voice's model is passed so the resolution can skip a judge from the
       // same family instead of losing the whole LLM half to the guard (§8.6).
       const judge = options.judge ?? resolveJudgeProvider(gateConfig, chosenPersona.model);
@@ -739,6 +785,15 @@ export async function advance(
     if (decision === "APPROVE") {
       await publish(store, record);
       if (beats.length > 1) await publish(store, continuationRecord(record, beats[1]!));
+      // Stamp the audit trail now the line has a seq; a crash before this leaves
+      // the injection marked attempted (-1), which the dashboard shows.
+      if (injection) {
+        try {
+          await markInjectionTaken(injection.id, record.seq);
+        } catch {
+          // the line is already published; the audit stamp is best-effort
+        }
+      }
       return { status: "published", record };
     }
 

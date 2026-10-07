@@ -46,7 +46,6 @@ import {
 
 import { BrandMark } from "@/components/brand";
 import {
-  ONLINE_COUNT,
   PERSONAS,
   REPLAY_INDEXED,
   type ChatPersona,
@@ -54,7 +53,26 @@ import {
 import { REACTION_EMOJI } from "@/lib/forum/reactions";
 import type { ForumMessage, MessageReactions } from "@/lib/forum/types";
 
+/** The bundled roster is the fallback; the live roster (with admin profile
+ * overrides) replaces it once fetched. */
+let livePersonas: ChatPersona[] | null = null;
 const byId = new Map(PERSONAS.map((p) => [p.id, p]));
+
+async function refreshPersonas(): Promise<void> {
+  try {
+    const response = await fetch("/api/admin/roster", { cache: "no-store" });
+    if (!response.ok) return;
+    const body = (await response.json()) as { personas?: ChatPersona[] };
+    if (Array.isArray(body.personas) && body.personas.length > 0) {
+      livePersonas = body.personas;
+      byId.clear();
+      for (const p of body.personas) byId.set(p.id, p);
+    }
+  } catch {
+    // the bundled roster stays in place — the room must render even if this fails
+  }
+}
+void refreshPersonas();
 
 /** "You" — the local sender. Its id is the external sender id the room records. */
 const YOU: ChatPersona = {
@@ -561,7 +579,7 @@ export function CommunityChat() {
                 }`}
                 aria-hidden
               />
-              {PERSONAS.length} members · {ONLINE_COUNT} online · {label}
+              {(livePersonas ?? PERSONAS).length} members · {(livePersonas ?? PERSONAS).filter((p) => p.online).length} online · {label}
             </p>
           </div>
           <div className="flex items-center gap-1 text-muted">
@@ -744,7 +762,7 @@ export function CommunityChat() {
               Members
             </p>
             <MemberRow p={{ ...YOU, role: "you · online" }} />
-            {[...PERSONAS].sort((a, b) => Number(b.online) - Number(a.online)).map((p) => (
+            {[...(livePersonas ?? PERSONAS)].sort((a, b) => Number(b.online) - Number(a.online)).map((p) => (
               <MemberRow key={p.id} p={p} />
             ))}
           </aside>
