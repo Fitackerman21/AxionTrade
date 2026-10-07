@@ -371,26 +371,26 @@ export async function advance(
     let choice = plan.choice;
 
     // A queued speak-as line jumps the queue: whoever has one waiting is the
-    // next speaker, ahead of cooldowns and recency, so the dashboard's message
-    // lands on this turn instead of whenever the scheduler happens to pick
-    // them. Only applies to responder turns — engine turns (reports, recaps)
-    // are the room's control voice and stay theirs.
-    if (event.authoredBy === "responder") {
-      try {
-        const peek = options.peekInjections ?? peekOldestInjection;
-        const queued = await peek();
-        if (queued && selectable.some((p) => p.id === queued.persona)) {
-          choice = {
-            chosen: queued.persona,
-            ordered: choice.ordered,
-            reason: "admin speak-as: queued line jumps the queue",
-            relaxedCooldown: false,
-          };
-          candidates = [queued.persona];
-        }
-      } catch {
-        // admin layer down → normal scheduling, same grace as everything else
+    // next speaker, ahead of cooldowns, recency AND the engine's own turns — a
+    // real line from a member beats a recap or an idle template for the same
+    // beat. Without this, a queued line could sit for hours while the room
+    // posted engine turns one after another.
+    let injectionTurn = false;
+    try {
+      const peek = options.peekInjections ?? peekOldestInjection;
+      const queued = await peek();
+      if (queued && selectable.some((p) => p.id === queued.persona)) {
+        injectionTurn = true;
+        choice = {
+          chosen: queued.persona,
+          ordered: choice.ordered,
+          reason: "admin speak-as: queued line jumps the queue",
+          relaxedCooldown: false,
+        };
+        candidates = [queued.persona];
       }
+    } catch {
+      // admin layer down → normal scheduling, same grace as everything else
     }
 
     const enginePersona = personas.find((p) => p.id === config.agenda.enginePersona);
@@ -411,7 +411,7 @@ export async function advance(
     // the Voice too (and is checked against the band, since the Gate is skipped).
     let engineTurn = false;
 
-    if (event.authoredBy === "engine") {
+    if (event.authoredBy === "engine" && !injectionTurn) {
       // The engine addresses the room itself: it opens the session, reports world
       // state, and recaps a stale gap. Nothing to schedule, so the matrix is not
       // consulted — an opening is not a reply to a message that does not exist.
@@ -474,7 +474,10 @@ export async function advance(
     let memoryFile: MemoryFile | null = null;
     let memoryReadFailure: string | null = null;
 
-    if (memoryEnabled && companion && chosenPersona) {
+    // A pre-empted engine event has no real companion (its sender is the room),
+    // so the injected line folds into no thread — it stays exactly what the
+    // dashboard sent, and the persona's threads stay about actual people.
+    if (memoryEnabled && companion && chosenPersona && !(injectionTurn && event.authoredBy === "engine")) {
       try {
         memoryFile = await store.readMemory(chosenPersona.id, companion);
       } catch (error) {
@@ -710,7 +713,15 @@ export async function advance(
     let memorySummary = memoryEnabled ? "memory: nothing to record" : "memory disabled";
     if (memoryReadFailure) {
       memorySummary = `memory read failed: ${memoryReadFailure.slice(0, 120)}`;
-    } else if (memoryEnabled && memoryConfig && companion && chosenPersona && responder && decision === "APPROVE") {
+    } else if (
+      memoryEnabled &&
+      memoryConfig &&
+      companion &&
+      chosenPersona &&
+      responder &&
+      decision === "APPROVE" &&
+      !(injectionTurn && event.authoredBy === "engine")
+    ) {
       const key = memoryKey(chosenPersona.id, companion);
       try {
         const folded = foldTurn(

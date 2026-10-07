@@ -92,6 +92,35 @@ describe("runtime × admin settings", () => {
     }
   });
 
+  it("a queued speak-as line pre-empts an engine turn (recap/idle)", async () => {
+    const fixture = await createFixture({});
+    try {
+      // An ambient turn behind us so the agenda is free to pick an engine beat.
+      await fixture.store.appendTurn(makeTurn(1, { sender: "mara", topicId: TEST_TOPICS[0]!.id }));
+
+      const result = await advance(fixture.store, {
+        now: TEST_BASE + 3_600_000,
+        settings: off,
+        peekInjections: async () => ({ persona: "dmitri" }),
+        voiceProvider: async () => ({
+          text: "canned template must not be used",
+          usedVoice: false,
+          drift: false,
+          model: null,
+          usage: null,
+          fallback: false,
+          reason: "test",
+        }),
+      } as never);
+
+      assert.equal(result.status, "published");
+      assert.equal(result.record?.chosen, "dmitri", "the queued persona must take the engine's turn");
+      assert.notEqual(result.record?.chosen, "jev", "the engine must have been pre-empted");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("a muted persona is never chosen to speak", async () => {
     const fixture = await createFixture({});
     try {
