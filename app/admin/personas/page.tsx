@@ -53,6 +53,8 @@ export default function AdminPersonasPage() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [csvResult, setCsvResult] = useState<{ inserted: number; skipped: number; errors: Array<{ line: number; reason: string }> } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [newMember, setNewMember] = useState({ name: "", email: "", bio: "", age: "", picture: "" });
+  const [memberMsg, setMemberMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -143,6 +145,30 @@ export default function AdminPersonasPage() {
       setMembers(roster.members);
     } catch (e) {
       setError(e instanceof Error ? e.message : "upload failed");
+    }
+  };
+
+  const createMember = async () => {
+    setMemberMsg(null);
+    try {
+      await adminFetch("/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          name: newMember.name,
+          email: newMember.email,
+          bio: newMember.bio || undefined,
+          age: newMember.age ? Number(newMember.age) : undefined,
+          picture: newMember.picture || undefined,
+        }),
+        mutation: true,
+      });
+      setMemberMsg(`${newMember.name} added to the member roster`);
+      setNewMember({ name: "", email: "", bio: "", age: "", picture: "" });
+      const roster = (await adminFetch("/api/admin/members")) as { members: MemberRow[] };
+      setMembers(roster.members);
+    } catch (e) {
+      setMemberMsg(null);
+      setError(e instanceof Error ? e.message : "could not add the member");
     }
   };
 
@@ -274,6 +300,50 @@ export default function AdminPersonasPage() {
         >
           Choose a CSV file…
         </button>
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">Add one member by hand</h3>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+            <input
+              value={newMember.name}
+              onChange={(e) => setNewMember((m) => ({ ...m, name: e.target.value }))}
+              placeholder="name *"
+              className="rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-sm text-white"
+            />
+            <input
+              value={newMember.email}
+              onChange={(e) => setNewMember((m) => ({ ...m, email: e.target.value }))}
+              placeholder="email *"
+              className="rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-sm text-white"
+            />
+            <input
+              value={newMember.age}
+              onChange={(e) => setNewMember((m) => ({ ...m, age: e.target.value.replace(/[^0-9]/g, "") }))}
+              placeholder="age"
+              className="rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-sm text-white"
+            />
+            <input
+              value={newMember.picture}
+              onChange={(e) => setNewMember((m) => ({ ...m, picture: e.target.value }))}
+              placeholder="picture URL"
+              className="rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-sm text-white"
+            />
+            <button
+              onClick={() => void createMember()}
+              disabled={!newMember.name.trim() || !newMember.email.trim()}
+              className="rounded-lg bg-emerald-500/90 px-3 py-1.5 text-sm font-semibold text-black hover:bg-emerald-400 disabled:opacity-40"
+            >
+              Add member
+            </button>
+          </div>
+          <input
+            value={newMember.bio}
+            onChange={(e) => setNewMember((m) => ({ ...m, bio: e.target.value }))}
+            placeholder="bio — what the room knows them by"
+            className="mt-2 w-full rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-sm text-white"
+          />
+          {memberMsg ? <p className="mt-2 text-xs text-emerald-300">{memberMsg}</p> : null}
+        </div>
         {csvResult ? (
           <p className="mt-2 text-sm text-emerald-300">
             {csvResult.inserted} imported, {csvResult.skipped} skipped

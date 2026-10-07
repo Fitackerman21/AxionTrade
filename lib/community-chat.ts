@@ -25,6 +25,11 @@ export interface ChatPersona {
   color: string;
   online: boolean;
   bot?: boolean;
+  /** profile picture URL; set from the dashboard, falls back to the gradient */
+  picture?: string;
+  /** what the members drawer shows under the role */
+  bio?: string;
+  age?: number;
 }
 
 /** Ten-persona roster shared with the chat UI. In P1 this list is a loader over

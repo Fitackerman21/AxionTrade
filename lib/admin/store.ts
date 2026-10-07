@@ -306,6 +306,15 @@ export async function listInjections(limit = 20): Promise<InjectionRow[]> {
   }));
 }
 
+/** The oldest injection still waiting, if any — read-only, no claim. */
+export async function peekOldestInjection(): Promise<{ persona: string } | null> {
+  await ensure();
+  const { rows } = await db().query<{ persona: string }>(
+    "select persona from forum_injections where taken_seq is null order by id limit 1",
+  );
+  return rows.length > 0 ? { persona: rows[0]!.persona } : null;
+}
+
 /**
  * Claim the oldest untaken injection for a persona the room is about to write as.
  * The conditional update is the once-only guarantee: two concurrent turns cannot

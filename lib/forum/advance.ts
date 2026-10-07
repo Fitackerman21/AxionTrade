@@ -11,7 +11,7 @@
  */
 
 import { runtimeSettings } from "@/lib/admin/runtime";
-import { takeInjection, markInjectionTaken } from "@/lib/admin/store";
+import { takeInjection, markInjectionTaken, peekOldestInjection } from "@/lib/admin/store";
 import type { AdminSettings } from "@/lib/admin/store";
 
 import { nextEvent } from "./agenda";
@@ -91,6 +91,11 @@ export interface AdvanceOptions {
    * them passes them in; tests inject them so the admin tables are never needed.
    */
   settings?: AdminSettings;
+  /**
+   * Who has a queued speak-as line, instead of asking the admin store. Tests
+   * stub it; a worker that pre-read the queue passes its answer in.
+   */
+  peekInjections?: () => Promise<{ persona: string } | null>;
   /** inject the Gate's judge; by default it is resolved from config + env (§8.2) */
   judge?: ChatProvider;
   /** inject the Voice's provider (tests, dry runs); by default it comes from the persona's model */
@@ -361,9 +366,32 @@ export async function advance(
       lastSeq: last?.seq ?? 0,
       seq,
     });
-    const candidates = plan.candidates;
+    let candidates = plan.candidates;
     let escalated = plan.escalated;
     let choice = plan.choice;
+
+    // A queued speak-as line jumps the queue: whoever has one waiting is the
+    // next speaker, ahead of cooldowns and recency, so the dashboard's message
+    // lands on this turn instead of whenever the scheduler happens to pick
+    // them. Only applies to responder turns — engine turns (reports, recaps)
+    // are the room's control voice and stay theirs.
+    if (event.authoredBy === "responder") {
+      try {
+        const peek = options.peekInjections ?? peekOldestInjection;
+        const queued = await peek();
+        if (queued && selectable.some((p) => p.id === queued.persona)) {
+          choice = {
+            chosen: queued.persona,
+            ordered: choice.ordered,
+            reason: "admin speak-as: queued line jumps the queue",
+            relaxedCooldown: false,
+          };
+          candidates = [queued.persona];
+        }
+      } catch {
+        // admin layer down → normal scheduling, same grace as everything else
+      }
+    }
 
     const enginePersona = personas.find((p) => p.id === config.agenda.enginePersona);
     if (!enginePersona) {

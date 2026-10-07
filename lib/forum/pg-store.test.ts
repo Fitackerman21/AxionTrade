@@ -66,7 +66,7 @@ beforeEach(async () => {
   if (!active || !store || !admin) return;
   // Ensure the schema exists before truncating; then give every test a clean room.
   await store.readLastTurn();
-  await admin.query("truncate forum_turns, forum_lease, forum_heartbeat");
+  await admin.query("truncate forum_turns, forum_lease, forum_heartbeat, forum_reactions");
 });
 
 after(async () => {

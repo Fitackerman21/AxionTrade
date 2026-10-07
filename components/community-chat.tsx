@@ -197,7 +197,7 @@ const up = (id: number) => id % 2 === 0;
 function Avatar({ p, size = 34 }: { p: ChatPersona; size?: number }) {
   return (
     <span
-      className="relative flex shrink-0 items-center justify-center rounded-full font-semibold text-[#071018]"
+      className="relative flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-[#071018]"
       style={{
         width: size,
         height: size,
@@ -206,7 +206,14 @@ function Avatar({ p, size = 34 }: { p: ChatPersona; size?: number }) {
       }}
       aria-hidden
     >
-      {initials(p.name)}
+      {p.picture ? (
+        // Admin-set profile picture; the gradient stays behind it as the
+        // loading placeholder and the online dot rides on top as before.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.picture} alt="" className="h-full w-full object-cover" loading="lazy" />
+      ) : (
+        initials(p.name)
+      )}
       {p.online && (
         <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-background bg-gain" />
       )}
@@ -352,14 +359,16 @@ function TypingDots() {
 }
 
 function MemberRow({ p }: { p: ChatPersona }) {
+  const subtitle = p.bio ? p.bio : p.role;
   return (
     <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-surface-2/70">
       <Avatar p={p} size={32} />
       <div className="min-w-0">
         <p className="truncate text-[13px] font-medium" style={{ color: p.color }}>
           {p.name}
+          {p.age ? <span className="ml-1 text-[11px] text-muted">· {p.age}</span> : null}
         </p>
-        <p className="truncate text-[11px] text-muted">{p.role}</p>
+        <p className="truncate text-[11px] text-muted">{subtitle}</p>
       </div>
     </div>
   );

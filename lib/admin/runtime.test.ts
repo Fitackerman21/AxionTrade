@@ -57,6 +57,41 @@ describe("runtime × admin settings", () => {
     }
   });
 
+  it("a queued speak-as line makes that persona the next speaker", async () => {
+    const fixture = await createFixture({});
+    try {
+      await fixture.store.appendHumanMessage({
+        text: "read on gold?",
+        sender: "human",
+        t: TEST_BASE,
+        topicId: TEST_TOPICS[0]!.id,
+      });
+
+      const result = await advance(fixture.store, {
+        now: TEST_BASE + 90_000,
+        settings: off,
+        // The dashboard has a line queued for sol: they jump cooldowns and
+        // recency, so the scheduler cannot make the message sit for hours.
+        peekInjections: async () => ({ persona: "sol" }),
+        voiceProvider: async () => ({
+          text: "gold is doing what gold does",
+          usedVoice: false,
+          drift: false,
+          model: null,
+          usage: null,
+          fallback: false,
+          reason: "test",
+        }),
+      } as never);
+
+      assert.equal(result.status, "published");
+      assert.equal(result.record?.chosen, "sol", "the queued persona must be picked ahead of the schedule");
+      assert.match(result.record?.note ?? "", /speak-as|queued/, "the reason must be auditable on the turn");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it("a muted persona is never chosen to speak", async () => {
     const fixture = await createFixture({});
     try {
