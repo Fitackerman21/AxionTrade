@@ -204,6 +204,50 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
   },
 };
 
+/**
+ * The ids the room uses for a person, or for the room itself.
+ *
+ * `addressed()` puts the sender's name in front of a line that does not connect to
+ * what they said, which is right for a member of the roster and wrong for these: a
+ * fallback answering a visitor once began "human, i'm not chasing this". They are
+ * not a name, so a fallback never greets them with one.
+ */
+const NOT_A_NAME = new Set(["human", "room", "you", "them"]);
+
+/**
+ * What the room says when the question is about the platform itself (spec §9.2).
+ *
+ * Shared across the roster on purpose, unlike `REPERTOIRE`: these are the only lines
+ * in the room that speak about the product, so they are reviewed as one set rather
+ * than as eleven variations on "i use it". The seed still carries the persona, so
+ * two members answering in a row do not pick the same line.
+ *
+ * Safe by construction, which is what makes this the right thing to publish when a
+ * product-question draft is rejected twice. Every line is one person's honest use of
+ * the platform or a plain refusal to advise. Nothing claims anything about how it
+ * performs, tells anyone what to do with their money, promises an outcome, or repeats
+ * a shape the Gate's PRODUCT check rejects.
+ */
+export const PRODUCT_LINES: Repertoire = {
+  beat: ["just use it", "not my call", "no idea tbh", "i just trade on it"],
+  short: [
+    "i just use it, that's my whole view",
+    "not here to sell anyone on it",
+    "nobody in here knows the business side",
+    "i use it, that's all i can tell you",
+    "no idea, i just trade on the thing",
+  ],
+  thought: [
+    "i'm not the person to ask about that. i use it, and that's the whole of what i know about it",
+    "you won't get a pitch out of me. i'm a trader, i use the thing and i'm not recommending it to anybody",
+    "nobody in this room can promise you anything about your money, and anyone who does is lying to you",
+    "i can't tell you what to do with your money and i'm not going to pretend i can. all i know is that i use it",
+    "i'd rather tell you straight that it isn't my call than sell you something. i trade on it and that is the whole answer from me",
+    "i'm not going to tell you what to do with your money because it isn't my call, and honestly nobody in this room knows the business side of it either",
+    "all i can tell you is what i use it for, and i won't tell you anything here is a sure thing because nothing about trading ever is",
+  ],
+};
+
 /** Used only if a persona reaches the fallback without a bank of its own. */
 const GENERIC: Repertoire = {
   beat: ["fair.", "nah.", "hmm.", "ok then."],
@@ -245,7 +289,7 @@ function connects(text: string, ctx: DraftContext): boolean {
 function addressed(line: string, ctx: DraftContext): string {
   if (connects(line, ctx)) return line;
   const sender = ctx.event.sender?.trim();
-  if (!sender || sender === "room") return line;
+  if (!sender || NOT_A_NAME.has(sender.toLowerCase())) return line;
   return `${sender.toLowerCase()}, ${line}`;
 }
 
@@ -301,21 +345,49 @@ function fitToTarget(
 }
 
 /** Every way this turn could be filled from the persona's own writing. */
-function candidates(lines: readonly string[], ctx: DraftContext): { singles: string[]; joined: string[] } {
-  const singles = lines.map((line) => addressed(line, ctx));
+function candidates(
+  lines: readonly string[],
+  /** null for the product bank: there is no name to put on those lines (§9.2) */
+  ctx: DraftContext | null,
+  prefix = true,
+): { singles: string[]; joined: string[] } {
+  const singles = lines.map((line) => (prefix && ctx ? addressed(line, ctx) : line));
   const joined: string[] = [];
   for (let i = 0; i < singles.length; i += 1) {
     for (let j = 0; j < singles.length; j += 1) {
       if (i === j) continue;
-      joined.push(addressed(joinThoughts(lines[i]!, lines[j]!), ctx));
+      const name = (text: string): string => (prefix && ctx ? addressed(text, ctx) : text);
+      joined.push(name(joinThoughts(lines[i]!, lines[j]!)));
       for (let k = 0; k < singles.length; k += 1) {
         if (k === i || k === j) continue;
         const pair = joinThoughts(lines[i]!, lines[j]!);
-        joined.push(addressed(joinThoughts(pair, lines[k]!), ctx));
+        joined.push(name(joinThoughts(pair, lines[k]!)));
       }
     }
   }
   return { singles, joined };
+}
+
+/**
+ * The room's answer when a product question's own draft was rejected (§9.2).
+ *
+ * Chosen to fit the turn the same way `cannedDraft` is, and deliberately *not*
+ * addressed by name: the person asked the room, there is no member to name, and the
+ * sender id a person carries is not a name.
+ */
+export function productDraft(ctx: { persona: Persona; seq: number; attempt: number }): string {
+  const target = lengthTarget(ctx.persona, ctx.seq);
+  const seed = `product:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`;
+
+  if (target.tier === "beat") {
+    const fitting = PRODUCT_LINES.beat.filter((line) => line.length <= target.max);
+    const pool = fitting.length > 0 ? fitting : [PRODUCT_LINES.beat[0]!];
+    return hashPick(pool, `beat:${seed}`) ?? pool[0]!;
+  }
+
+  const source = target.tier === "short" ? PRODUCT_LINES.short : PRODUCT_LINES.thought;
+  const { singles, joined } = candidates(source, null, false);
+  return fitToTarget(singles, joined, target, seed);
 }
 
 export function cannedDraft(ctx: DraftContext): string {

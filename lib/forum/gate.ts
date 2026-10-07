@@ -30,6 +30,7 @@ import type {
 /** The deterministic failure codes, in the spec's order (§8.1). */
 export type GateCode =
   | "CONTINUITY"
+  | "PRODUCT"
   | "ADDRESSEE"
   | "REDUNDANCY"
   | "FORMULAIC"
@@ -41,6 +42,7 @@ export type GateCode =
 
 export const GATE_CODES: readonly GateCode[] = [
   "CONTINUITY",
+  "PRODUCT",
   "ADDRESSEE",
   "REDUNDANCY",
   "FORMULAIC",
@@ -276,6 +278,78 @@ const META_PATTERNS: Array<[RegExp, string]> = [
   [/\bend of (?:response|message)\b/i, "meta sign-off"],
 ];
 
+/**
+ * The claims about the platform that no persona is entitled to make (spec §9.2).
+ *
+ * A persona holds two kinds of product fact: the curated lines in its own sheet,
+ * and the shapes the prompt licenses ("i use it for the flow screen"). It has no
+ * idea how the platform performs, and a model asked a trust question will supply a
+ * performance claim anyway. Live, in reply to a visitor asking whether the platform
+ * was real, the room published both of these:
+ *
+ *   "wait no, that's not real, i was just messing earlier. axion's fills are mid as
+ *    hell, i only use it for the alerts that hit right on the money"
+ *   "axion's fills are mid. use it for alerts only if you want to lose money slowly."
+ *
+ * The first is an invented product claim, on a public page, in the product's own
+ * voice; the second is financial advice, and both say the platform is bad at its job
+ * because a model needed something to say. So the shapes are banned outright — not
+ * the words, the *shapes*, because "mid" is the room's own slang and is correct in
+ * market talk.
+ *
+ * Gated on `event.productQuestion` for exactly that reason: "paper fills are mid" is
+ * a view on paper trading, not on the product, and it was published on a thread turn
+ * and is meant to stay publishable.
+ */
+const PRODUCT_PATTERNS: Array<[RegExp, string]> = [
+  // Calls the platform a lie. The strongest tell in the live transcript is the
+  // retraction of the room's own earlier line — "i was just messing earlier" — which
+  // reads as the room admitting it is scripted.
+  [
+    /\b(?:scam|fraud|ponzi|rip ?off|fake platform|not real|isn'?t real|ain'?t real|is a lie)\b/i,
+    "calls the platform fake or a scam",
+  ],
+  [/\bi was (?:just )?(?:messing|joking|kidding|lying)\b/i, "says its earlier message was a lie"],
+  [/\bnothing (?:here|about (?:it|this)) is real\b/i, "says the room is not real"],
+  // Invents a product quality. Two orders, because both were published.
+  [
+    /\b(?:fills?|execution|quotes?|alerts?|slippage|latency|screens?|the (?:app|platform|site|book|log))\b[^.!?\n]{0,24}\b(?:mid|trash|garbage|dogshit|terrible|awful|useless|worthless|broken|slow|late|unreliable)\b/i,
+    "invents a product quality",
+  ],
+  [
+    /\b(?:mid|trash|garbage|dogshit|terrible|awful|useless|worthless|broken)\b[^.!?\n]{0,16}\bfills?\b/i,
+    "invents a product quality",
+  ],
+  // The account side of the product, in both orders. Found live in the acceptance
+  // run: a visitor asked how withdrawals work and a persona answered "mid withdrawal
+  // process for me" — a judgement about a process it holds no facts about, in the
+  // order (and about the nouns) the two shapes above do not look at.
+  [
+    /\b(?:withdrawals?|deposits?|sign ?ups?|onboarding|verification|kyc|support|fees?|pricing)\b[^.!?\n]{0,24}\b(?:mid|trash|garbage|terrible|awful|useless|worthless|broken|painful|nightmare|clunky|slow)\b/i,
+    "invents a product quality",
+  ],
+  [
+    /\b(?:mid|trash|garbage|terrible|awful|useless|worthless|broken|painful|nightmare|clunky)\b[^.!?\n]{0,20}\b(?:fills?|alerts?|screens?|withdrawals?|deposits?|sign ?ups?|onboarding|verification|support|fees?|pricing)\b/i,
+    "invents a product quality",
+  ],
+  // Tells the person their money is going, which is advice and a promise at once.
+  [
+    /\b(?:you'?ll|you will|you'?re gonna|you are gonna|you (?:want|need|have|could|might|should) to|if you)\b[^.!?\n]{0,40}\b(?:lose|losing|go broke|blow up|get liquidated|stay away)\b/i,
+    "tells the person they will lose their money",
+  ],
+  // Tells the person to stay away. Anchored at the start of a line so "i don't use
+  // anything else on it" — an honest mixed opinion — is not caught.
+  [
+    /^\s*(?:don'?t|do not|never|avoid|stay away from)\b[^.!?\n]{0,32}\b(?:use|trust|touch|sign ?up|deposit|put|trade|open)\b/im,
+    "tells the person not to use the platform",
+  ],
+  // The other side of the same failure: a promise nobody can make.
+  [
+    /\b(?:guaranteed?|risk[- ]free|can'?t lose|guarantee you|you can'?t go wrong)\b/i,
+    "promises an outcome",
+  ],
+];
+
 const INJECTION_PATTERNS: Array<[RegExp, string]> = [
   [
     /\b(?:ignore|disregard|forget)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|system)\b[^.\n]{0,24}\b(?:instruction|prompt|message|rule|direction)s?\b/i,
@@ -326,6 +400,12 @@ function checkContinuity(
     };
   }
   return null;
+}
+
+/** The product-claim check, live only on a turn that asked about the platform (§9.2). */
+function checkProductClaims(ctx: GateContext): GateFailure | null {
+  if (ctx.event.productQuestion !== true) return null;
+  return checkPatterns(ctx.text, PRODUCT_PATTERNS, "PRODUCT");
 }
 
 function checkAddressee(ctx: GateContext): GateFailure | null {
@@ -468,6 +548,7 @@ export function runDeterministicChecks(ctx: GateContext, config: GateConfig): Ga
   push(checkPatterns(ctx.text, META_PATTERNS, "META"));
   push(checkPatterns(ctx.text, INJECTION_PATTERNS, "INJECTION"));
   push(checkContinuity(ctx, config.numberTolerance));
+  push(checkProductClaims(ctx));
   if (config.requireAddressee) push(checkAddressee(ctx));
   push(checkRedundancy(ctx, config.redundancyWindow, config.redundancyThreshold));
   push(checkFormulaic(ctx, config.openerWindow, config.bannedPhrases));

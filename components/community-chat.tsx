@@ -376,10 +376,24 @@ export function CommunityChat() {
   }, [load, typing]);
 
   // Start pinned to the newest message, and stay pinned as turns arrive.
+  //
+  // Pinned by *which* row is newest, not by how many there are: a poll that appends
+  // one message and retimes another leaves the length unchanged, and the live page
+  // showed the consequence — the newest bubble sitting half under the composer, so
+  // the last thing the room said was the one thing a visitor could not read.
+  const newestKey = rows[rows.length - 1]?.key;
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [rows.length]);
+    if (!el) return;
+    const pin = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    pin();
+    // Again after the frame that laid the new row out, because a message bubble and
+    // the mobile viewport both settle after the effect runs.
+    const frame = requestAnimationFrame(pin);
+    return () => cancelAnimationFrame(frame);
+  }, [newestKey, rows.length, typing]);
 
   const send = async () => {
     const text = draft.trim();

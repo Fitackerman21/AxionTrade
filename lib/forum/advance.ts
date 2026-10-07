@@ -13,7 +13,7 @@
 import { nextEvent } from "./agenda";
 import { compactMemory, memoryNote } from "./archivist";
 import type { CompactionResult } from "./archivist";
-import { cannedDraft } from "./drafts";
+import { cannedDraft, productDraft } from "./drafts";
 import { foldTurn, injectionText, memoryKey, needsCompaction } from "./memory";
 import { isBurstTurn, RECENT_CHAT_MESSAGES, splitBeats, voiceDraft } from "./voice";
 import { lengthTarget, typographyFault } from "./register";
@@ -462,7 +462,7 @@ export async function advance(
       // A double-texting turn writes two beats around the marker the prompt asked
       // for. They are split here rather than after the Gate, because the Gate judges
       // what the room actually says: one person's message, not a marker.
-      if (isBurstTurn(persona, seq, event.authoredBy === "engine")) {
+      if (isBurstTurn(persona, seq, event.authoredBy === "engine", event.productQuestion === true)) {
         beats = splitBeats(voice.text);
         if (beats.length > 1) return beats.join(" ");
       }
@@ -506,6 +506,8 @@ export async function advance(
       // retry is another slow Voice call on a request someone is waiting on.
       const maxAttempts =
         event.kind === "HUMAN" ? Math.min(gateConfig.maxAttempts, 2) : gateConfig.maxAttempts;
+      // The one turn where "published anyway" would publish the wrong thing (§9.2).
+      const productTurn = event.productQuestion === true;
 
       let verdict: GateVerdict | null = null;
       // §8.4's REVISE arrow: the rejection that failed attempt n is handed to the
@@ -520,7 +522,7 @@ export async function advance(
         // settings, mine took two days" shares no content word with "how do I make
         // a withdrawal", and that is a good answer, not a non-answer.
         const attemptConfig =
-          (voiceDrift || event.offTopic === true) && gateConfig.requireAddressee
+          (voiceDrift || event.offTopic === true || productTurn) && gateConfig.requireAddressee
             ? { ...gateConfig, requireAddressee: false }
             : gateConfig;
         verdict = await runGate({
@@ -558,7 +560,19 @@ export async function advance(
       };
 
       if (verdict && verdict.decision !== "APPROVE") {
-        if (event.kind === "HUMAN") {
+        if (event.kind === "HUMAN" && productTurn) {
+          // §9 beats §8.4 for a person — but a question about the platform is the
+          // one shape where the rejected draft must not be what gets published:
+          // the codes it failed on are exactly the invented product claims and the
+          // money advice a public page cannot carry (§9.2). The person still gets
+          // an answer, in the room's own safe words instead of the model's.
+          text = productDraft({ persona: chosenPersona, seq, attempt: maxAttempts + 1 });
+          beats = [text];
+          decision = "APPROVE";
+          notes.push(
+            `gate exhausted after ${maxAttempts} attempts (${verdict.codes.join(", ")}); published a plain answer instead of the draft`,
+          );
+        } else if (event.kind === "HUMAN") {
           // §9 beats §8.4: a person asked and the room must answer. An imperfect
           // line — even a canned one — is worth more than the silence that made
           // the room look dead. The override is recorded on the turn.
@@ -602,6 +616,9 @@ export async function advance(
     if (gated && voiceDrift) notes.push("off-topic turn; the addressee rule was waived for it");
     if (gated && event.offTopic) {
       notes.push("the person asked something off the thread; answered them, addressee rule waived");
+    }
+    if (gated && event.productQuestion) {
+      notes.push("the person asked about the platform itself; answered without the testimonial licence");
     }
 
     // ---- steps 8-10: fold the exchange into memory, then compact if needed ----

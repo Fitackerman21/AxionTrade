@@ -79,6 +79,36 @@ test("a question that is not about the open thread is marked off-topic", () => {
   assert.equal(other.offTopic, true);
 });
 
+test("a question about the platform itself is flagged, and market talk is not", () => {
+  const ask = (text: string) =>
+    nextEvent(context({ seq: 5, turns: [makeTurn(4, { sender: "human", topicId: gold, text })] }));
+
+  // The three sentences the live page was actually asked, verbatim, plus the
+  // withdrawal question that started the off-topic work. All four are questions
+  // about the product, and all four were once answered as if they were about gold.
+  for (const text of [
+    "Is this real?",
+    "Is axion ai trading real ?, hope I am not going to lose my money in this?",
+    "Hey, is Axion really a good platform to trade?",
+    "how do i make a withdrawal",
+  ]) {
+    assert.equal(ask(text).productQuestion, true, `"${text}" asks about the platform`);
+  }
+
+  // Market talk stays market talk, including the messages that use the same words:
+  // "real" alone is not enough, and a question that shares the topic's vocabulary
+  // is about the topic.
+  for (const text of [
+    "what's the read on gold into the close?",
+    "is gold for real here",
+    "the range breaks up here",
+    "where does the stop sit on this one",
+    "oi",
+  ]) {
+    assert.notEqual(ask(text).productQuestion, true, `"${text}" is market talk`);
+  }
+});
+
 test("a world tick hands the floor to the engine persona", () => {
   const turns = [makeTurn(3, { sender: "mara", topicId: semis })];
   const event = nextEvent(context({ seq: 5, turns }));

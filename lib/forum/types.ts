@@ -292,6 +292,21 @@ export interface AgendaEvent {
    * evasion, which is the one thing a room of people never sounds like.
    */
   offTopic?: boolean;
+  /**
+   * A person asked about the platform itself — whether it is real, whether it is
+   * safe, whether they will lose their money (spec §9.2).
+   *
+   * This is the one question shape the room is not free to improvise on. Live, a
+   * visitor asked "is this real" and the room answered with a product claim nobody
+   * held: one persona said the fills were "mid as hell" and that she had been "just
+   * messing earlier", another told the visitor to use it "if you want to lose money
+   * slowly". A persona's only product facts are the curated lines in its own sheet,
+   * so this turn is written without the testimonial licence, without a fabricated
+   * claim and without advice — and the Gate rejects a draft that breaks any of the
+   * three — because on a public page all three are the product speaking about
+   * itself with a fake voice.
+   */
+  productQuestion?: boolean;
 }
 
 export interface ForumMessage {

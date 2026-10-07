@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { advance, previewHumanReply } from "./advance";
 import { catchUp } from "./catchup";
+import { productDraft } from "./drafts";
 import { publish } from "./publisher";
 import type { ChatProvider, ChatRequest } from "./provider";
 import { FileStore } from "./store";
@@ -12,6 +13,7 @@ import {
   createFixture,
   fitLine,
   makeTurn,
+  seqForTier,
   TEST_BASE,
   TEST_CONFIG,
   TEST_PERSONAS,
@@ -454,6 +456,85 @@ test("an off-topic turn is not held to the addressee rule", async () => {
       "the drifting line must survive the Gate, not be replaced by a template",
     );
     assert.match(result.record?.note ?? "", /addressee rule was waived/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a question about the platform gets a plain answer, never the draft it rejected", async () => {
+  const persona = TEST_PERSONAS.find((p) => p.id === "sol")!;
+  const seq = seqForTier(persona, "normal");
+  const personas = TEST_PERSONAS.map((p) => (p.id === persona.id ? { ...p, model: "test/model" } : p));
+  const config: ForumConfig = {
+    ...TEST_CONFIG,
+    // The room only covers one persona, and it covers the person.
+    permissions: { ...TEST_CONFIG.permissions, allow: { mara: [persona.id], human: [persona.id] } },
+    // Not "canned": if the product path did not exist, this turn would be
+    // recorded UNPUBLISHED rather than quietly publishing something else.
+    gate: gate(),
+  };
+  const fixture = await createFixture({ config, personas });
+  // The two bubbles the live page published in reply to "is this real": an invented
+  // product claim with a retraction of the room's own earlier line, and money advice.
+  const invented = fitLine(
+    `wait no, that\u2019s not real, i was just messing earlier. ${persona.id}\u2019s fills are mid as hell, use it only if you want to lose money slowly`,
+    persona,
+    seq,
+  );
+  const voice = voiceRecording(invented);
+  try {
+    await seedTurns(fixture, seq - 1);
+    await personSays(fixture.store, "Is axion ai trading real?, hope I am not going to lose my money in this?", BASE + 500);
+    const result = await advance(fixture.store, {
+      now: BASE + 1000,
+      voiceProvider: voice.provider,
+    });
+
+    assert.equal(result.record?.event.kind, "HUMAN");
+    assert.equal(result.status, "published", "§9 beats §8.4: the person still gets an answer");
+    assert.match(result.record?.note ?? "", /PRODUCT/);
+    assert.equal(
+      result.record?.message?.text,
+      productDraft({ persona, seq, attempt: (result.record?.attempts.length ?? 0) + 1 }),
+      "the invented claim must be replaced by one of the room's own safe lines",
+    );
+    assert.notEqual(result.record?.message?.text, invented);
+    assert.match(result.record?.note ?? "", /published a plain answer instead of the draft/);
+    assert.match(result.record?.note ?? "", /answered without the testimonial licence/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("the same invented claim is published on an ordinary turn, where it is only fluff", async () => {
+  // The check is scoped to product questions on purpose: on a market turn these
+  // words are the room's own slang, and a room whose slang is banned reads worse than
+  // one whose slang occasionally misses. `gate.test.ts` holds the other half.
+  const persona = TEST_PERSONAS.find((p) => p.id === "sol")!;
+  // Not a world tick, and not the opening: the room has to be mid-thread.
+  let seq = seqForTier(persona, "normal", 2);
+  while (seq % TEST_CONFIG.scheduling.worldEventEveryTurns === 0) {
+    seq = seqForTier(persona, "normal", seq + 1);
+  }
+  const personas = TEST_PERSONAS.map((p) => (p.id === persona.id ? { ...p, model: "test/model" } : p));
+  const fixture = await createFixture({
+    config: { ...TEST_CONFIG, permissions: { ...TEST_CONFIG.permissions, allow: { mara: [persona.id] } }, gate: gate() },
+    personas,
+  });
+  const line = fitLine("paper fills are mid and that is the whole problem with trading it", persona, seq);
+  try {
+    // A line the draft can answer, so ADDRESSEE is not the check under test.
+    await fixture.store.appendTurn(
+      makeTurn(seq - 1, {
+        sender: "mara",
+        topicId: TEST_TOPICS[0].id,
+        text: "paper fills are free, which is why everyone thinks they are a genius",
+      }),
+    );
+    const result = await advance(fixture.store, { now: BASE, voiceProvider: voiceSaying(line) });
+
+    assert.equal(result.status, "published");
+    assert.equal(result.record?.message?.text, line);
   } finally {
     await fixture.cleanup();
   }

@@ -6,11 +6,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { cannedDraft } from "./drafts";
+import { cannedDraft, PRODUCT_LINES, productDraft } from "./drafts";
 import type { ChatProvider, ChatRequest, ChatResponse } from "./provider";
 import { makeTurn, TEST_PERSONAS, TEST_TOPICS, TEST_WORLD } from "./test-utils";
 import type { AgendaEvent, Persona } from "./types";
-import { BEAT_BREAK, flawFor, isBurstTurn, splitBeats, voiceDraft } from "./voice";
+import { BEAT_BREAK, flawFor, isBurstTurn, PRODUCT_FLAW, splitBeats, voiceDraft } from "./voice";
 
 const MARA = TEST_PERSONAS.find((p) => p.id === "mara")!;
 
@@ -389,6 +389,94 @@ test("a question that is not about the thread is answered on its own terms", asy
   // The market stance is what produced "the withdrawal thing is dead, gold's still
   // coiling" on the live room, so it is withheld on this shape of turn.
   assert.doesNotMatch(user, /<your side>/);
+});
+
+test("a question about the platform is answered without the licence to invent one", async () => {
+  // Results on the sheet, because that is the flaw that produced the invented
+  // testimonial: with a licensed "concrete detail about what it has done for you",
+  // the model answered "is this real" with a product fault the persona did not have.
+  const withResults: Persona = {
+    ...voiced(),
+    sheet: { ...MARA.sheet, results: ["the position-size alerts killed her worst habit"] },
+  };
+  const { provider, seen } = fake(() => answer("ok"));
+  await voiceDraft({
+    persona: withResults,
+    event: eventOf({
+      kind: "HUMAN",
+      sender: "human",
+      quoted: "Is axion ai trading real ?, hope I am not going to lose my money in this?",
+      offTopic: true,
+      productQuestion: true,
+    }),
+    world: TEST_WORLD,
+    seq: 6,
+    provider,
+  });
+
+  const user = seen[0]!.messages[0]!.content ?? "";
+  assert.match(user, /asking about the platform itself/);
+  assert.match(user, /You do not know how it performs and you must not invent anything/);
+  assert.match(user, /do not say that anything you or anyone here said earlier was not real/);
+  assert.match(user, /never tell them to stay away from it or that they will lose it/);
+  assert.ok(user.includes("Is axion ai trading real"), "the question itself must reach the model");
+  // The market stance is withheld here exactly as it is on an off-topic turn.
+  assert.doesNotMatch(user, /<your side>/);
+
+  // The testimonial flaw is off the table for the whole turn, and so is every other
+  // roll: each one competes with the restriction, and the weakest model in the roster
+  // answered a trust question with "yeah nah, 2400 mid" on the live page with the
+  // restriction sitting in the prompt above it (§9.2).
+  for (let seq = 1; seq <= 120; seq += 1) {
+    assert.doesNotMatch(
+      flawFor(withResults, seq, false, true).text,
+      /this platform|real result you have had|American slang/,
+      `turn ${seq} handed a product question the testimonial licence`,
+    );
+    assert.equal(flawFor(withResults, seq, false, true), PRODUCT_FLAW);
+    assert.equal(isBurstTurn(withResults, seq, false, true), false);
+  }
+  assert.ok(
+    Array.from({ length: 120 }, (_, i) => i + 1).some((seq) =>
+      flawFor(withResults, seq).text.includes("this platform"),
+    ),
+    "the licence still exists for every other kind of turn",
+  );
+
+  // A fixed delivery note, because half of DELIVERY_HINTS licenses exactly the
+  // drift and half-reading that produced the market answer.
+  assert.match(user, /This one is about the platform, so the market does not come into it/);
+  for (let seq = 1; seq <= 200; seq += 1) {
+    assert.doesNotMatch(
+      flawFor(withResults, seq, false, true).text + user,
+      /only half-read it|fine to drift somewhere off-topic/,
+      `turn ${seq} kept the licence to be distracted`,
+    );
+  }
+});
+
+test("a product question with no model answers in the room's own safe words", async () => {
+  // The Voice failing is the other way the old room answered a trust question with
+  // a view on gold; the fallback for this shape of turn is the product bank.
+  const result = await voiceDraft({
+    persona: MARA,
+    event: eventOf({
+      kind: "HUMAN",
+      sender: "human",
+      quoted: "Is this real?",
+      offTopic: true,
+      productQuestion: true,
+    }),
+    world: TEST_WORLD,
+    seq: 6,
+  });
+
+  assert.equal(result.fallback, true);
+  assert.equal(result.text, productDraft({ persona: MARA, seq: 6, attempt: 1 }));
+  assert.ok(
+    [...PRODUCT_LINES.beat, ...PRODUCT_LINES.short, ...PRODUCT_LINES.thought].includes(result.text),
+    "the fallback must be one of the reviewed product lines",
+  );
 });
 
 test("an ordinary thread turn still carries the topic and its side", async () => {

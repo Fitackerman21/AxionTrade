@@ -86,6 +86,84 @@ function asksAboutTopic(text: string, topic: Topic): boolean {
   return false;
 }
 
+/**
+ * The words that name the platform itself.
+ *
+ * Any one of these makes a message a question about the product on its own — a fee,
+ * a refund, a withdrawal, an account can only be about the thing the person is
+ * looking at. `axion` is here because the room is on Axion's own site: a visitor
+ * who types the product's name is asking about it, not about gold.
+ */
+const PRODUCT_NAMES = new Set([
+  "axion",
+  "axiontrade",
+  "platform",
+  "app",
+  "website",
+  "subscription",
+  "withdraw",
+  "withdrawal",
+  "withdrawals",
+  "deposit",
+  "deposits",
+  "refund",
+  "refunds",
+  "fee",
+  "fees",
+  "broker",
+  "brokerage",
+  "custody",
+]);
+
+/**
+ * The words a trust-or-safety question is asked with.
+ *
+ * These only count when the message is *also* off the thread, which is what keeps
+ * them off market talk: "is gold for real here" shares its vocabulary with the
+ * topic and stays a market question, while "is this real" shares nothing and can
+ * only be about the thing the person is looking at. Words that are ordinary market
+ * vocabulary — risk, level, price, loss — are deliberately absent.
+ */
+const TRUST_WORDS = new Set([
+  "real",
+  "really",
+  "legit",
+  "legitimate",
+  "scam",
+  "safe",
+  "trust",
+  "trustworthy",
+  "fake",
+  "genuine",
+  "honest",
+  "guarantee",
+  "guaranteed",
+  "money",
+  "lose",
+  "losing",
+  "broke",
+  "refund",
+]);
+
+/**
+ * Is the person asking about the platform rather than the market? (spec §9.2)
+ *
+ * Deliberately narrow, because the answer changes the whole turn: a product
+ * question withholds the testimonial licence and forbids an invented claim, and a
+ * check wide enough to catch every message containing the word "real" would take
+ * the room's voice away from market talk. Naming the product is unambiguous; a
+ * trust word only counts when the message is also nothing to do with the open
+ * thread.
+ */
+export function asksAboutProduct(text: string, onTopic: boolean): boolean {
+  const tokens = contentTokens(text);
+  if (tokens.size === 0) return false;
+  for (const token of tokens) if (PRODUCT_NAMES.has(token)) return true;
+  if (onTopic) return false;
+  for (const token of tokens) if (TRUST_WORDS.has(token)) return true;
+  return false;
+}
+
 /** Trailing run of posts that share the newest post's topic *and* side. */
 function trailingStreak(posts: readonly PostedTurn[]): { side: Side | null; count: number } {
   const newest = posts[posts.length - 1];
@@ -133,6 +211,7 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
   if (newest && isExternal(newest.message.sender, personas)) {
     const topic = topicFor(newest.message.topicId, topics);
     const onTopic = asksAboutTopic(newest.message.text, topic);
+    const product = asksAboutProduct(newest.message.text, onTopic);
     return {
       kind: "HUMAN",
       reason: onTopic
@@ -148,6 +227,8 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       replyTo: newest.message.seq,
       // Off the thread: the answer is to the person, not to the market.
       ...(onTopic ? {} : { offTopic: true }),
+      // About the platform: a question the room answers without a claim (§9.2).
+      ...(product ? { productQuestion: true } : {}),
     };
   }
 

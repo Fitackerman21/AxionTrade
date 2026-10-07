@@ -7,8 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { cannedDraft, REPERTOIRE } from "./drafts";
-import { contentTokens } from "./gate";
+import { cannedDraft, productDraft, PRODUCT_LINES, REPERTOIRE } from "./drafts";
+import { contentTokens, resolveGateConfig, runDeterministicChecks } from "./gate";
 import { lengthTarget, typographyFault } from "./register";
 import { dataStore } from "./test-utils";
 import type { AgendaEvent, Persona, Side } from "./types";
@@ -100,6 +100,51 @@ test("no character sheet teaches a memo shape", async () => {
         labelled.test(line),
         false,
         `${persona.id}'s sheet teaches a labelled fragment: "${line}"`,
+      );
+    }
+  }
+});
+
+test("no character sheet puts a fault in the product", async () => {
+  const personas = await store.readPersonas();
+  // The sheets are the voice anchor, so a fault written into one comes back out of a
+  // model as an unprompted line about the product. That is how the live transcript got
+  // "still hate that the alerts fire late" and "the alerts fire late anyway, fills log
+  // does more for me than the alerts ever did" — a persona complaining about a feature
+  // it cannot evaluate, in the product's own voice, on the product's own page (§9.2).
+  //
+  // Scoped to reliability, not to opinion: "the top tier is mostly noise" is a
+  // judgement about scope, and the sheet's honest mixed tone is deliberate. "It fires
+  // late" is a claim that the thing does not work, which no persona can make.
+  const productNoun =
+    /\b(?:alerts?|fills?|fills log|screens?|flow screen|levels screen|watchlist|earnings calendar|guardrail|subscription|platform|the app|the site)\b/i;
+  const reliability =
+    /\b(?:late|slow|lag|mid|trash|garbage|useless|broken|buggy|glitchy|unreliable|inaccurate|misses|missed)\b/i;
+  const slur = /\b(?:not real|scam|fake|stay away|don'?t trust|isn'?t real|ain'?t real)\b/i;
+  // The comparative put-down: "the earnings calendar has saved her twice and the alerts
+  // have not". No reliability word in it, so the proximity check misses it, and the
+  // "the" plus the verb keeps it off an honest line ("the wallet of alerts he set up in
+  // January has not been touched since, he considers that a feature").
+  const dismissed =
+    /\b(?:and|but)\s+the\s+(?:alerts?|fills?|screens?|platform|watchlist|calendar|guardrail)\s+(?:have|has|did|do|is|are)\s+(?:not|n'?t)\b/i;
+  const near = (line: string): boolean => {
+    const words = line.split(/\s+/);
+    for (let i = 0; i < words.length; i += 1) {
+      if (!productNoun.test(words[i]!)) continue;
+      for (let j = Math.max(0, i - 6); j < Math.min(words.length, i + 7); j += 1) {
+        if (reliability.test(words[j]!)) return true;
+      }
+    }
+    return false;
+  };
+
+  for (const persona of personas) {
+    const { sampleLines, banter, results } = persona.sheet;
+    for (const line of [...sampleLines, ...(banter ?? []), ...(results ?? [])]) {
+      assert.equal(
+        near(line) || slur.test(line) || dismissed.test(line),
+        false,
+        `${persona.id}'s sheet teaches a fault in the product: "${line}"`,
       );
     }
   }
@@ -331,6 +376,66 @@ test("a fallback line is chosen to fit the turn, and connects without quoting an
         }
       }
     }
+  }
+});
+
+test("the room's answer about the platform fits its turn and claims nothing", async () => {
+  const [personas, topics, world] = await Promise.all([
+    store.readPersonas(),
+    store.readTopics(),
+    store.readWorld(),
+  ]);
+  const topic = topics[0]!;
+  // ADDRESSEE is off because the reply path waives it for this shape of turn
+  // (`advance.ts`): the answer is the persona's own line about the platform, and it
+  // shares no market vocabulary with the question by construction.
+  const det = resolveGateConfig({ mode: "deterministic", requireAddressee: false });
+  const question: AgendaEvent = {
+    kind: "HUMAN",
+    reason: "test",
+    sender: "human",
+    topic,
+    side: "a",
+    quoted: "Is axion ai trading real?, hope I am not going to lose my money in this?",
+    authoredBy: "responder",
+    offTopic: true,
+    productQuestion: true,
+  };
+
+  // Across a run of seqs, because the tier changes per turn and the bank has to
+  // reach every one of them — a product answer that only fits one tier is a product
+  // answer that is published too long or too short on three turns out of four.
+  for (const persona of personas) {
+    for (let seq = 1; seq <= 240; seq += 1) {
+      const text = productDraft({ persona, seq, attempt: 1 });
+      const target = lengthTarget(persona, seq);
+      const where = `${persona.id}/${target.tier}/seq ${seq}`;
+
+      assert.ok(text.length > 0, `${persona.id} produced an empty product answer`);
+      assert.ok(
+        text.length >= target.min && text.length <= target.max,
+        `${where} missed its target (${target.min}-${target.max}, got ${text.length}): "${text}"`,
+      );
+      assert.equal(typographyFault(text), "", `${where} used keyboard punctuation: "${text}"`);
+      // The point of these lines is that the Gate's own product check accepts them,
+      // so the fallback can never be the thing that gets rejected.
+      const failures = runDeterministicChecks(
+        { persona, text, event: question, world, turns: [], seq },
+        det,
+      );
+      assert.deepEqual(failures.map((f) => f.code), [], `${where} was rejected: "${text}"`);
+    }
+  }
+
+  // None of them is addressed by id. `addressed()` puts the sender's name in front of
+  // a line that does not connect to what they said, and the id a person's message
+  // carries is literally "human" — so the garble this guards is "human, i use it".
+  for (const line of [
+    ...PRODUCT_LINES.beat,
+    ...PRODUCT_LINES.short,
+    ...PRODUCT_LINES.thought,
+  ]) {
+    assert.doesNotMatch(line, /^human\b/i, `"${line}" greets the sender by id`);
   }
 });
 

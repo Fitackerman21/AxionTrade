@@ -194,6 +194,59 @@ test("the machine aphorism is caught as formulaic", () => {
   );
 });
 
+test("a fabricated product claim is caught on a question about the platform, and legal elsewhere", () => {
+  const product = (text: string): GateCode[] =>
+    failingCodes(fitLine(text, PERSONA, SEQ), { event: eventOf({ productQuestion: true }) });
+
+  // The first line is the live page's, verbatim: an invented product claim, a
+  // retraction of the room's own earlier message, and a promise about the visitor's
+  // money, all in one bubble. The rest are the same shapes in their shorter forms.
+  const forbidden = [
+    "wait no, that\u2019s not real, i was just messing earlier. axion\u2019s fills are mid as hell",
+    "axion\u2019s fills are mid. use it for alerts only if you want to lose money slowly.",
+    "the fills are slow and the alerts are late",
+    "don\u2019t use it, it is a scam",
+    "you\u2019ll go broke on this, stay away",
+    "i was just messing about all of it",
+    "it is guaranteed to make you money",
+    // Produced live in the acceptance run for "how do i make a withdrawal", the
+    // account side of the product and the reversed word order.
+    "mid withdrawal process for me",
+    "the withdrawals are painfully slow",
+    "signup was a nightmare",
+    "support is useless",
+  ];
+  for (const text of forbidden) {
+    assert.ok(product(text).includes("PRODUCT"), `"${text}" must fail PRODUCT`);
+  }
+
+  // The gate is on the *shape*, and only on this shape of turn: "mid" is the room's
+  // own slang and "paper fills are mid" was published on a thread turn as a view on
+  // paper trading, not as a claim about the product. It has to stay publishable.
+  assert.equal(
+    failingCodes(fitLine("paper fills are mid and that is the whole problem with it", PERSONA, SEQ)).includes(
+      "PRODUCT",
+    ),
+    false,
+    "market talk that happens to use the word mid must survive",
+  );
+
+  // And an honest mixed opinion is exactly what a member of the room may say.
+  for (const text of [
+    "i just use it, that is my whole view on it honestly",
+    "i don't use anything else on it and i'm not going to sell you on it either",
+    "nobody in this room can promise you anything about your money",
+    "nah not complicated. go to account settings, hit withdrawal, pick method, confirm",
+    "withdrawals are handled in account settings, nothing dramatic about it",
+  ]) {
+    assert.equal(
+      product(text).includes("PRODUCT"),
+      false,
+      `"${text}" is a thing a member of the room may say`,
+    );
+  }
+});
+
 test("meta narration is caught", () => {
   assert.ok(failingCodes("*smiles* the desk is quiet today").includes("META"));
   assert.ok(failingCodes("(nods) the range holds for now").includes("META"));

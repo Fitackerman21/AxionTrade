@@ -20,7 +20,7 @@
  * lets `advance()` stop holding that turn to the Gate's ADDRESSEE rule.
  */
 
-import { cannedDraft } from "./drafts";
+import { cannedDraft, productDraft } from "./drafts";
 import { FallbackProvider, OpenRouterProvider, openRouterKeys } from "./provider";
 import type { ChatProvider } from "./provider";
 import { lengthTarget, TEXTING_RULE } from "./register";
@@ -142,6 +142,17 @@ export interface VoiceFlaw {
 const SLANG_FLAW =
   "Use American slang the way you actually talk — one word, no explaining it, no quotation marks, no capitals if you never use them.";
 
+/**
+ * The single directive a question about the platform gets (spec §9.2).
+ *
+ * Deliberately not one of the rolls: a product question has no market read in it,
+ * so there is no honest way to react to "the wrong half" of it, and no room for a
+ * tangent. It answers what it was asked.
+ */
+export const PRODUCT_FLAW: VoiceFlaw = {
+  text: "Answer the question they asked about the platform, plainly, in your own voice. Do not give a market read and do not react to the room instead of answering them.",
+};
+
 const HUMAN_FLAWS: readonly VoiceFlaw[] = [
   { text: "Just answer in your own voice. Nothing special needed." },
   { text: "Just answer in your own voice. Nothing special needed." },
@@ -200,12 +211,36 @@ const HUMAN_FLAWS: readonly VoiceFlaw[] = [
  * subject is incoherent rather than human), and a persona with no slang list of
  * its own is never told to reach for slang it does not have.
  */
-export function flawFor(persona: Persona, seq: number, engine = false): VoiceFlaw {
+export function flawFor(
+  persona: Persona,
+  seq: number,
+  engine = false,
+  /**
+   * true on a turn the room must not sell itself on — a question about the platform
+   * (§9.2). "Say one concrete thing about what you actually get out of this
+   * platform" is the flaw that produced the invented testimonial that started the
+   * whole failure, so it and "mention a real result" are simply off the table there.
+   */
+  noProductClaims = false,
+): VoiceFlaw {
+  // A product question gets one directive and no dice roll. Every entry in
+  // HUMAN_FLAWS competes with the restriction — the beat flaw asks for "two or three
+  // words" and a reaction, the drift flaws invite leaving the subject — and the
+  // weakest model in the roster answered a trust question with "yeah nah, 2400 mid"
+  // on the live page with the restriction sitting in the prompt above it. There is
+  // nothing to vary here: the turn has one job.
+  if (noProductClaims) return PRODUCT_FLAW;
+
   const roll = hashPick(HUMAN_FLAWS, `flaw:${persona.id}:${seq}`) ?? HUMAN_FLAWS[0]!;
   if (engine) return HUMAN_FLAWS[0]!;
   if (roll.needs === "slang" && !(persona.sheet.slang?.length ?? 0)) return HUMAN_FLAWS[0]!;
   if (roll.needs === "results" && !(persona.sheet.results?.length ?? 0)) return HUMAN_FLAWS[0]!;
   return roll;
+}
+
+/** Is this turn one of the room's restricted product questions? (§9.2) */
+function restricted(event: AgendaEvent): boolean {
+  return event.productQuestion === true && event.authoredBy !== "engine";
 }
 
 /**
@@ -215,8 +250,14 @@ export function flawFor(persona: Persona, seq: number, engine = false): VoiceFla
  * never treated as a burst — only the turns that were actually asked to double-text
  * can produce one.
  */
-export function isBurstTurn(persona: Persona, seq: number, engine = false): boolean {
-  return flawFor(persona, seq, engine).burst === true;
+export function isBurstTurn(
+  persona: Persona,
+  seq: number,
+  engine = false,
+  /** true on a product question, whose single directive never asks for a burst */
+  noProductClaims = false,
+): boolean {
+  return flawFor(persona, seq, engine, noProductClaims).burst === true;
 }
 
 const VOICE_SYSTEM = [
@@ -242,9 +283,21 @@ const VOICE_SYSTEM = [
   // The other half of the same tell: advice that arrives with a label on it, or a
   // message split into paragraphs like a memo, is a document, not a text.
   "One message is one thought in one paragraph. Never label your own line ('Rule:', 'Reminder:', 'Note:', 'Takeaway:', 'Bottom line:'), never split it into paragraphs with a blank line, and never sign it off.",
-  // Testimonials: real, occasional, mixed. A room that only praises the product
-  // reads as an advert, which is exactly what it must not be.
-  "You have used this platform long enough to have real results and real complaints about it. Now and then — not often — you mention one concrete detail about what it has actually done for you or for your week. Never as an advert: no percentage you cannot back, no feature list, no telling anyone they should try it.",
+  // Testimonials: real, occasional. A room that only praises the product reads as an
+  // advert, but the fix for that is a room with other things on its mind, not a room
+  // that knocks the product: this sentence used to license "real complaints about it",
+  // and that licence is what put "the alerts fire late anyway" and "just use it for
+  // the alerts, that's all i need" into the ambient transcript — a persona complaining
+  // about a feature it cannot evaluate, in the product's own voice, unprompted.
+  "You have used this platform long enough to have real results on it. Now and then — not often — you mention one concrete detail about what it has actually done for you or for your week, and only from the list above if there is one. Never as an advert and never as a complaint: no percentage you cannot back, no feature list, no fault you have found with it, and no telling anyone they should try it or stay away from it.",
+  // The edge of that licence, found live. Asked whether the platform was "real",
+  // a persona invented a product fault it did not have ("axion's fills are mid as
+  // hell") and then retracted its own earlier message ("i was just messing
+  // earlier"), and another told the visitor to use it "if you want to lose money
+  // slowly". On a public page that is the product defaming itself with a fake
+  // voice, and the retraction reads as the room admitting it is scripted.
+  "You have no idea how the platform performs. You are a trader who uses it, not a reviewer of it: never state or guess anything about its fills, its speed, its accuracy, its alerts, its fees, or how much money anyone makes or loses on it. The only facts you have about it are the ones listed above.",
+  "Never call it a scam, fake or a lie, never say that something you said earlier was not real, and never tell anyone to stay away from it or that they will lose their money. Nobody here tells other people what to do with their money and nobody promises anyone an outcome.",
 ].join(" ");
 
 /** The persona's character sheet, re-injected every turn so voice survives compaction. */
@@ -325,19 +378,25 @@ function turnUser(args: {
   const { event, world, persona, seq, recent, memory, critique } = args;
   const target = lengthTarget(persona, seq);
   const engine = event.authoredBy === "engine";
+  // A product question is stricter than an off-topic one and supersedes it (§9.2),
+  // so both are decided here, before anything reads either.
+  const product = restricted(event);
+  const offTopic = event.offTopic === true && !engine && !product;
   const quoted =
     event.quoted == null
       ? "<opening the room>"
       : engine
         ? [`<the tape, and your own read of it>`, event.quoted, "</the tape>"].join(NL)
         : [`<message from ${event.sender}>`, event.quoted, "</message>"].join(NL);
-  const hint = hashPick(DELIVERY_HINTS, `voice:${persona.id}:${seq}`) ?? DELIVERY_HINTS[0]!;
-  const flaw = flawFor(persona, seq, engine).text;
+  // A product question gets a fixed delivery note as well as a fixed flaw: half of
+  // DELIVERY_HINTS hands the model licence to be distracted or to drift, which is
+  // the licence that produced "yeah nah, 2400 mid" as an answer to a worried
+  // visitor. See `PRODUCT_FLAW`.
+  const hint = product
+    ? "Answer them directly, in your own words, at the length above. This one is about the platform, so the market does not come into it."
+    : (hashPick(DELIVERY_HINTS, `voice:${persona.id}:${seq}`) ?? DELIVERY_HINTS[0]!);
+  const flaw = flawFor(persona, seq, engine, product).text;
   const chat = recentChat(recent, persona.id);
-  // A person asking something the room is not on gets an answer to *that*, not a
-  // stance on the thread (spec §9). Handing the model <your side> here is what made
-  // the live room reply to "how do withdrawals work" with a view on gold.
-  const offTopic = event.offTopic === true && !engine;
 
   return [
     memory ? `<what you remember about ${event.sender}>${NL}${memory}${NL}</what you remember>` : "",
@@ -345,13 +404,21 @@ function turnUser(args: {
       ? `You may use what you remember, the way a person uses a memory of a real conversation. Never recite it, never say that you remember it, never list it back.`
       : "",
     chat,
-    offTopic
+    product
       ? [
           `<the open thread>${event.topic.title}</the open thread>`,
-          `${event.sender} asked you something that is not about that thread. Answer the question they actually asked, in your own voice and at your own length. Do not steer it back to the market, and do not bring the thread up unless the answer needs it.`,
-          `If you do not know the answer, say so the way you would to someone at the desk. Do not invent a feature, a menu, a fee or a number.`,
+          `${event.sender} is asking about the platform itself, not about the market. Answer them as one trader in the room, not as the platform.`,
+          `You do not know how it performs and you must not invent anything: nothing about fills, speed, accuracy, alerts, fees, or what anyone makes or loses on it. You have no numbers and no results except the ones listed above.`,
+          `Do not call it real or fake, do not say that anything you or anyone here said earlier was not real, do not tell them whether to put their money in it, and never tell them to stay away from it or that they will lose it.`,
+          `One honest line about what you use it for, or plainly that it is not your call, is the whole answer. Do not steer it back to the market unless they asked about the market too.`,
         ].join(NL)
-      : [`<what the room is on>${event.topic.title}</what the room is on>`, `<your side>${event.topic.sides[event.side]}</your side>`].join(NL),
+      : offTopic
+        ? [
+            `<the open thread>${event.topic.title}</the open thread>`,
+            `${event.sender} asked you something that is not about that thread. Answer the question they actually asked, in your own voice and at your own length. Do not steer it back to the market, and do not bring the thread up unless the answer needs it.`,
+            `If you do not know the answer, say so the way you would to someone at the desk. Do not invent a feature, a menu, a fee or a number.`,
+          ].join(NL)
+        : [`<what the room is on>${event.topic.title}</what the room is on>`, `<your side>${event.topic.sides[event.side]}</your side>`].join(NL),
     `<today>${world.digest}</today>`,
     quoted,
     "",
@@ -425,7 +492,7 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
       usedVoice: true,
       fallback: false,
       reason: null,
-      drift: flawFor(persona, seq, engineFlaw).drift ?? false,
+      drift: flawFor(persona, seq, engineFlaw, restricted(event)).drift ?? false,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -436,13 +503,19 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
 /** The P0 draft, with the reason the Voice did not run. */
 function cannedResult(opts: VoiceDraftOptions, reason: string): VoiceDraftResult {
   return {
-    text: cannedDraft({
-      persona: opts.persona,
-      event: opts.event,
-      world: opts.world,
-      seq: opts.seq,
-      attempt: opts.attempt ?? 1,
-    }),
+    // A product question falls back to the room's safe lines, not to a market line:
+    // a persona with no model (or a provider that is down) would otherwise answer
+    // "is this real" with a view on gold, which is the deflection that made the live
+    // room sound like a bot in the first place (§9.2).
+    text: restricted(opts.event)
+      ? productDraft({ persona: opts.persona, seq: opts.seq, attempt: opts.attempt ?? 1 })
+      : cannedDraft({
+          persona: opts.persona,
+          event: opts.event,
+          world: opts.world,
+          seq: opts.seq,
+          attempt: opts.attempt ?? 1,
+        }),
     model: null,
     usage: null,
     usedVoice: false,
