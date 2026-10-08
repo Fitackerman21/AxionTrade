@@ -22,6 +22,8 @@ interface StoreModule {
   insertMembers: (rows: Array<{ email: string; name: string }>, batch: string) => Promise<{ inserted: number; skipped: number }>;
   listMembers: () => Promise<Array<{ email: string; name: string }>>;
   deleteMember: (email: string, actor: string) => Promise<boolean>;
+  putMedia: (persona: string | null, contentType: string, bytes: Buffer) => Promise<string>;
+  getMedia: (id: string) => Promise<{ contentType: string; bytes: Buffer } | null>;
   logAction: (action: string, detail: Record<string, unknown>, actor: string) => Promise<void>;
   readAdminLog: () => Promise<Array<{ action: string }>>;
 }
@@ -98,6 +100,16 @@ describe("admin store", { skip: !hasDb }, () => {
     assert.equal(await store.deleteMember(email, marker), false, "a second delete finds nothing");
     const members = (await store.listMembers()) as Array<{ email: string; name: string }>;
     assert.equal(members.find((m) => m.email === email), undefined);
+  });
+
+  it("stores and serves an uploaded image", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, marker.length]);
+    const id = await store.putMedia("mara", "image/png", png);
+    assert.match(id, /^[a-z0-9]+$/);
+    const media = (await store.getMedia(id)) as { contentType: string; bytes: Buffer };
+    assert.equal(media.contentType, "image/png");
+    assert.ok(media.bytes.equals(png));
+    assert.equal(await store.getMedia("no-such-id"), null);
   });
 
   it("writes to the audit log", async () => {

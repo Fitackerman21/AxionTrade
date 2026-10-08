@@ -52,6 +52,15 @@ const SCHEMA = `
     taken_seq bigint,
     t         bigint not null
   );
+  -- Uploaded profile pictures, when no object store is configured. Avatar-sized
+  -- only (the route caps at 5 MB); served back through /api/media/[id].
+  create table if not exists forum_media (
+    id           text   primary key,
+    persona      text,
+    content_type text   not null,
+    bytes        bytea  not null,
+    t            bigint not null
+  );
 `;
 
 /** The keys the settings table is allowed to hold; anything else is rejected. */
@@ -281,6 +290,37 @@ export async function listMembers(limit = 200): Promise<MemberRow[]> {
     batch: row.batch,
     t: Number(row.t),
   }));
+}
+
+/**
+ * Store one uploaded image and return its id, to be served at /api/media/[id].
+ * The default sink when no Supabase (or other object store) is configured — the
+ * database the app already runs on is the bucket.
+ */
+export async function putMedia(
+  persona: string | null,
+  contentType: string,
+  bytes: Buffer,
+): Promise<string> {
+  await ensure();
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  await db().query(
+    "insert into forum_media (id, persona, content_type, bytes, t) values ($1, $2, $3, $4, $5)",
+    [id, persona, contentType, bytes, Date.now()],
+  );
+  return id;
+}
+
+export async function getMedia(
+  id: string,
+): Promise<{ contentType: string; bytes: Buffer } | null> {
+  await ensure();
+  const { rows } = await db().query<{
+    content_type: string;
+    bytes: Buffer;
+  }>("select content_type, bytes from forum_media where id = $1", [id]);
+  const row = rows[0];
+  return row ? { contentType: row.content_type, bytes: row.bytes } : null;
 }
 
 // ---------------------------------------------------------------------------
