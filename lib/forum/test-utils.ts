@@ -155,6 +155,8 @@ export const TEST_CONFIG: ForumConfig = {
     warmupTurns: 25,
     redundancyWindow: 8,
     redundancyThreshold: 0.82,
+    repeatWindow: 40,
+    repeatNgram: 8,
     openerWindow: 20,
     numberTolerance: 0.02,
     requireAddressee: true,

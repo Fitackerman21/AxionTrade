@@ -27,7 +27,7 @@ import { respondersFor } from "./permissions";
 import { buildMessage, publish, publishUnpublished } from "./publisher";
 import { resolveJudgeProvider } from "./provider";
 import type { ChatProvider } from "./provider";
-import { recencyFromTurns, pickSpeaker } from "./schedule";
+import { localHourFor, recencyFromTurns, pickSpeaker } from "./schedule";
 import type { SpeakerChoice } from "./schedule";
 import { humanReplyDueAt, humanReplyRange, typingAt } from "./clock";
 import { hashPick } from "./rng";
@@ -199,6 +199,24 @@ export interface ResponderPlan {
  * exact same rules the real turn will use — the preview and the publish cannot
  * disagree about who is "typing".
  */
+/**
+ * Each candidate's local hour, when the room asks for local-hours weighting.
+ *
+ * Undefined when the room has not opted in, or when no persona carries a time zone —
+ * either way the scheduler behaves exactly as it did before the option existed.
+ */
+function localHours(
+  personas: readonly Persona[],
+  at: number,
+): Record<PersonaId, number> | undefined {
+  const out: Record<PersonaId, number> = {};
+  for (const persona of personas) {
+    const hour = localHourFor(persona.tz, at);
+    if (hour !== undefined) out[persona.id] = hour;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function chooseResponder(args: {
   event: AgendaEvent;
   config: ForumConfig;
@@ -206,11 +224,12 @@ function chooseResponder(args: {
   turns: readonly TurnRecord[];
   lastSeq: number;
   seq: number;
+  localHour?: Record<PersonaId, number>;
 }): ResponderPlan {
-  const { event, config, personas, turns, lastSeq, seq } = args;
+  const { event, config, personas, turns, lastSeq, seq, localHour } = args;
   const permissions = respondersFor(event.sender, config, personas);
   const recency = recencyFromTurns(turns, lastSeq);
-  const scheduleInput = { ...recency, config, roomId: config.roomId, seq };
+  const scheduleInput = { ...recency, config, roomId: config.roomId, seq, localHour };
 
   let candidates = permissions.direct;
   let escalated: TurnRecord["escalated"] = null;
@@ -271,7 +290,15 @@ export async function previewHumanReply(
     return { sender: config.agenda.enginePersona, system: true, dueAt, typingAt: typingFrom };
   }
 
-  const plan = chooseResponder({ event, config, personas, turns, lastSeq: last.seq, seq });
+  const plan = chooseResponder({
+    event,
+    config,
+    personas,
+    turns,
+    lastSeq: last.seq,
+    seq,
+    localHour: localHours(personas, now),
+  });
   const chosen = plan.choice.chosen;
   if (!chosen) {
     return { sender: config.agenda.enginePersona, system: true, dueAt, typingAt: typingFrom };
@@ -355,6 +382,15 @@ export async function advance(
       (p) => !settings.muted.includes(p.id) || p.id === config.agenda.enginePersona,
     );
 
+    // The names a line may address, for the Gate's NAME_PREFIX check: every id, plus
+    // the words of every display name, lowercased. Built from the whole roster so a line
+    // that names a muted persona is still caught.
+    const rosterVocatives = [
+      ...new Set(
+        personas.flatMap((p) => [p.id.toLowerCase(), ...p.name.toLowerCase().split(/\s+/)]),
+      ),
+    ].filter((word) => word.length >= 3);
+
     const seq = (last?.seq ?? 0) + 1;
     const event = nextEvent({ seq, now, turns, config, topics, world, personas });
 
@@ -365,6 +401,7 @@ export async function advance(
       turns,
       lastSeq: last?.seq ?? 0,
       seq,
+      localHour: localHours(selectable, now),
     });
     let candidates = plan.candidates;
     let escalated = plan.escalated;
@@ -447,6 +484,16 @@ export async function advance(
     const gateConfig = resolveGateConfig(config.gate);
     const chosenPersona = personas.find((p) => p.id === chosen);
     const gated = gateConfig.mode !== "off" && event.authoredBy === "responder" && !system;
+
+    // A line cannot quote itself. A speak-as injection jumps the queue and can name a
+    // persona who wrote the newest message, which pointed the quote at their own line
+    // (live, seq 886 quoted seq 885, both rafa). The quote is the message being
+    // answered, so a target written by the responder is not one.
+    const replyTo =
+      event.replyTo !== undefined &&
+      turns.find((turn) => turn.seq === event.replyTo)?.message?.sender === chosen
+        ? undefined
+        : event.replyTo;
 
     const attempts: Attempt[] = [];
     const gateNotes: string[] = [];
@@ -543,7 +590,7 @@ export async function advance(
       } else {
         // The Gate is skipped for engine turns, so this is the only place a line
         // outside the persona's band can be caught before it is published.
-        text = cannedDraft({ persona: enginePersona, event, world, seq, attempt: 1 });
+        text = cannedDraft({ persona: enginePersona, event, world, seq, attempt: 1, recent: turns });
         // The replaced line is gone, so its beats are too.
         beats = [text];
         notes.push(`engine line fell outside ${enginePersona.id}'s register; used the template`);
@@ -611,7 +658,7 @@ export async function advance(
             ? { ...gateConfig, requireAddressee: false }
             : gateConfig;
         verdict = await runGate({
-          context: { persona: chosenPersona, text, event, world, turns, seq },
+          context: { persona: chosenPersona, text, event, world, turns, seq, roster: rosterVocatives },
           config: attemptConfig,
           priorPosts,
           attempt: n,
@@ -670,7 +717,14 @@ export async function advance(
           // the room to notice a hole, a rejected draft would simply be a gap in
           // the conversation. The template line is register-safe by construction,
           // so it is published instead of nothing.
-          text = cannedDraft({ persona: chosenPersona, event, world, seq, attempt: maxAttempts + 1 });
+          text = cannedDraft({
+            persona: chosenPersona,
+            event,
+            world,
+            seq,
+            attempt: maxAttempts + 1,
+            recent: turns,
+          });
           beats = [text];
           decision = "APPROVE";
           notes.push(
@@ -734,7 +788,7 @@ export async function advance(
             // Only a turn that is actually answering a message records one: a
             // FRICTION prompt is the topic's canonical line, not something said.
             incoming:
-              event.replyTo !== undefined && event.quoted
+              replyTo !== undefined && event.quoted
                 ? { text: event.quoted, topicId: event.topic.id }
                 : undefined,
             outgoing: { text, topicId: event.topic.id },
@@ -801,7 +855,7 @@ export async function advance(
               side: event.side,
               system,
               // The quoted strip under a bubble is the seq of what it answers.
-              replyToSeq: event.replyTo,
+              replyToSeq: replyTo,
             })
           : null,
       memoryWrites,

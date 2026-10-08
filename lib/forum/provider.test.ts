@@ -11,6 +11,8 @@ import {
   modelFamily,
   openRouterKey,
   openRouterKeys,
+  providerHealth,
+  resetProviderHealth,
   resolveJudgeProvider,
   sameFamily,
 } from "./provider";
@@ -288,4 +290,37 @@ test("the judge provider is only built when a key and model are both present", (
     if (previous === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = previous;
   }
+});
+
+test("a provider with no credit is tripped out of the failover chain, then retried", async () => {
+  resetProviderHealth();
+  const calls: string[] = [];
+  const member = (model: string): ChatProvider => ({
+    id: "fake",
+    model,
+    family: modelFamily(model),
+    chat: async () => {
+      calls.push(model);
+      throw new ProviderError("needs more credits", 402);
+    },
+  });
+
+  const chain = new FallbackProvider([member("a/x"), member("b/y")]);
+  for (let i = 0; i < 2; i += 1) {
+    await assert.rejects(() => chain.chat(REQUEST));
+  }
+
+  // Two sticky failures and the provider is out — which is what the dashboard reads.
+  const health = providerHealth();
+  assert.equal(health.filter((h) => h.open).length, 2, "both members should be open");
+  assert.equal(health[0]?.status, 402);
+
+  // An all-open chain still tries every member: a guess about health must never be
+  // what silences the room.
+  const before = calls.length;
+  await assert.rejects(() => chain.chat(REQUEST));
+  assert.equal(calls.length, before + 2, "an all-open chain falls through to every member");
+
+  resetProviderHealth();
+  assert.deepEqual(providerHealth(), []);
 });

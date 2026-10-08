@@ -559,6 +559,9 @@ function cannedResult(opts: VoiceDraftOptions, reason: string): VoiceDraftResult
           world: opts.world,
           seq: opts.seq,
           attempt: opts.attempt ?? 1,
+          // The fallback is read as often as a real line when the Voice is down, so it
+          // gets the same repeat window the live path does.
+          recent: opts.recent,
         }),
     model: null,
     usage: null,

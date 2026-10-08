@@ -292,6 +292,122 @@ export function openRouterKeys(): string[] {
  * calling all members at once multiplies the rate-limit pressure that causes the
  * failures this exists to survive.
  */
+/**
+ * Sticky provider failures, remembered per instance.
+ *
+ * The live failure this exists for: a key runs out of credit and every call returns
+ * `402`, so the room falls back to templates on every turn while each turn still pays
+ * two failed round-trips per persona. A 402 (and a 401/403) will not fix itself inside
+ * a turn, so the provider is tripped out of the failover chain for a few minutes and the
+ * next member answers instead. 429s and 5xx are deliberately *not* counted: those recover,
+ * and skipping a member that would have answered is worse than one slow call.
+ *
+ * In-memory and per instance on purpose — this is a latency and noise optimisation, not
+ * a source of truth. A serverless instance that has never seen the failure pays one
+ * round-trip to learn it again.
+ */
+const STICKY_STATUSES = new Set([401, 402, 403]);
+const CIRCUIT_COOLDOWN_MS = 5 * 60_000;
+const CIRCUIT_THRESHOLD = 2;
+
+interface CircuitEntry {
+  provider: string;
+  model: string;
+  failures: number;
+  status: number;
+  message: string;
+  since: number;
+}
+
+const circuits = new Map<string, CircuitEntry>();
+
+const circuitKey = (provider: string, model: string): string => `${provider}\u0000${model}`;
+
+function noteProviderFailure(
+  provider: string,
+  model: string,
+  status: number,
+  message: string,
+): void {
+  if (!STICKY_STATUSES.has(status)) return;
+  const key = circuitKey(provider, model);
+  const current = circuits.get(key);
+  circuits.set(key, {
+    provider,
+    model,
+    failures: (current?.failures ?? 0) + 1,
+    status,
+    message,
+    since: current?.since ?? Date.now(),
+  });
+}
+
+function noteProviderSuccess(provider: string, model: string): void {
+  circuits.delete(circuitKey(provider, model));
+}
+
+/** Is this member tripped out of the failover chain right now? */
+function circuitOpen(provider: string, model: string): boolean {
+  const key = circuitKey(provider, model);
+  const entry = circuits.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.since > CIRCUIT_COOLDOWN_MS) {
+    circuits.delete(key);
+    return false;
+  }
+  return entry.failures >= CIRCUIT_THRESHOLD;
+}
+
+/** One provider's health, for the dashboard. */
+export interface ProviderHealth {
+  provider: string;
+  model: string;
+  failures: number;
+  status: number;
+  message: string;
+  since: number;
+  /** true while the member is being skipped by the failover chain */
+  open: boolean;
+}
+
+/**
+ * Every provider this process has learned is failing. Empty when nothing is wrong —
+ * which is the normal reading, and the one the dashboard shows as "voice online".
+ */
+export function providerHealth(): ProviderHealth[] {
+  const now = Date.now();
+  return [...circuits.values()]
+    .map((entry) => ({
+      ...entry,
+      open: entry.failures >= CIRCUIT_THRESHOLD && now - entry.since <= CIRCUIT_COOLDOWN_MS,
+    }))
+    .sort((a, b) => b.since - a.since);
+}
+
+/** Forget every recorded failure. For tests, and for a manual "retry now" action. */
+export function resetProviderHealth(): void {
+  circuits.clear();
+}
+
+/**
+ * One logical provider over several models (§8.6).
+ *
+ * Tries each member in order and returns the first answer. This is deliberately
+ * *failover*, not a panel: exactly one model answers, and the caller cannot tell
+ * which. Free tiers fail by availability — 429s, timeouts, provider outages — which is
+ * what this absorbs.
+ *
+ * It is not an ensemble for two reasons. Combining verdicts would mean combining
+ * `confidence`, which each model calibrates for itself, so `0.85` from one and `0.95`
+ * from another are not comparable and any aggregate would be invented. And calling all
+ * members at once multiplies the rate-limit pressure that causes the failures this
+ * exists to survive.
+ *
+ * Members that have already failed with a sticky status are skipped for a cooldown, so
+ * a dead key stops costing a round-trip on every turn. If *every* member is tripped, the
+ * chain ignores the circuit and tries them all anyway — a wrong guess about a provider's
+ * health must never be what silences the room.
+ */
 export class FallbackProvider implements ChatProvider {
   readonly id = "fallback";
   readonly model: string;
@@ -306,16 +422,28 @@ export class FallbackProvider implements ChatProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
+    const available = this.members.filter((member) => !circuitOpen(member.id, member.model));
+    const pool = available.length > 0 ? available : this.members;
+
     const failures: string[] = [];
-    for (const member of this.members) {
+    for (const member of pool) {
       try {
-        return await member.chat(request);
+        const response = await member.chat(request);
+        noteProviderSuccess(member.id, member.model);
+        return response;
       } catch (error) {
+        const status = error instanceof ProviderError ? error.status : 0;
+        noteProviderFailure(
+          member.id,
+          member.model,
+          status,
+          error instanceof Error ? error.message : String(error),
+        );
         failures.push(`${member.model} (${error instanceof Error ? error.message : String(error)})`);
       }
     }
     throw new ProviderError(
-      `all ${this.members.length} judges failed — ${failures.join("; ")}`,
+      `all ${pool.length} judges failed — ${failures.join("; ")}`,
       0,
     );
   }

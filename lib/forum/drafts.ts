@@ -33,7 +33,7 @@
 import { contentTokens } from "./gate";
 import { lengthTarget, type LengthTarget } from "./register";
 import { hashPick } from "./rng";
-import type { AgendaEvent, Persona, PersonaId, WorldState } from "./types";
+import type { AgendaEvent, Persona, PersonaId, TurnRecord, WorldState } from "./types";
 
 export interface DraftContext {
   persona: Persona;
@@ -41,7 +41,25 @@ export interface DraftContext {
   world: WorldState;
   seq: number;
   attempt: number;
+  /**
+   * Recent log, newest last. The fallback reads it to avoid saying what the room just
+   * said — a canvas three lines wide repeats itself within four turns otherwise, which
+   * is exactly how the live room published the same sentence four times (see the
+   * no-repeat window below). Absent in tests that only check fit, where there is
+   * nothing to repeat against.
+   */
+  recent?: readonly TurnRecord[];
 }
+
+/**
+ * How far back the fallback looks before it allows a repeat.
+ *
+ * A persona's own line is stale after the room has moved on (`SELF`); a line another
+ * persona just used is stale almost at once (`ROOM`), because the tell the room read as
+ * worst is two people saying the same sentence inside a minute.
+ */
+const NO_REPEAT_SELF_TURNS = 40;
+const NO_REPEAT_ROOM_TURNS = 15;
 
 export interface Repertoire {
   /** Reactions: a verdict in two or three words. The `beat` tier is the only one
@@ -77,14 +95,16 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
     beat: ["fair.", "I'm not arguing with that 😤", "patience trade.", "ok that's funny"],
     short: [
       "my patience is doing the work",
-      "small size, clean mind",
+      "keeping the size small here",
       "i'm not adding to this yet",
     ],
     thought: [
-      "i'm not chasing this. small size, clean mind, and i let it come to me",
+      "i'm not chasing this one. keeping it small and letting it come to me instead",
       "stuck all week and my patience is the only thing holding this together",
       "you are all very confident for a room that got the last three of these wrong 😤",
-      "i refuse to be outperformed by a screen, so my size stays small and my stop stays where it is",
+      "i keep the size small and the stop where i left it. losing to a screen is not happening",
+      "you can talk about direction all day, the size is what decides whether the year is good",
+      "i am not putting more on until it holds above where it opened, that is the whole condition",
     ],
   },
   dmitri: {
@@ -99,6 +119,8 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "rates explain this move. single names explain nothing about it",
       "the bund spread is widening again, so put it in your filter before you talk about levels",
       "i trade the bond market and the single names follow from it, which has been true all year",
+      "the rates move first and everything else in here is downstream of it, that has not changed",
+      "i would not read anything into the price until the bond market agrees with it",
     ],
   },
   sol: {
@@ -113,6 +135,8 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "2am and i'm still in the crypto group chat, so yes i saw it before you",
       "buying dips with my whole face 🫡 and no i will not be taking questions",
       "you cannot fade a market that only goes up. it has done nothing else since you started complaining",
+      "everyone is very sure about a market that has not done anything in three days",
+      "i am not going to pretend i have a view on this, i am just holding and waiting",
     ],
   },
   toko: {
@@ -126,7 +150,9 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "you trade too much. that is the whole problem with your results",
       "first thirty minutes or nothing. not holding anything past that",
       "2 of 3 green and i'm done by lunch. screen time is the enemy",
-      "i counted eleven trades on your account today. that is a slot machine with extra steps やめ",
+      "i counted eleven trades on your account today. that is a slot machine with extra steps",
+      "i am done after the first thirty minutes, holding a position past that is how you give it back",
+      "you do not need eleven trades to have a good day, two would have done it",
     ],
   },
   priya: {
@@ -141,6 +167,8 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "hedged into the print, so i'm not the person to ask about direction",
       "adding it to the watchlist with a one day lag, the flows need a session",
       "what is your invalidation on this, because my book is hedged and i need to know where i'm wrong",
+      "i am not taking a direction here, i am taking the flows and letting the session settle",
+      "the invalidation is what i care about, the target is just where i hope it goes",
     ],
   },
   kofi: {
@@ -148,9 +176,11 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
     short: ["cable decides it, not gold", "tight stop then out", "that's the whole plan right there"],
     thought: [
       "cable decides it, everything else in here is decoration",
-      "tight stop then out, that's the whole plan and it hasn't changed",
+      "i am out the moment it goes against me, that part has never changed",
       "second monitor has the cable chart and the gold chart, i look at the cable one",
       "stopped out of this twice this week and i'll take it a third time if the level sets up",
+      "i take the level off the screen and i do the rest myself, that is the whole routine",
+      "the stop is where the idea is wrong, everything after that is just waiting",
     ],
   },
   lena: {
@@ -165,26 +195,32 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "the flow screen disagrees with the price here and it's been right more often",
       "that's an allocation question for me, not a timing one, different books",
       "i'd frame this as a funds flow problem, the etf prints show money leaving and the chart doesn't care yet",
+      "the flow screen has disagreed with the price for a week and it has been right",
+      "this is an allocation question for me, the timing of it is somebody else's problem",
     ],
   },
   raul: {
     beat: ["flows lag.", "copper knew first.", "same as last week.", "meh."],
-    short: ["flows lag, they always have", "not a real level", "nothing changed since last week"],
+    short: ["i am not seeing anything new", "not a real level", "nothing changed since last week"],
     thought: [
-      "flows lag. copper knew about this a week before your screen did",
+      "copper knew about this a week before your screen did, that is the whole story",
       "that's a chart level, not a real one. the physical trade sets the price",
       "same as last week and the week before. nothing in this market has changed",
       "the whole complex moves together and the chart people price them like separate markets",
+      "the physical market sets the price and the screens catch up a week later, that is the order",
+      "i have watched this complex for years and it has never moved the way the charts say",
     ],
   },
   nadia: {
     beat: ["half size.", "no new risk.", "know your gap.", "that's the job."],
     short: ["half size until the print", "no new risk here", "your size is the whole problem"],
     thought: [
-      "no new risk into this. that's the whole job and it isn't interesting",
+      "i am not adding risk into this one, and there is nothing interesting to say about it",
       "half size until the print passes, then we can talk about direction",
       "respectfully, your size is a bet on being right about one thing",
-      "position sizing is the entire job. get it wrong and being right about direction doesn't save you",
+      "get the size wrong and being right about direction will not save you. that is the part i care about",
+      "i am not taking this into the print, there will be a better price once it settles",
+      "the gap is what kills accounts, not the direction, and nobody sizes for it",
     ],
   },
   rafa: {
@@ -192,9 +228,11 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
     short: ["thin tape, that's all it is", "flat and staying flat", "not a level, that's a chop range"],
     thought: [
       "the tape is thin and i'm not paying to find out where it goes",
-      "i'm flat into the print. that's where my risk sits, not a prediction",
+      "flat into the print is just where my risk sits, however it comes out",
       "opened twenty ticks off yesterday's close and half the room already has a thesis about it",
       "everyone keeps quoting yesterday's close at me like it's today's print. it isn't though",
+      "i would rather miss it than pay up for it, the tape will still be there tomorrow",
+      "the range has held for a week and until it does not, i have nothing to say about it",
     ],
   },
   jess: {
@@ -205,6 +243,8 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "what's the flow on this, because the price is not telling me anything",
       "the statement is right there in the platform and nobody reads it before they post",
       "i'll take the other side of that all day, the flow screen disagrees and i trust it more than either of us",
+      "i need to see the flow before i have a view, the price on its own does not tell me much",
+      "the statement is right there and nobody reads it before they post, it is the same every day",
     ],
   },
 };
@@ -283,6 +323,70 @@ const GENERIC: Repertoire = {
 };
 
 /**
+ * One candidate line, and whether it already answers the message on its own.
+ *
+ * `connected` is what lets the selection prefer a line that shares a content token with
+ * the message it answers over one that needs the sender's name bolted on the front —
+ * which is the difference between a room that talks and a room that recites names at
+ * each other (the live transcript opened 33 of 60 lines with a person's name).
+ */
+interface Candidate {
+  text: string;
+  connected: boolean;
+}
+
+/**
+ * A line reduced to what it means, for the repeat window.
+ *
+ * A leading vocative is stripped first: a published fallback reads "dmitri, not a real
+ * level", while the bank line it came from is "not a real level", and without this the
+ * window would never recognise its own output.
+ */
+export function normalizeLine(text: string): string {
+  return text
+    .toLowerCase()
+    // The addressing vocative, front or back: a published fallback reads "dmitri, not a
+    // real level" or "not a real level, dmitri", while the bank line it came from is
+    // "not a real level" — without both strips the window never recognises its own output.
+    .replace(/^[a-z0-9]+,\s+/, "")
+    .replace(/,\s+[a-z0-9]+$/, "")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The lines the room has already said inside the no-repeat window. */
+function recentlySaid(recent: readonly TurnRecord[] | undefined, personaId: string): Set<string> {
+  const out = new Set<string>();
+  if (!recent || recent.length === 0) return out;
+
+  const roomLines = recent.slice(-NO_REPEAT_ROOM_TURNS);
+  for (const turn of roomLines) {
+    const text = turn.message?.text;
+    if (text) out.add(normalizeLine(text));
+  }
+
+  // This persona's own lines go back further than the room's — saying the same thing
+  // again after forty turns is the metronome the room read as worst on a persona's
+  // second or third appearance.
+  const own = recent
+    .slice(-NO_REPEAT_SELF_TURNS)
+    .filter((turn) => turn.message?.sender === personaId);
+  for (const turn of own) {
+    const text = turn.message?.text;
+    if (text) out.add(normalizeLine(text));
+  }
+  return out;
+}
+
+/** Drop the already-said lines, unless that would leave nothing to say. */
+function freshLines(lines: readonly string[], said: ReadonlySet<string>): string[] {
+  if (said.size === 0) return [...lines];
+  const fresh = lines.filter((line) => !said.has(normalizeLine(line)));
+  return fresh.length > 0 ? fresh : [...lines];
+}
+
+/**
  * Does this line answer the message it is standing in for?
  *
  * Mirrors `checkAddressee` deliberately: a shared content token, or the sender's
@@ -300,9 +404,16 @@ function connects(text: string, ctx: DraftContext): boolean {
 }
 
 /**
- * Say who it is for, the way people actually do it in a group chat ("kofi, cable
- * decides it"). This is what replaces the truncated quotation: it costs a name
- * rather than a clause, and it cannot produce a fragment.
+ * Say who it is for — the way a group chat actually does it.
+ *
+ * A fallback line is fixed text, so it often shares nothing with the message it stands
+ * in for, and the Gate's ADDRESSEE rule needs the sender named somewhere. The old
+ * version put that name on the *front*, which is why the live transcript opened 33 of
+ * 60 messages with a vocative ("kofi, cable decides it", "nadia, position sizing...") —
+ * a room reciting names at each other. The name goes on the *end* now: "that's a chop
+ * range, rafa" is how a person names who they are answering, and the rule is satisfied
+ * either way, because the Gate looks for the name wherever it falls. A truncated
+ * quotation would still be worse: it costs a clause and garbles an old message.
  *
  * Applied to a whole candidate, never to each half of a join — a message that says
  * the name twice ("nadia, ... did nadia, ...") is the same class of garble the
@@ -312,7 +423,7 @@ function addressed(line: string, ctx: DraftContext): string {
   if (connects(line, ctx)) return line;
   const sender = ctx.event.sender?.trim();
   if (!sender || NOT_A_NAME.has(sender.toLowerCase())) return line;
-  return `${sender.toLowerCase()}, ${line}`;
+  return `${line.replace(/[.,!?\s]+$/, "")}, ${sender.toLowerCase()}`;
 }
 
 /**
@@ -348,21 +459,28 @@ function dropTrailingSentences(text: string, max: number): string {
  * thoughts are still this person's writing; the filler was nobody's.
  */
 function fitToTarget(
-  singles: readonly string[],
-  joined: readonly string[],
+  singles: readonly Candidate[],
+  joined: readonly Candidate[],
   target: LengthTarget,
   seed: string,
 ): string {
-  const fits = (text: string): boolean => text.length >= target.min && text.length <= target.max;
+  const fits = (line: Candidate): boolean =>
+    line.text.length >= target.min && line.text.length <= target.max;
 
   for (const pool of [singles, joined]) {
     const fitting = pool.filter(fits);
-    if (fitting.length > 0) return hashPick(fitting, seed) ?? fitting[0]!;
+    if (fitting.length === 0) continue;
+    // Prefer a line that already answers the message by its content. A line that does
+    // not is only usable with the sender's name on the front (`addressed`), and a room
+    // where that is the common case reads as people reciting names at each other.
+    const answering = fitting.filter((line) => line.connected);
+    const chosen = answering.length > 0 ? answering : fitting;
+    return hashPick(chosen.map((line) => line.text), seed) ?? chosen[0]!.text;
   }
 
   // Nothing fits even joined: the turn's ceiling is below this persona's shortest
   // thought. Keep the shortest whole thought and drop any trailing sentences.
-  const shortest = [...singles].sort((a, b) => a.length - b.length)[0] ?? "";
+  const shortest = [...singles].sort((a, b) => a.text.length - b.text.length)[0]?.text ?? "";
   return dropTrailingSentences(shortest, target.max);
 }
 
@@ -372,18 +490,30 @@ function candidates(
   /** null for the product bank: there is no name to put on those lines (§9.2) */
   ctx: DraftContext | null,
   prefix = true,
-): { singles: string[]; joined: string[] } {
-  const singles = lines.map((line) => (prefix && ctx ? addressed(line, ctx) : line));
-  const joined: string[] = [];
-  for (let i = 0; i < singles.length; i += 1) {
-    for (let j = 0; j < singles.length; j += 1) {
+): { singles: Candidate[]; joined: Candidate[] } {
+  const wrap = (raw: string, connected: boolean): Candidate => ({
+    text: prefix && ctx ? addressed(raw, ctx) : raw,
+    // With no context (the product bank) there is no message to answer, so "connected"
+    // is not a meaningful axis and every line counts as one.
+    connected: ctx ? connected : true,
+  });
+
+  const singles: Candidate[] = lines.map((line) =>
+    wrap(line, ctx ? connects(line, ctx) : true),
+  );
+
+  const joined: Candidate[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    for (let j = 0; j < lines.length; j += 1) {
       if (i === j) continue;
-      const name = (text: string): string => (prefix && ctx ? addressed(text, ctx) : text);
-      joined.push(name(joinThoughts(lines[i]!, lines[j]!)));
-      for (let k = 0; k < singles.length; k += 1) {
+      const pairConnected = singles[i]!.connected || singles[j]!.connected;
+      joined.push(wrap(joinThoughts(lines[i]!, lines[j]!), pairConnected));
+      for (let k = 0; k < lines.length; k += 1) {
         if (k === i || k === j) continue;
-        const pair = joinThoughts(lines[i]!, lines[j]!);
-        joined.push(name(joinThoughts(pair, lines[k]!)));
+        const tripleConnected = pairConnected || singles[k]!.connected;
+        joined.push(
+          wrap(joinThoughts(joinThoughts(lines[i]!, lines[j]!), lines[k]!), tripleConnected),
+        );
       }
     }
   }
@@ -418,18 +548,22 @@ export function cannedDraft(ctx: DraftContext): string {
   // The retry number is in every seed, so a persona with no model does not repeat
   // itself into a Gate rejection it cannot escape.
   const seed = `${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`;
+  // What the room already said, so the fallback does not say it again. Empty when the
+  // caller has no log to offer (the fit-only tests), which leaves selection unchanged.
+  const said = recentlySaid(ctx.recent, ctx.persona.id);
 
   if (target.tier === "beat") {
     // A beat is a reaction and is exempt from the addressee rule, so nothing is
     // prefixed onto it. "kofi, nah" is not something anyone types.
-    const fitting = bank.beat.filter((line) => line.length <= target.max);
+    const fitting = freshLines(bank.beat, said).filter((line) => line.length <= target.max);
     const pool = fitting.length > 0 ? fitting : [bank.beat[0] ?? GENERIC.beat[0]!];
     return hashPick(pool, `beat:${seed}`) ?? pool[0]!;
   }
 
   // The name is applied before the fit is computed, so a line that fits is a line
   // that fits *with* the name that makes it an answer.
-  const source = target.tier === "short" ? bank.short : bank.thought;
+  const source =
+    target.tier === "short" ? freshLines(bank.short, said) : freshLines(bank.thought, said);
   const { singles, joined } = candidates(source, ctx);
   return fitToTarget(singles, joined, target, seed);
 }

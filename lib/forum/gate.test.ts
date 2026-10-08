@@ -703,3 +703,57 @@ test("an unpublished turn cools its speaker down for the next turn", () => {
   assert.equal(recency.lastSpeaker, "mara");
   assert.equal(recency.turnsSinceLastPost.mara, 0);
 });
+
+test("a line copied from earlier in the log is caught as a repeat", () => {
+  const turns = [
+    makeTurn(1, {
+      sender: "kofi",
+      text: "so tight stop then out that's the whole plan and it hasnt changed for me",
+    }),
+  ];
+
+  // Eight words in a row shared with a message already on the log is a copy, not a
+  // coincidence, and it is what the fallback published four times in sixty messages.
+  const copied = failingCodes(
+    "tight stop then out, that's the whole plan and it hasnt changed",
+    { turns, event: eventOf({ quoted: "what is the plan here" }) },
+  );
+  assert.ok(copied.includes("REPEAT"), `expected REPEAT, got ${copied.join(",")}`);
+
+  // Quoting the message you are answering is not a repeat.
+  const quoting = failingCodes("gold is coiling into the dollar's next move", {
+    turns,
+    event: eventOf({ quoted: "gold is coiling into the dollar's next move" }),
+  });
+  assert.equal(quoting.includes("REPEAT"), false);
+});
+
+test("a name on the front of a line is caught when it is not doing any work", () => {
+  const roster = ["mara", "jev", "dmitri", "sol"];
+  const quoted = "the range breaks up and the metals run";
+
+  // Names someone other than the person being answered.
+  const wrong = failingCodes("mara, i would fade that all day long", {
+    roster,
+    event: eventOf({ sender: "jev", quoted }),
+  });
+  assert.ok(wrong.includes("NAME_PREFIX"), `expected NAME_PREFIX, got ${wrong.join(",")}`);
+
+  // Names the person the line already answers by its content.
+  const redundant = failingCodes("jev, the range breaks up and the metals run from here", {
+    roster,
+    event: eventOf({ sender: "jev", quoted }),
+  });
+  assert.ok(
+    redundant.includes("NAME_PREFIX"),
+    `expected NAME_PREFIX, got ${redundant.join(",")}`,
+  );
+
+  // The address that is doing the work — the fallback's own shape, where the name is
+  // what makes the line an answer at all — is left alone.
+  const working = failingCodes("jev, i would fade that all day long", {
+    roster,
+    event: eventOf({ sender: "jev", quoted }),
+  });
+  assert.equal(working.includes("NAME_PREFIX"), false);
+});

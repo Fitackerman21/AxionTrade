@@ -25,7 +25,8 @@
     "humanReplySec": [30, 60],
     "worldEventEveryTurns": 6,
     "frictionStreakTurns": 3,
-    "topicRotationTurns": 8
+    "topicRotationTurns": 8,
+    "respectLocalHours": true
   },
   "agenda": {
     "enginePersona": "rafa",

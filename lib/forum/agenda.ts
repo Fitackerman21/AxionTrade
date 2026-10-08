@@ -181,6 +181,35 @@ function trailingStreak(posts: readonly PostedTurn[]): { side: Side | null; coun
   return { side, count };
 }
 
+/**
+ * The post a thread reply is pinned to, and who wrote it.
+ *
+ * A quote is the message the responder is answering, and a reply pinned to a bare
+ * "yeah" or an emoji answers nothing — the strip under the bubble shows a word with no
+ * subject in it, which is one of the ways the live room read as noise answering noise.
+ * When the newest post carries no content words, the reply attaches instead to the most
+ * recent post on the same topic that does, so the quote points at something answerable.
+ * Otherwise it is the newest post, which is what a chat reply normally answers.
+ */
+function replyTarget(posts: readonly PostedTurn[]): { seq: number; sender: string; text: string } {
+  const newest = posts[posts.length - 1]!;
+  const fallback = {
+    seq: newest.message.seq,
+    sender: newest.message.sender,
+    text: newest.message.text,
+  };
+  if (contentTokens(newest.message.text).size > 0) return fallback;
+
+  for (let i = posts.length - 2; i >= 0 && i >= posts.length - 6; i -= 1) {
+    const post = posts[i]!;
+    if (post.message.topicId !== newest.message.topicId) break;
+    if (contentTokens(post.message.text).size > 0) {
+      return { seq: post.message.seq, sender: post.message.sender, text: post.message.text };
+    }
+  }
+  return fallback;
+}
+
 /** How long the room has been on the newest post's topic. */
 function turnsOnTopic(posts: readonly PostedTurn[]): number {
   const newest = posts[posts.length - 1];
@@ -281,20 +310,22 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       const limit = Math.max(1, config.scheduling.frictionStreakTurns);
       const flipping = streak.side !== null && streak.count >= limit;
       const side: Side = flipping && streak.side ? flip(streak.side) : newest.message.side;
+      // A THREAD turn answers a real message, so it quotes one with a subject in it.
+      const target = flipping ? null : replyTarget(posts);
 
       return {
         kind: flipping ? "FRICTION" : "THREAD",
         reason: flipping
           ? `${streak.count} posts in a row on side ${streak.side}; forcing the counter-position`
           : "continuing the open thread",
-        sender: newest.message.sender,
+        sender: target ? target.sender : newest.message.sender,
         topic,
         side,
-        quoted: flipping ? topic.friction[side] : newest.message.text,
+        quoted: flipping ? topic.friction[side] : target!.text,
         // A FRICTION turn is handed the topic's canonical counter-line, which is a
         // prompt rather than a message, so it is not attached to the previous post.
         authoredBy: "responder",
-        ...(flipping ? {} : { replyTo: newest.message.seq }),
+        ...(target ? { replyTo: target.seq } : {}),
       };
     }
   }

@@ -185,7 +185,7 @@ export const REPLAY: ReplaySource[] = [
   {
     id: 5,
     from: "mara",
-    text: "small size, clean mind. let the range tell me what it is",
+    text: "keeping it small. let the range tell me what it is",
   },
   {
     id: 6,

@@ -120,3 +120,30 @@ test("recencyFromTurns ignores hand-off turns with no message", () => {
   assert.equal(recency.consecutivePosts, 1);
   assert.equal(recency.turnsSinceLastPost.mara, 1);
 });
+
+test("a candidate asleep in their own city waits behind one who is awake", () => {
+  // Opt-in: on quietness alone mara speaks (9 turns quiet to dmitri's 2), but it is
+  // 3am where she is, so the room hands the turn to dmitri instead.
+  const asleep = pickSpeaker(
+    context({
+      turnsSinceLastPost: { mara: 9, dmitri: 2 },
+      config: withSchedule({ respectLocalHours: true }),
+      localHour: { mara: 3, dmitri: 14 },
+    }),
+  );
+  assert.equal(asleep.chosen, "dmitri");
+
+  // With the option off — the shipped default before it — quietness alone decides.
+  const off = pickSpeaker(context({ turnsSinceLastPost: { mara: 9, dmitri: 2 } }));
+  assert.equal(off.chosen, "mara");
+
+  // Nobody awake: the room still speaks rather than going silent.
+  const allAsleep = pickSpeaker(
+    context({
+      turnsSinceLastPost: { mara: 9, dmitri: 2 },
+      config: withSchedule({ respectLocalHours: true }),
+      localHour: { mara: 3, dmitri: 4 },
+    }),
+  );
+  assert.equal(allAsleep.chosen, "mara");
+});

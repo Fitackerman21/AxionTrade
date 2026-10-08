@@ -26,6 +26,10 @@ interface Stats {
   byTrigger: Record<string, number>;
   byPersona: Record<string, number>;
   gate: { retries: number; unpublished: number; topCodes: Record<string, number> };
+  /** the Voice's providers, when any has failed with a sticky error (a dead key) */
+  voice: {
+    providers: Array<{ provider: string; model: string; open: boolean; status: number; message: string }>;
+  };
   humanReply: { p50: number | null; p90: number | null; count: number };
   adminLog: Array<{ id: number; action: string; detail: Record<string, unknown>; actor: string; t: number }>;
   personas: Array<{ id: string; name: string; color: string }>;
@@ -110,6 +114,9 @@ export default function AdminOverview() {
   const paused = stats.settings.paused;
   const maxDay = Math.max(1, ...stats.byDay.map((d) => d.count));
   const personaName = (id: string) => stats.personas.find((p) => p.id === id)?.name ?? id;
+  // A dead key is otherwise invisible: the room keeps talking in fallback lines and
+  // nothing on the page says why. This is that why.
+  const voiceDown = (stats.voice?.providers ?? []).filter((p) => p.open);
 
   return (
     <div className="space-y-4">
@@ -119,6 +126,15 @@ export default function AdminOverview() {
           <p className="text-sm text-white/40">
             room is <span className={stats.room.mode === "live" ? "text-emerald-300" : "text-white/60"}>{stats.room.mode}</span>
             {" · "}seq {stats.room.seq} · last turn {ago(stats.room.lastTurnAt)}
+            {" · "}
+            {voiceDown.length > 0 ? (
+              <span className="text-rose-300">
+                voice down · {voiceDown.length} provider{voiceDown.length === 1 ? "" : "s"} tripped (
+                {voiceDown[0]?.status})
+              </span>
+            ) : (
+              <span className="text-emerald-300/80">voice online</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">

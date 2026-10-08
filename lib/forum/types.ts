@@ -85,6 +85,14 @@ export interface Persona extends PersonaDisplay {
   model?: string;
   /** used when the primary provider is down (spec §10.3) */
   fallbackModel?: string;
+  /**
+   * IANA time zone for the city on the role line, e.g. "Europe/London". Used only by
+   * the opt-in local-hours weighting in `schedule.ts`: a room that keeps talking
+   * through the night has one member posting at 3am and another at 7am, which no real
+   * group chat does. Absent means the persona is never penalised, so an older room
+   * still schedules exactly as before.
+   */
+  tz?: string;
 }
 
 /** One turn as one persona remembers it, from one companion's thread (spec §7.2). */
@@ -198,6 +206,17 @@ export interface GateConfig {
   redundancyWindow: number;
   /** 5-gram Jaccard above this fails REDUNDANCY (§8.1) */
   redundancyThreshold: number;
+  /**
+   * How many recent messages REPEAT compares an unbroken word-run against (§8.1).
+   *
+   * Separate from `redundancyWindow` because the two catch different things:
+   * REDUNDANCY is a similarity near-miss over a short window, REPEAT is a verbatim
+   * run copied from anywhere in the last forty turns — the afternoon-long version of
+   * the same failure, where a person recites a sentence they said an hour ago.
+   */
+  repeatWindow: number;
+  /** how many words in a row must match before REPEAT fails the draft (§8.1) */
+  repeatNgram: number;
   /** how many recent messages FORMULAIC compares openers against (§8.1) */
   openerWindow: number;
   /** relative tolerance for numbers attached to tickers (§8.1) */
@@ -243,6 +262,12 @@ export interface ForumConfig {
      * Optional so an older room still loads; defaults to 30–60s in clock.ts.
      */
     humanReplySec?: [number, number];
+    /**
+     * Deprioritise a candidate who is asleep in their own city (`Persona.tz`). Off
+     * unless a room turns it on, because it changes who speaks and every scheduling
+     * test would otherwise be about the clock rather than the rule.
+     */
+    respectLocalHours?: boolean;
   };
   agenda: {
     /** the persona that reports world state and stage directs */

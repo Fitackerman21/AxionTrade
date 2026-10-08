@@ -18,6 +18,47 @@ export interface SpeakerContext {
   config: ForumConfig;
   roomId: string;
   seq: number;
+  /**
+   * Local hour (0–23) for each candidate, when the room asks for local-hours
+   * weighting (`config.scheduling.respectLocalHours`). Absent means the weighting is
+   * inert and the choice is exactly what it was before the option existed.
+   */
+  localHour?: Record<PersonaId, number>;
+}
+
+/** The local hour for a time zone at a wall-clock instant, or undefined if unknown. */
+export function localHourFor(tz: string | undefined, at: number): number | undefined {
+  if (!tz) return undefined;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      hour12: false,
+    }).formatToParts(new Date(at));
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    return Number.isFinite(hour) ? hour % 24 : undefined;
+  } catch {
+    // An unknown zone is not an error worth failing a turn over — no weighting.
+    return undefined;
+  }
+}
+
+/** How far the small hours push a candidate down the order. */
+const ASLEEP_PENALTY = 1_000;
+
+/**
+ * The penalty for posting at 3am in the persona's own city.
+ *
+ * Between 2 and 6 local the persona waits behind anyone who is awake, which is what
+ * stops a Los Angeles member and a Dubai member trading the same overnight shift. It
+ * is a penalty, not a filter: when everyone is asleep the room still speaks, because
+ * silence is worse than an early riser.
+ */
+function localHourPenalty(id: PersonaId, ctx: SpeakerContext): number {
+  if (!ctx.config.scheduling.respectLocalHours || !ctx.localHour) return 0;
+  const hour = ctx.localHour[id];
+  if (hour === undefined) return 0;
+  return hour >= 2 && hour < 6 ? -ASLEEP_PENALTY : 0;
 }
 
 export interface SpeakerChoice {
@@ -105,6 +146,9 @@ export function pickSpeaker(ctx: SpeakerContext): SpeakerChoice {
 
   const since = (id: PersonaId): number =>
     ctx.turnsSinceLastPost[id] ?? Number.POSITIVE_INFINITY;
+  // Quietness first, then the local-hours nudge. Kept in one weight function so the
+  // tie-break seed is still the only other input, and the choice stays reproducible.
+  const weight = (id: PersonaId): number => since(id) + localHourPenalty(id, ctx);
 
   const offCooldown = pool.filter((id) => since(id) >= minTurnsBetweenPosts);
   let relaxedCooldown = false;
@@ -119,7 +163,7 @@ export function pickSpeaker(ctx: SpeakerContext): SpeakerChoice {
 
   const ordered = orderByWeightThenSeed(
     considered,
-    since,
+    weight,
     (id) => id,
     `${roomId}:${seq}`,
   );

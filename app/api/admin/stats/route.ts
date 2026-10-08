@@ -7,8 +7,8 @@
 
 import { checkAdminAuth, adminDenied, adminJson, adminConfigured } from "@/lib/admin/auth";
 import { readAdminSettings, readAdminLog, readPersonaOverrides, listMembers, listInjections } from "@/lib/admin/store";
+import { providerHealth } from "@/lib/forum/provider";
 import { openForumStore } from "@/lib/forum/store";
-import type { TurnRecord } from "@/lib/forum/types";
 
 export const dynamic = "force-dynamic";
 
@@ -101,6 +101,9 @@ export async function GET(request: Request) {
       unpublished,
       topCodes: Object.fromEntries([...gateCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)),
     },
+    // The Voice's providers, so a dead key is visible on the dashboard instead of only
+    // in a turn's audit note. Empty means every provider is answering.
+    voice: { providers: providerHealth() },
     humanReply: {
       p50: percentile(0.5),
       p90: percentile(0.9),

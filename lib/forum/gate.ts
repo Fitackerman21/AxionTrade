@@ -34,6 +34,8 @@ export type GateCode =
   | "PRODUCT"
   | "ADDRESSEE"
   | "REDUNDANCY"
+  | "REPEAT"
+  | "NAME_PREFIX"
   | "ROTATION"
   | "FORMULAIC"
   | "LENGTH"
@@ -47,6 +49,8 @@ export const GATE_CODES: readonly GateCode[] = [
   "PRODUCT",
   "ADDRESSEE",
   "REDUNDANCY",
+  "REPEAT",
+  "NAME_PREFIX",
   "ROTATION",
   "FORMULAIC",
   "LENGTH",
@@ -70,6 +74,8 @@ export const DEFAULT_GATE_CONFIG: GateConfig = {
   warmupTurns: 25,
   redundancyWindow: 8,
   redundancyThreshold: 0.82,
+  repeatWindow: 40,
+  repeatNgram: 8,
   openerWindow: 20,
   numberTolerance: 0.02,
   requireAddressee: true,
@@ -100,6 +106,8 @@ export function resolveGateConfig(partial?: Partial<GateConfig> | null): GateCon
       1,
       DEFAULT_GATE_CONFIG.redundancyThreshold,
     ),
+    repeatWindow: Math.round(clamp(merged.repeatWindow, 1, 500, DEFAULT_GATE_CONFIG.repeatWindow)),
+    repeatNgram: Math.round(clamp(merged.repeatNgram, 3, 20, DEFAULT_GATE_CONFIG.repeatNgram)),
     openerWindow: Math.round(clamp(merged.openerWindow, 1, 200, DEFAULT_GATE_CONFIG.openerWindow)),
     numberTolerance: clamp(merged.numberTolerance, 0, 1, DEFAULT_GATE_CONFIG.numberTolerance),
     timeoutMs: Math.round(clamp(merged.timeoutMs, 100, 60_000, DEFAULT_GATE_CONFIG.timeoutMs)),
@@ -112,9 +120,15 @@ export interface GateContext {
   text: string;
   event: AgendaEvent;
   world: WorldState;
-  /** recent log, newest last — the substrate for REDUNDANCY and FORMULAIC */
+  /** recent log, newest last — the substrate for REDUNDANCY, REPEAT and FORMULAIC */
   turns: readonly TurnRecord[];
   seq: number;
+  /**
+   * Lowercased names and ids a line may address, so NAME_PREFIX can tell an address
+   * from a tic. Absent in tests that only exercise the other checks, which leaves the
+   * check inert rather than guessing.
+   */
+  roster?: readonly string[];
 }
 
 export interface GateFailure {
@@ -579,6 +593,84 @@ function checkRedundancy(
   return null;
 }
 
+/**
+ * A run of words copied verbatim from anywhere in the last `window` turns (spec §8.1).
+ *
+ * REDUNDANCY catches a line that *resembles* a recent one; this catches a line that
+ * *is* a stretch of one. Live, with the Voice down, the fallback bank published
+ * "tight stop then out, that's the whole plan and it hasn't changed" four times in
+ * sixty messages and "i refuse to be outperformed by a screen" three times — each a
+ * copy of a message already on the log, which is the single loudest machine tell in
+ * the transcript. The window is wide and the run is long on purpose: an ordinary
+ * phrase like "i do not know" is four words and must stay publishable, while eight
+ * words in a row is a sentence, and nobody says the same sentence twice by accident.
+ */
+function checkRepeat(ctx: GateContext, window: number, n: number): GateFailure | null {
+  const mine = ngrams(tokenize(ctx.text), n);
+  if (mine.size === 0) return null;
+
+  for (const turn of ctx.turns.slice(-window)) {
+    const other = turn.message?.text;
+    if (!other) continue;
+    // Quoting the message you are answering is allowed; so is the turn's own draft,
+    // which a retry carries back in the log.
+    if (other === ctx.event.quoted) continue;
+    if (other === ctx.text) continue;
+    for (const gram of ngrams(tokenize(other), n)) {
+      if (mine.has(gram)) {
+        return {
+          code: "REPEAT",
+          detail: `repeats ${n} words from turn ${turn.seq}: "${gram}"`,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * A name bolted on the front of a line, when the name is not doing any work.
+ *
+ * The prompt already forbids a name prefix; this enforces it. Two shapes fail: naming
+ * someone other than the person being answered, and naming the person the line already
+ * answers by its content. The second shape is the one that survives every other check —
+ * "kofi, cable decides it" answers the message perfectly well without the vocative, and
+ * a room where most lines open that way reads as people reciting names at each other.
+ *
+ * The address that *is* doing work is left alone: a fallback answering a message it
+ * shares nothing with says "dmitri, flows lag" on purpose, and `checkAddressee` needs
+ * that name to pass it. Inert without a roster, so it never guesses at proper nouns.
+ */
+function checkNamePrefix(ctx: GateContext): GateFailure | null {
+  const roster = ctx.roster;
+  if (!roster || roster.length === 0) return null;
+
+  const match = /^\s*([a-z0-9\u00c0-\u00ff'-]+)\s*[,!]/.exec(straighten(ctx.text).toLowerCase());
+  if (!match) return null;
+  const vocative = match[1]!;
+  if (!roster.includes(vocative)) return null;
+
+  const sender = ctx.event.sender?.toLowerCase() ?? "";
+  if (vocative !== sender) {
+    return {
+      code: "NAME_PREFIX",
+      detail: `opens by naming ${vocative}, not ${sender}`,
+    };
+  }
+
+  const theirs = contentTokens(ctx.event.quoted ?? "");
+  if (theirs.size === 0) return null;
+  for (const token of contentTokens(ctx.text)) {
+    if (theirs.has(token)) {
+      return {
+        code: "NAME_PREFIX",
+        detail: `names ${vocative} on a line that already answers them`,
+      };
+    }
+  }
+  return null;
+}
+
 function checkFormulaic(
   ctx: GateContext,
   window: number,
@@ -670,6 +762,8 @@ export function runDeterministicChecks(ctx: GateContext, config: GateConfig): Ga
   push(checkRotation(ctx));
   if (config.requireAddressee) push(checkAddressee(ctx));
   push(checkRedundancy(ctx, config.redundancyWindow, config.redundancyThreshold));
+  push(checkRepeat(ctx, config.repeatWindow, config.repeatNgram));
+  push(checkNamePrefix(ctx));
   push(checkFormulaic(ctx, config.openerWindow, config.bannedPhrases));
 
   return failures;
