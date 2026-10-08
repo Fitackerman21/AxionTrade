@@ -8,6 +8,12 @@
 
 import { checkAdminAuth, adminDenied, adminJson } from "@/lib/admin/auth";
 import { insertMembers, listMembers, logAction } from "@/lib/admin/store";
+
+function clean(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const t = value.trim();
+  return t ? t.slice(0, max) : undefined;
+}
 import { parseMembersCsv } from "@/lib/admin/csv";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +41,29 @@ export async function POST(request: Request) {
     if (file instanceof File) csv = await file.text();
     else if (typeof form.get("csv") === "string") csv = form.get("csv") as string;
   } else {
-    const body = (await request.json().catch(() => null)) as { csv?: string } | null;
+    const body = (await request.json().catch(() => null)) as
+      | { csv?: string; name?: string; email?: string; bio?: string; age?: number; picture?: string }
+      | null;
+    // A single member created by hand in the dashboard goes through the same
+    // validation and upsert as a CSV row — same table, same key, no special case.
+    if (body?.name && body?.email && !body.csv) {
+      const result = await insertMembers(
+        [
+          {
+            email: body.email.trim().toLowerCase(),
+            name: body.name.trim(),
+            bio: body.bio?.trim() || null,
+            age: Number.isFinite(Number(body.age)) && Number(body.age) > 0 ? Math.floor(Number(body.age)) : null,
+            picture: body.picture?.trim() || null,
+            batch: "manual",
+          },
+        ],
+        "manual",
+      );
+      if (result.inserted === 0) return adminJson({ error: "the member needs a valid email" }, 400);
+      await logAction("members.create", { email: clean(body.email, 200), name: clean(body.name, 120) }, "admin");
+      return adminJson({ ok: true, inserted: result.inserted });
+    }
     csv = body?.csv ?? null;
   }
 

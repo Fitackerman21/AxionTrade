@@ -21,6 +21,7 @@ interface StoreModule {
   readPersonaOverrides: () => Promise<Record<string, unknown>>;
   insertMembers: (rows: Array<{ email: string; name: string }>, batch: string) => Promise<{ inserted: number; skipped: number }>;
   listMembers: () => Promise<Array<{ email: string; name: string }>>;
+  deleteMember: (email: string, actor: string) => Promise<boolean>;
   logAction: (action: string, detail: Record<string, unknown>, actor: string) => Promise<void>;
   readAdminLog: () => Promise<Array<{ action: string }>>;
 }
@@ -88,6 +89,15 @@ describe("admin store", { skip: !hasDb }, () => {
     const members = (await store.listMembers()) as Array<{ email: string; name: string }>;
     const row = members.find((m) => m.email === `m-${marker}@example.com`);
     assert.equal(row?.name, "Second");
+  });
+
+  it("deletes a member by email, once", async () => {
+    const email = `del-${marker}@example.com`;
+    await store.insertMembers([{ email, name: "Doomed" }], marker);
+    assert.equal(await store.deleteMember(email, marker), true);
+    assert.equal(await store.deleteMember(email, marker), false, "a second delete finds nothing");
+    const members = (await store.listMembers()) as Array<{ email: string; name: string }>;
+    assert.equal(members.find((m) => m.email === email), undefined);
   });
 
   it("writes to the audit log", async () => {

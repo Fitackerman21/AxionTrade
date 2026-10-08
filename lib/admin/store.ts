@@ -255,6 +255,16 @@ export async function insertMembers(
   return { inserted, skipped };
 }
 
+/** Remove one member by email. Returns false when there was nothing to remove. */
+export async function deleteMember(email: string, actor: string): Promise<boolean> {
+  await ensure();
+  const key = email.trim().toLowerCase();
+  const result = await db().query("delete from forum_members where email = $1", [key]);
+  const deleted = (result.rowCount ?? 0) > 0;
+  if (deleted) await logAction("member.delete", { email: key }, actor);
+  return deleted;
+}
+
 export async function listMembers(limit = 200): Promise<MemberRow[]> {
   await ensure();
   const { rows } = await db().query<{
