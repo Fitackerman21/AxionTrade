@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Upload } from "lucide-react";
+import { ImagePlus, Upload } from "lucide-react";
 
 import { adminFetch } from "@/lib/admin/client";
 
@@ -53,8 +53,12 @@ export default function AdminPersonasPage() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [csvResult, setCsvResult] = useState<{ inserted: number; skipped: number; errors: Array<{ line: number; reason: string }> } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pictureInputRef = useRef<HTMLInputElement>(null);
   const [newMember, setNewMember] = useState({ name: "", email: "", bio: "", age: "", picture: "" });
   const [memberMsg, setMemberMsg] = useState<string | null>(null);
+  // per-persona upload state: which id is uploading, and what went wrong
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -113,9 +117,6 @@ export default function AdminPersonasPage() {
             bio: edit.bio || null,
             age: edit.age === "" ? null : Number(edit.age),
             picture: edit.picture || null,
-            g1: edit.g1,
-            g2: edit.g2,
-            color: edit.color,
             online: edit.online,
           },
         }),
@@ -175,6 +176,42 @@ export default function AdminPersonasPage() {
   const setEdit = (id: string, patch: Partial<Editable>) =>
     setEdits((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id]!, ...patch } } : prev));
 
+  // The picture goes into a real bucket (UploadThing), not a URL field: drop or
+  // pick a file, the server stores it, the returned URL lands in the picture
+  // field and is saved with the next Save click (or immediately if saved after
+  // upload finishes — we save right away so the drop is one gesture).
+  const uploadPicture = async (id: string, file: File) => {
+    setUploadError(null);
+    setUploading(id);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("persona", id);
+      const result = (await adminFetch("/api/admin/upload", {
+        method: "POST",
+        body: form,
+        mutation: true,
+      })) as { url?: string; error?: string };
+      if (!result.url) throw new Error(result.error ?? "upload failed");
+      setEdit(id, { picture: result.url });
+      // save immediately with the fresh URL so the drop alone changes the avatar
+      await adminFetch("/api/admin/personas", {
+        method: "POST",
+        body: JSON.stringify({
+          persona: id,
+          display: { picture: result.url },
+        }),
+        mutation: true,
+      });
+      setStatus(`${id} picture updated — live on the next roster read`);
+      await load();
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "upload failed");
+    } finally {
+      setUploading(null);
+    }
+  };
+
   if (!personas || !edits) return <p className="p-6 text-sm text-white/40">loading the roster…</p>;
 
   return (
@@ -232,8 +269,10 @@ export default function AdminPersonasPage() {
                     className="mt-0.5 w-full rounded-lg border border-white/15 bg-black/40 px-2 py-1.5 text-sm text-white"
                   />
                 </label>
+                {/* drop target lives under the inputs; the URL stays as an escape
+                    hatch for images already hosted somewhere */}
                 <label className="col-span-2 text-[11px] text-white/40">
-                  picture URL
+                  picture URL (or drop an image below)
                   <input
                     value={e.picture}
                     onChange={(ev) => setEdit(p.id, { picture: ev.target.value })}
@@ -242,19 +281,37 @@ export default function AdminPersonasPage() {
                   />
                 </label>
               </div>
-              <div className="mb-3 flex items-center gap-3">
-                {(["g1", "g2", "color"] as const).map((field) => (
-                  <label key={field} className="flex items-center gap-1.5 text-[11px] text-white/40">
-                    {field}
-                    <input
-                      type="color"
-                      value={e[field]}
-                      onChange={(ev) => setEdit(p.id, { [field]: ev.target.value })}
-                      className="h-7 w-9 cursor-pointer rounded border border-white/15 bg-transparent"
-                    />
-                  </label>
-                ))}
-                <label className="ml-auto flex items-center gap-1.5 text-[11px] text-white/60">
+              <div
+                onDragOver={(ev) => ev.preventDefault()}
+                onDrop={(ev) => {
+                  ev.preventDefault();
+                  const file = ev.dataTransfer.files?.[0];
+                  if (file) void uploadPicture(p.id, file);
+                }}
+                onClick={() => pictureInputRef.current?.click()}
+                className="mb-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/5 px-3 py-3 text-xs text-white/50 hover:border-emerald-400/50 hover:text-white/80"
+              >
+                <ImagePlus className="h-4 w-4" />
+                {uploading === p.id
+                  ? "uploading…"
+                  : e.picture
+                    ? "drop a new picture to replace, or click to browse"
+                    : "drop a profile picture here, or click to browse"}
+              </div>
+              <input
+                ref={pictureInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(ev) => {
+                  const file = ev.target.files?.[0];
+                  if (file) void uploadPicture(p.id, file);
+                  ev.target.value = "";
+                }}
+              />
+              {uploadError ? <p className="mb-3 text-xs text-rose-300">{uploadError}</p> : null}
+              <div className="mb-3 flex items-center justify-end">
+                <label className="flex items-center gap-1.5 text-[11px] text-white/60">
                   <input
                     type="checkbox"
                     checked={e.online}

@@ -127,6 +127,34 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <TokenContext.Provider value={token}>
       <main className="relative min-h-dvh">
         <AuroraBackground />
+        {/* Small screens get a horizontal tab bar — the desktop sidebar is hidden
+            below md, and without this the inner pages are simply unreachable on
+            a phone. Same items, same active state. */}
+        <nav className="sticky top-0 z-20 border-b border-white/10 bg-black/70 backdrop-blur md:hidden">
+          <div className="flex gap-1 overflow-x-auto px-3 py-2">
+            {NAV.map((item) => {
+              const active = pathname === item.href;
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs ${
+                    active ? "bg-white/15 font-semibold text-white" : "text-white/60 hover:text-white"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" /> {item.label}
+                </Link>
+              );
+            })}
+            <Link
+              href="/community"
+              className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-white/60 hover:text-white"
+            >
+              <MessageSquare className="h-3.5 w-3.5" /> Community
+            </Link>
+          </div>
+        </nav>
         <div className="relative z-10 mx-auto flex max-w-7xl gap-6 px-4 py-6">
           <aside className="hidden w-52 shrink-0 md:block">
             <div className="sticky top-6 space-y-1">

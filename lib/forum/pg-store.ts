@@ -140,12 +140,35 @@ export class PgStore implements ForumStore {
     return config;
   }
 
+  /**
+   * The bundled roster, layered with the admin dashboard's display overrides
+   * (name, role, bio, age, picture). The `id` never changes — identity, memory
+   * threads and permissions stay stable — but what the room *calls* a persona is
+   * what the dashboard saved, so the voice writes under the new name instead of
+   * the bundled one. Overrides live in the admin-owned `forum_persona_overrides`
+   * table (same Postgres); a missing or unreadable table means no overrides, not
+   * a broken room.
+   */
   async readPersonas(): Promise<Persona[]> {
     const personas = ROOM_PERSONAS;
     if (!Array.isArray(personas) || personas.length === 0) {
       throw new Error("forum: personas.json must contain a non-empty roster");
     }
-    return personas;
+    try {
+      const { rows } = await this.pool.query<{ persona: string; display: Partial<Persona> }>(
+        "select persona, display from forum_persona_overrides",
+      );
+      if (rows.length === 0) return personas;
+      const byId = new Map(rows.map((r) => [r.persona, r.display]));
+      return personas.map((p) => {
+        const display = byId.get(p.id);
+        return display ? { ...p, ...display, id: p.id } : p;
+      });
+    } catch {
+      // The admin tables may not exist yet (first boot before any dashboard
+      // save) — the bundled roster is the truth in that case.
+      return personas;
+    }
   }
 
   async readTopics(): Promise<Topic[]> {
