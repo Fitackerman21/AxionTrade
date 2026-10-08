@@ -58,21 +58,35 @@ import type { ForumMessage, MessageReactions } from "@/lib/forum/types";
 let livePersonas: ChatPersona[] | null = null;
 const byId = new Map(PERSONAS.map((p) => [p.id, p]));
 
+/**
+ * Who is watching the roster. The dashboard edits a profile (name, picture) and
+ * the community page has to *show* it without a reload — so a roster read has to
+ * re-render the page, not just swap a module-level variable nobody is observing.
+ * `personaFor` still reads `byId` synchronously; the listeners are what make the
+ * new entries reach the screen.
+ */
+type RosterListener = (personas: ChatPersona[]) => void;
+const rosterListeners = new Set<RosterListener>();
+
+function applyRoster(personas: ChatPersona[]): void {
+  livePersonas = personas;
+  byId.clear();
+  for (const p of personas) byId.set(p.id, p);
+  for (const listener of rosterListeners) listener(personas);
+}
+
 async function refreshPersonas(): Promise<void> {
   try {
     const response = await fetch("/api/admin/roster", { cache: "no-store" });
     if (!response.ok) return;
     const body = (await response.json()) as { personas?: ChatPersona[] };
     if (Array.isArray(body.personas) && body.personas.length > 0) {
-      livePersonas = body.personas;
-      byId.clear();
-      for (const p of body.personas) byId.set(p.id, p);
+      applyRoster(body.personas);
     }
   } catch {
     // the bundled roster stays in place — the room must render even if this fails
   }
 }
-void refreshPersonas();
 
 /** "You" — the local sender. Its id is the external sender id the room records. */
 const YOU: ChatPersona = {
@@ -87,6 +101,8 @@ const YOU: ChatPersona = {
 
 /** How often the open page refreshes the transcript while the room is idle. */
 const POLL_MS = 6_000;
+/** How often the open page re-reads the roster, so a dashboard edit shows up here. */
+const ROSTER_POLL_MS = 20_000;
 /** A faster tick while someone is typing, so the reply lands close to its due time. */
 const TYPING_POLL_MS = 3_000;
 /** A gap this long between messages breaks the avatar/name grouping. */
@@ -376,6 +392,8 @@ function MemberRow({ p }: { p: ChatPersona }) {
 
 export function CommunityChat() {
   const [rows, setRows] = useState<Row[]>(replayRows);
+  /** the roster the room is showing — the bundled one until the live read lands */
+  const [roster, setRoster] = useState<ChatPersona[] | null>(livePersonas);
   const [source, setSource] = useState<Source>("demo");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -439,6 +457,29 @@ export function CommunityChat() {
     },
     [],
   );
+
+  /**
+   * Keep the roster current while the page is open. A profile edit on the
+   * dashboard used to require a full reload to appear here — the roster was read
+   * once at module load and a picture uploaded afterwards simply never reached the
+   * screen. Now the fetch is subscribed to this component (so it re-renders), it
+   * repeats on a slow tick, and it re-reads the moment the tab becomes visible
+   * again — which is exactly the edit-here-then-look-there workflow.
+   */
+  useEffect(() => {
+    rosterListeners.add(setRoster);
+    void refreshPersonas();
+    const timer = setInterval(() => void refreshPersonas(), ROSTER_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshPersonas();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      rosterListeners.delete(setRoster);
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   /**
    * Reading refreshes *and* wakes: the endpoint's catch-up is what brings a paused
@@ -588,7 +629,7 @@ export function CommunityChat() {
                 }`}
                 aria-hidden
               />
-              {(livePersonas ?? PERSONAS).length} members · {(livePersonas ?? PERSONAS).filter((p) => p.online).length} online · {label}
+              {(roster ?? PERSONAS).length} members · {(roster ?? PERSONAS).filter((p) => p.online).length} online · {label}
             </p>
           </div>
           <div className="flex items-center gap-1 text-muted">
@@ -771,7 +812,7 @@ export function CommunityChat() {
               Members
             </p>
             <MemberRow p={{ ...YOU, role: "you · online" }} />
-            {[...(livePersonas ?? PERSONAS)].sort((a, b) => Number(b.online) - Number(a.online)).map((p) => (
+            {[...(roster ?? PERSONAS)].sort((a, b) => Number(b.online) - Number(a.online)).map((p) => (
               <MemberRow key={p.id} p={p} />
             ))}
           </aside>

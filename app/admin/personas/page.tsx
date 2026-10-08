@@ -233,10 +233,17 @@ export default function AdminPersonasPage() {
             <section key={p.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
               <div className="mb-3 flex items-center gap-3">
                 <span
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-black"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full text-sm font-bold text-black"
                   style={{ background: `linear-gradient(135deg, ${e.g1}, ${e.g2})` }}
                 >
-                  {e.name.slice(0, 1).toUpperCase()}
+                  {e.picture ? (
+                    // Show the saved picture, so an upload visibly lands on the card
+                    // instead of only filling a text field.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={e.picture} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    e.name.slice(0, 1).toUpperCase()
+                  )}
                 </span>
                 <div className="min-w-0 flex-1">
                   <input
