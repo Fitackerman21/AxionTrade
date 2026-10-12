@@ -16,7 +16,7 @@
 
 import { overusedTerms } from "./lexicon";
 import { sameFamily } from "./provider";
-import { lengthFault, lengthTarget, typographyFault } from "./register";
+import { lengthFault, lengthTarget, tierOptionsFor, typographyFault } from "./register";
 import type { ChatProvider } from "./provider";
 import { mulberry32, hashString } from "./rng";
 import type {
@@ -477,7 +477,7 @@ const REFUSAL_PATTERNS: Array<[RegExp, string]> = [
  * "cooked." is one word and a shrug, "no complaints here" is three and an opinion.
  */
 const USE_MARKERS =
-  /\b(?:use|used|uses|using|trade|trades|trading|platform|app|screens?|levels?|watchlist|fills?|log|alerts?|risk|book|subscription|plan|renewed|settings|interface|daily|worth it|recommend|tool|on it|signed up)\b/i;
+  /\b(?:use|used|uses|using|trade|trades|trading|platform|app|screens?|levels?|watchlist|fills?|log|alerts?|risk|book|subscription|plan|renewed|settings|interface|daily|worth it|recommend|tool|on it|signed up|account|balance|fund|funded|funding|deposit|deposited|withdraw\w*|allocat\w*|limit|goal|axai|engine|guardrail|percentage|profit|loss)\b/i;
 
 const OPINION_MARKERS =
   /\b(?:no complaints|rate it|like it|liked it|loving it|love it|glad|worth|solid|handy|useful|clean|happy|renewed|renew|stay(?:ed)?|keeps? me|saved me|helps? me|easier|faster|simpler|works for me)\b/i;
@@ -520,7 +520,7 @@ function checkProductClaims(ctx: GateContext): GateFailure | null {
  * and the wording around it is what has to move.
  */
 function checkRotation(ctx: GateContext): GateFailure | null {
-  if (lengthTarget(ctx.persona, ctx.seq).tier === "beat") return null;
+  if (lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event)).tier === "beat") return null;
   const worn = overusedTerms(ctx.turns).filter((term) => !/^\d+$/.test(term));
   if (worn.length === 0) return null;
 
@@ -549,7 +549,7 @@ function checkAddressee(ctx: GateContext): GateFailure | null {
   // A beat is a reaction — "nah", "fair", "lol". Demanding that two words share a
   // content token with the message they answer is the kind of rule that produced a
   // room where nobody ever just replied, so a beat is exempt.
-  if (lengthTarget(ctx.persona, ctx.seq).tier === "beat") return null;
+  if (lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event)).tier === "beat") return null;
 
   const mine = contentTokens(ctx.text);
   const theirs = contentTokens(quoted);
@@ -709,7 +709,7 @@ function checkFormulaic(
  * message — which is what keeps the variety from collapsing back into one length.
  */
 function checkLength(ctx: GateContext): GateFailure | null {
-  const fault = lengthFault(ctx.text, ctx.persona, ctx.seq);
+  const fault = lengthFault(ctx.text, ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
   return fault === "" ? null : { code: "LENGTH", detail: fault };
 }
 

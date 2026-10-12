@@ -41,6 +41,25 @@ export interface RealismReport {
   nonAsciiRate: number;
   /** distinct length buckets present, as a share of the four the register has */
   lengthVariety: number;
+  /**
+   * Share of published messages that ask something.
+   *
+   * The shipped room asked nothing: measured over 270 of its canned lines, **0.0%** contained
+   * a question, against 5.4% of the lines a model wrote. Every turn was the same speech act —
+   * an assertion — which a reader notices as a rhythm long before they notice a bad line.
+   */
+  questionRate: number;
+  /**
+   * A person's messages the room read and passed on, as a share of its replies to people.
+   *
+   * The shipped room answered every message it was ever sent, in 40-70 seconds, once. Nobody
+   * in a real room gets that: a message sits now and then, and the room is not a help desk. The
+   * share is over the room's *responses to people* rather than over all its lines, because
+   * the room talks to itself far more than people talk to it, and a silence is only a silence
+   * next to something a person said. A window with nothing from a person reports 1 — there was
+   * nothing to pass on, so it is not held to the floor (see `REALISM_TARGETS`).
+   */
+  silenceRate: number;
 }
 
 /** The length buckets a room should be using — the tiers in `register.ts`, roughly. */
@@ -104,10 +123,22 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
       nonAsciiRate: 0,
       // Nothing was said, so there is nothing misshapen about the variety.
       lengthVariety: 1,
+      questionRate: 1,
+      silenceRate: 1,
     };
   }
 
   const names = vocatives(turns, roster);
+  // Who is a person and who is the room. A silence is only a silence beside a message from a
+  // person, and with no roster to tell them apart the metric is not applicable (reported as 1).
+  const rosterIds = new Set((roster ?? []).map((id) => id.toLowerCase()));
+  const silences = turns.filter(
+    (turn) => !turn.message && /quiet turn/.test(turn.note ?? ""),
+  ).length;
+  const fromPeople =
+    rosterIds.size === 0
+      ? 0
+      : posted.filter((message) => !rosterIds.has(message.sender.toLowerCase())).length;
   const bySeq = new Map<number, string>();
   const senderBySeq = new Map<number, string>();
   for (const turn of turns) {
@@ -130,6 +161,7 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
   let replies = 0;
   let mismatch = 0;
   let selfQuote = 0;
+  let questions = 0;
 
   for (let i = 0; i < posted.length; i += 1) {
     const message = posted[i]!;
@@ -155,6 +187,7 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
 
     buckets.add(bucketOf(message.text.trim().length));
     if (isNonAsciiTell(message.text)) nonAscii += 1;
+    if (/\?/.test(message.text)) questions += 1;
 
     const vocative = /^([a-z0-9'-]+)\s*[,!]/i.exec(message.text.trim())?.[1]?.toLowerCase();
     if (vocative && names.has(vocative)) namePrefixed += 1;
@@ -193,6 +226,8 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
     selfQuoteRate: replies === 0 ? 0 : selfQuote / replies,
     nonAsciiRate: nonAscii / total,
     lengthVariety: buckets.size / LENGTH_BUCKETS,
+    questionRate: questions / total,
+    silenceRate: silences + fromPeople === 0 ? 1 : silences / (silences + fromPeople),
   };
 }
 
@@ -216,25 +251,25 @@ interface Target {
 export const REALISM_TARGETS: readonly Target[] = [
   {
     metric: "repeatRate",
-    weight: 0.32,
+    weight: 0.28,
     max: 0.05,
     why: "an exact line saying itself again is the loudest tell there is",
   },
   {
     metric: "longRunRepeatRate",
-    weight: 0.14,
+    weight: 0.12,
     max: 0.05,
     why: "eight words in a row copied from another message",
   },
   {
     metric: "namePrefixRate",
-    weight: 0.14,
+    weight: 0.13,
     max: 0.5,
     why: "a room where most lines open with a name recites names at itself",
   },
   {
     metric: "replyMismatchRate",
-    weight: 0.14,
+    weight: 0.13,
     max: 0.35,
     why: "a reply that shares nothing with the message it quotes",
   },
@@ -246,15 +281,33 @@ export const REALISM_TARGETS: readonly Target[] = [
   },
   {
     metric: "nonAsciiRate",
-    weight: 0.06,
+    weight: 0.05,
     max: 0.01,
     why: "the room's voice is one language; a stray word from another is a data bug",
   },
   {
     metric: "lengthVariety",
-    weight: 0.1,
+    weight: 0.09,
     min: 0.75,
     why: "beats, one-liners and paragraphs together, not one length wall to wall",
+  },
+  {
+    metric: "questionRate",
+    weight: 0.05,
+    min: 0.05,
+    why: "a room where nobody ever asks anything is a row of broadcasts, not a conversation",
+  },
+  {
+    metric: "silenceRate",
+    weight: 0.05,
+    min: 0.015,
+    why: "a room that answers every person immediately, every time, is a help desk",
+  },
+  {
+    metric: "silenceRate",
+    weight: 0.04,
+    max: 0.35,
+    why: "past a third, the room is not busy — it is empty",
   },
 ];
 

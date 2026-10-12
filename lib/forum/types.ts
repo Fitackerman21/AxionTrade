@@ -6,6 +6,9 @@
  * writer) and the store (which owns durability).
  */
 
+// Type-only, so the `knowledge -> types` import direction stays one-way at runtime.
+import type { ProductIntent } from "./knowledge";
+
 export type PersonaId = string;
 
 /** Which side of a topic's argument a message lands on. */
@@ -324,6 +327,31 @@ export interface AgendaEvent {
   /** the turn being answered, when this event is a reply to a specific message */
   replyTo?: number;
   /**
+   * A person walked in rather than asked (knowledge.ts: `isGreeting`).
+   *
+   * A greeting is the one message where the room owes a *welcome* rather than an
+   * answer, and it is the turn shape the live room never produced at all: 0 of 6
+   * replies to a visitor in the measured chat greeted them, while the room greeted
+   * its own members 1.2% of the time. Held separately from `offTopic` because the
+   * two want different directives — one asks for an answer, this one asks for a name
+   * and a welcome first.
+   */
+  greeting?: boolean;
+  /**
+   * How this turn is delivered (a human turn only).
+   *
+   * A room where every message is answered, always, by exactly one person, is a
+   * metronome however good the individual lines are — the live room answered all six
+   * of a newcomer's messages, each in 40-70s, each an answer, and never once asked
+   * anything back. So a fraction of human turns are `react` (a verdict, no
+   * information), `askBack` (an answer that ends in a question of their own) or
+   * `quiet` (the room read it and had nothing to add). The share is deterministic on
+   * the turn's seq so a replay behaves the same way, and the shapes that must be
+   * answered — anything about the platform, anything the room can act on — are never
+   * given a quiet mode.
+   */
+  replyMode?: "answer" | "askBack" | "react" | "quiet";
+  /**
    * A person asked something that is not about the open topic (spec §9).
    *
    * The room owes this person an answer to *their* question, so the turn is written
@@ -350,6 +378,17 @@ export interface AgendaEvent {
    * bot tell there is.
    */
   productQuestion?: boolean;
+  /**
+   * Which question about the platform this is (knowledge.ts).
+   *
+   * Set whenever `productQuestion` is, and it is what turns a product turn from a
+   * *testimonial* into an **answer**: the room has reviewed facts for funding, the
+   * AxAI allocation, the loss limit and the profit goal, so the same question gets
+   * the same accurate content in eleven different registers instead of a bank of
+   * praise. `"other"` means the room genuinely does not know, and the honest answer
+   * is to say so and point at support.
+   */
+  productIntent?: ProductIntent;
 }
 
 export interface ForumMessage {

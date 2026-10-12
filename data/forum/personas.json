@@ -8,8 +8,8 @@
     "g2": "#00c896",
     "color": "#9fc6ff",
     "online": true,
-    "model": "qwen/qwen3.8-flash",
-    "fallbackModel": "cohere/command-a-plus",
+    "model": "cohere/north-mini-code:free",
+    "fallbackModel": "dots-studio/dots-3-note-preview:free",
     "sheet": {
       "stance": "the tape decides, everything else is a story people tell about the tape",
       "register": {
@@ -73,8 +73,8 @@
     "g2": "#ef4444",
     "color": "#fdba74",
     "online": true,
-    "model": "xiaomi/mimo-v2.5",
-    "fallbackModel": "openai/gpt-5.4-nano",
+    "model": "dots-studio/dots-3-note-preview:free",
+    "fallbackModel": "cohere/north-mini-code:free",
     "sheet": {
       "stance": "flow is the only honest signal, price is just what is left after the trade",
       "register": {
@@ -138,8 +138,8 @@
     "g2": "#f97316",
     "color": "#fda4af",
     "online": true,
-    "model": "openai/gpt-5.4-nano",
-    "fallbackModel": "google/gemma-4-31b-it",
+    "model": "nvidia/nemotron-3.5-lightning:free",
+    "fallbackModel": "apodex/apodex-1.1-mini:free",
     "sheet": {
       "stance": "patient, long gold, holds longer than anyone else in this room",
       "register": {
@@ -200,8 +200,8 @@
     "g2": "#6366f1",
     "color": "#c4b5fd",
     "online": false,
-    "model": "nvidia/nemotron-3-super-120b-a12b",
-    "fallbackModel": "cohere/command-a-plus",
+    "model": "nvidia/nemotron-3-super-120b-a12b:free",
+    "fallbackModel": "inclusionai/ling-3.1-flash",
     "sheet": {
       "stance": "rates explain everything, single names are noise",
       "register": {
@@ -261,8 +261,8 @@
     "g2": "#14b8a6",
     "color": "#5eead4",
     "online": true,
-    "model": "bytedance-seed/seed-2.0-mini",
-    "fallbackModel": "xiaomi/mimo-v2.5",
+    "model": "apodex/apodex-1.1-mini:free",
+    "fallbackModel": "nvidia/nemotron-3.5-lightning:free",
     "sheet": {
       "stance": "long crypto, impatient with macro tourists, buys dips with her whole face",
       "register": {
@@ -327,8 +327,8 @@
     "g2": "#0ea5e9",
     "color": "#7dd3fc",
     "online": false,
-    "model": "poolside/laguna-s-2.1",
-    "fallbackModel": "upstage/solar-pro4",
+    "model": "poolside/laguna-s-2.1:free",
+    "fallbackModel": "cohere/north-mini-code:free",
     "sheet": {
       "stance": "first thirty minutes or nothing, screen time is the enemy",
       "register": {
@@ -389,8 +389,8 @@
     "g2": "#ec4899",
     "color": "#e879f9",
     "online": true,
-    "model": "cohere/command-a-plus",
-    "fallbackModel": "nvidia/nemotron-3-super-120b-a12b",
+    "model": "inclusionai/ling-3.1-flash",
+    "fallbackModel": "nvidia/nemotron-3-super-120b-a12b:free",
     "sheet": {
       "stance": "hedged into every print, watchlist discipline, would rather be early than loud",
       "register": {
@@ -451,8 +451,8 @@
     "g2": "#84cc16",
     "color": "#86efac",
     "online": true,
-    "model": "minimax/minimax-m3",
-    "fallbackModel": "poolside/laguna-s-2.1",
+    "model": "cohere/north-mini-code:free",
+    "fallbackModel": "poolside/laguna-s-2.1:free",
     "sheet": {
       "stance": "cable is the only real market, tight stops, no decorating",
       "register": {
@@ -513,8 +513,8 @@
     "g2": "#a855f7",
     "color": "#fda4af",
     "online": false,
-    "model": "google/gemma-4-31b-it",
-    "fallbackModel": "inclusionai/ling-3.0-flash",
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "fallbackModel": "dots-studio/dots-3-note-preview:free",
     "sheet": {
       "stance": "allocation over timing, calm about everything, starts the day on the flow screen",
       "register": {
@@ -574,8 +574,8 @@
     "g2": "#f97316",
     "color": "#fde047",
     "online": true,
-    "model": "upstage/solar-pro4",
-    "fallbackModel": "bytedance-seed/seed-2.0-mini",
+    "model": "dots-studio/dots-3-note-preview:free",
+    "fallbackModel": "nvidia/nemotron-3-ultra-550b-a55b:free",
     "sheet": {
       "stance": "the physical trade sets price, flows lag it, chart people are guessing",
       "register": {
@@ -635,8 +635,8 @@
     "g2": "#3b82f6",
     "color": "#7dd3fc",
     "online": true,
-    "model": "deepseek/deepseek-v4-flash",
-    "fallbackModel": "minimax/minimax-m3",
+    "model": "nvidia/nemotron-3.5-lightning:free",
+    "fallbackModel": "apodex/apodex-1.1-mini:free",
     "sheet": {
       "stance": "position sizing is the whole job, everything else is entertainment",
       "register": {

@@ -71,13 +71,67 @@ const TIER_BOUNDS: Record<LengthTarget["tier"], readonly [number, number]> = {
  * The length this turn is aiming at. `seq` and the persona id are the whole input,
  * so the same turn always gets the same target.
  */
-export function lengthTarget(persona: Persona, seq: number): LengthTarget {
+export interface TierOptions {
+  /** the turn is this tier whatever the dice said */
+  force?: LengthTarget["tier"];
+  /** the dice may not go below this tier */
+  floor?: LengthTarget["tier"];
+  /**
+   * the dice may not go above this tier.
+   *
+   * A question is the one shape that needs a ceiling: "full" is 140-340 characters, and a
+   * line that long followed by a question mark is a speech with a question stapled to it,
+   * not somebody asking something. Without this the fallback met the floor by joining three
+   * of a member's questions into one message, which reads as an interrogation.
+   */
+  cap?: LengthTarget["tier"];
+}
+
+/** The tiers in order, so "at least this long" is a comparison rather than a table. */
+const TIER_ORDER: readonly LengthTarget["tier"][] = ["beat", "short", "normal", "full"];
+
+function atLeast(tier: LengthTarget["tier"], floor: LengthTarget["tier"]): LengthTarget["tier"] {
+  return TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(floor) ? floor : tier;
+}
+
+function atMost(tier: LengthTarget["tier"], cap: LengthTarget["tier"]): LengthTarget["tier"] {
+  return TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(cap) ? cap : tier;
+}
+
+export function lengthTarget(
+  persona: Persona,
+  seq: number,
+  options?: TierOptions,
+): LengthTarget {
   const cap = Math.max(16, persona.sheet.register.maxChars);
-  const tier = hashPick(DRAWS, `length:${persona.id}:${seq}`) ?? "normal";
+  // A turn whose own shape dictates the length gets that length whatever the dice said. A
+  // reaction is a beat by definition; a question about the platform may not be, because a
+  // two-word reaction is not an answer however well it is chosen (live, the room answered a
+  // funding question with "then release part of it", which reads as an answer and isn't one).
+  let tier = options?.force ?? hashPick(DRAWS, `length:${persona.id}:${seq}`) ?? "normal";
+  if (options?.floor) tier = atLeast(tier, options.floor);
+  if (options?.cap) tier = atMost(tier, options.cap);
   const [lo, hi] = TIER_BOUNDS[tier];
   const max = Math.min(hi, cap);
 
   return { tier, min: Math.min(lo, max), max, label: LABELS[tier] };
+}
+
+/**
+ * The length a turn is pinned to by the way it is being delivered or by what it is.
+ *
+ * One function, read by both the Voice prompt and the Gate, because the two disagreeing
+ * about what a turn was asked for is a bug the retry loop cannot fix: it would spend its
+ * attempts rejecting drafts for missing a target they were never given.
+ */
+export function tierOptionsFor(
+  event: { replyMode?: string; productQuestion?: boolean; greeting?: boolean } | undefined,
+): TierOptions | undefined {
+  if (!event) return undefined;
+  if (event.replyMode === "react") return { force: "beat" };
+  if (event.replyMode === "askBack") return { floor: "short", cap: "normal" };
+  if (event.productQuestion || event.greeting) return { floor: "short" };
+  return undefined;
 }
 
 /**
@@ -107,8 +161,13 @@ export const TEXTING_RULE =
  * characters, whichever is larger. A three-word answer on a turn that asked for a
  * paragraph still fails, which is what the rule is for.
  */
-export function lengthFault(text: string, persona: Persona, seq: number): string {
-  const target = lengthTarget(persona, seq);
+export function lengthFault(
+  text: string,
+  persona: Persona,
+  seq: number,
+  options?: TierOptions,
+): string {
+  const target = lengthTarget(persona, seq, options);
   const length = text.trim().length;
   const slack = (bound: number): number => Math.max(6, Math.round(bound * 0.25));
   const floor = target.min - slack(target.min);

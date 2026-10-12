@@ -31,7 +31,14 @@
  */
 
 import { contentTokens } from "./gate";
-import { lengthTarget, type LengthTarget } from "./register";
+import {
+  answerCandidates,
+  greetingFor,
+  ownLinesFor,
+  productIntentOf,
+  type ProductIntent,
+} from "./knowledge";
+import { lengthTarget, tierOptionsFor, type LengthTarget } from "./register";
 import { hashPick } from "./rng";
 import type { AgendaEvent, Persona, PersonaId, TurnRecord, WorldState } from "./types";
 
@@ -136,7 +143,7 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "buying dips with my whole face 🫡 and no i will not be taking questions",
       "you cannot fade a market that only goes up. it has done nothing else since you started complaining",
       "everyone is very sure about a market that has not done anything in three days",
-      "i am not going to pretend i have a view on this, i am just holding and waiting",
+      "not going to pretend i have a view on this one, i am just holding and waiting",
     ],
   },
   toko: {
@@ -167,7 +174,7 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "hedged into the print, so i'm not the person to ask about direction",
       "adding it to the watchlist with a one day lag, the flows need a session",
       "what is your invalidation on this, because my book is hedged and i need to know where i'm wrong",
-      "i am not taking a direction here, i am taking the flows and letting the session settle",
+      "no direction from me here, just taking the flows and letting the session settle",
       "the invalidation is what i care about, the target is just where i hope it goes",
     ],
   },
@@ -233,6 +240,20 @@ export const REPERTOIRE: Record<PersonaId, Repertoire> = {
       "everyone keeps quoting yesterday's close at me like it's today's print. it isn't though",
       "i would rather miss it than pay up for it, the tape will still be there tomorrow",
       "the range has held for a week and until it does not, i have nothing to say about it",
+      // The engine persona carries the openings, the world ticks and every recap, so it
+      // speaks several times as often as anyone else and its bank is the one that runs dry
+      // first. Measured, that was the whole of the remaining repetition in the audit: one of
+      // these lines came back eight times inside twenty-five messages. A deeper bank is the
+      // fix, because no join can hide a run that lives inside a single line.
+      "i would rather sit out a session than take a position i have to explain to myself in the morning",
+      "someone always has a reason for a move after it happens, and before it happens the room is quiet",
+      "two sessions in a row where nothing happens and you start inventing a setup out of boredom",
+      "whether it goes up today matters less to me than whether i am still trading in a month",
+      "i have watched this handle four times today and it has not done anything any of those times",
+      "keep it small enough that being wrong is boring, that is the size i am after",
+      "the first hour is where the bad ideas get made and the middle of the session is where they get paid for",
+      "everyone in here got their level off the same three accounts, so of course it looks like it works",
+      "i do not need a view on every hour of the day, most of them are not worth having one about",
     ],
   },
   jess: {
@@ -333,6 +354,18 @@ const GENERIC: Repertoire = {
 interface Candidate {
   text: string;
   connected: boolean;
+  /**
+   * This line is the member's own writing, not one of the shared reviewed pools.
+   *
+   * Only the product and greeting banks carry the distinction, because they are the only
+   * ones built from two sources. Measured on the live question shapes, the shared pool was
+   * winning far more than it should: asked "what is this place exactly", **0%** of 264
+   * answers came from the member's own lines, because the shared pool held a line with the
+   * word "place" in it and the member's own lines did not. Eleven names, four distinct
+   * answers. A member answers in their own words whenever they have any that fit; the
+   * shared pools are the fallback for the length a member has nothing of their own at.
+   */
+  own: boolean;
 }
 
 /**
@@ -418,12 +451,18 @@ function connects(text: string, ctx: DraftContext): boolean {
  * Applied to a whole candidate, never to each half of a join — a message that says
  * the name twice ("nadia, ... did nadia, ...") is the same class of garble the
  * quotation prefix used to be.
+ *
+ * A question keeps its question mark, and the name moves in front of it: "what's your read,
+ * rafa?" is how somebody asks a person something, and stripping the mark turned every
+ * ask-back line into a statement — the exact tell the question rate is there to catch.
  */
 function addressed(line: string, ctx: DraftContext): string {
   if (connects(line, ctx)) return line;
   const sender = ctx.event.sender?.trim();
   if (!sender || NOT_A_NAME.has(sender.toLowerCase())) return line;
-  return `${line.replace(/[.,!?\s]+$/, "")}, ${sender.toLowerCase()}`;
+  const name = sender.toLowerCase();
+  const body = line.replace(/[.,!?\s]+$/, "");
+  return /\?\s*$/.test(line) ? `${body}, ${name}?` : `${body}, ${name}`;
 }
 
 /**
@@ -467,15 +506,31 @@ function fitToTarget(
   const fits = (line: Candidate): boolean =>
     line.text.length >= target.min && line.text.length <= target.max;
 
+  // Four passes, in this order: the member's own line that uses the question's words, then
+  // the bank's line that does, then the member's own line that does not, then the bank's. A
+  // single whole thought is tried before two joined, within each pass.
+  //
+  // Why the question's words outrank the member's name: measured over the live messages, the
+  // failure that started all of this was the room answering a person with something that
+  // shared **nothing** with what they asked, and the shared pools were written to fix exactly
+  // that. So a line that echoes the asker beats a line that only sounds like the member — and
+  // when a member has both, they win, which is the whole point of writing their lines in the
+  // words their questions actually use.
+  const passes: Array<(line: Candidate) => boolean> = [
+    (line) => line.own && line.connected,
+    (line) => !line.own && line.connected,
+    (line) => line.own,
+    () => true,
+  ];
+
+  // Whole thoughts before joins, always: a join can be made to fit any length, so trying it
+  // first would make every turn a paragraph and every line longer than it needed to be.
   for (const pool of [singles, joined]) {
-    const fitting = pool.filter(fits);
-    if (fitting.length === 0) continue;
-    // Prefer a line that already answers the message by its content. A line that does
-    // not is only usable with the sender's name on the front (`addressed`), and a room
-    // where that is the common case reads as people reciting names at each other.
-    const answering = fitting.filter((line) => line.connected);
-    const chosen = answering.length > 0 ? answering : fitting;
-    return hashPick(chosen.map((line) => line.text), seed) ?? chosen[0]!.text;
+    for (const wanted of passes) {
+      const fitting = pool.filter((line) => fits(line) && wanted(line));
+      if (fitting.length === 0) continue;
+      return hashPick(fitting.map((line) => line.text), seed) ?? fitting[0]!.text;
+    }
   }
 
   // Nothing fits even joined: the turn's ceiling is below this persona's shortest
@@ -484,18 +539,46 @@ function fitToTarget(
   return dropTrailingSentences(shortest, target.max);
 }
 
+/**
+ * Do these two lines say the same thing?
+ *
+ * Joining is how a longer turn is met from a bank of whole thoughts, and it is a good move
+ * until the two thoughts are the same thought. Measured in the room: a join produced "that's an
+ * allocation question for me, not a timing one, different books. this is an allocation question
+ * for me, the timing of it is somebody else's problem" — one message, the same clause twice,
+ * and a reader sees a machine rather than somebody repeating themselves. Two shared runs of
+ * four words is that, where one is usually a stock phrase the whole room uses ("what is the
+ * read on").
+ */
+function tooSimilar(first: string, second: string): boolean {
+  const runs = (text: string): Set<string> => {
+    const words = normalizeLine(text).split(" ").filter(Boolean);
+    const out = new Set<string>();
+    for (let i = 0; i + 4 <= words.length; i += 1) out.add(words.slice(i, i + 4).join(" "));
+    return out;
+  };
+  const mine = runs(first);
+  const theirs = runs(second);
+  if (mine.size === 0 || theirs.size === 0) return false;
+  let shared = 0;
+  for (const run of mine) if (theirs.has(run)) shared += 1;
+  return shared >= 2;
+}
+
 /** Every way this turn could be filled from the persona's own writing. */
 function candidates(
   lines: readonly string[],
   /** null for the product bank: there is no name to put on those lines (§9.2) */
   ctx: DraftContext | null,
   prefix = true,
+  own: ReadonlySet<string> = EMPTY_OWN,
 ): { singles: Candidate[]; joined: Candidate[] } {
   const wrap = (raw: string, connected: boolean): Candidate => ({
     text: prefix && ctx ? addressed(raw, ctx) : raw,
     // With no context (the product bank) there is no message to answer, so "connected"
     // is not a meaningful axis and every line counts as one.
     connected: ctx ? connected : true,
+    own: own.has(normalizeLine(raw)),
   });
 
   const singles: Candidate[] = lines.map((line) =>
@@ -506,10 +589,12 @@ function candidates(
   for (let i = 0; i < lines.length; i += 1) {
     for (let j = 0; j < lines.length; j += 1) {
       if (i === j) continue;
+      if (tooSimilar(lines[i]!, lines[j]!)) continue;
       const pairConnected = singles[i]!.connected || singles[j]!.connected;
       joined.push(wrap(joinThoughts(lines[i]!, lines[j]!), pairConnected));
       for (let k = 0; k < lines.length; k += 1) {
         if (k === i || k === j) continue;
+        if (tooSimilar(lines[i]!, lines[k]!) || tooSimilar(lines[j]!, lines[k]!)) continue;
         const tripleConnected = pairConnected || singles[k]!.connected;
         joined.push(
           wrap(joinThoughts(joinThoughts(lines[i]!, lines[j]!), lines[k]!), tripleConnected),
@@ -527,23 +612,444 @@ function candidates(
  * addressed by name: the person asked the room, there is no member to name, and the
  * sender id a person carries is not a name.
  */
-export function productDraft(ctx: { persona: Persona; seq: number; attempt: number }): string {
-  const target = lengthTarget(ctx.persona, ctx.seq);
-  const seed = `product:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`;
+/** Does this line use a word the message it answers used? */
+function sharesWord(line: string, question: string | undefined): boolean {
+  if (!question) return false;
+  const theirs = contentTokens(question);
+  if (theirs.size === 0) return false;
+  for (const token of contentTokens(line)) if (theirs.has(token)) return true;
+  return false;
+}
+
+/**
+ * The same whole-thought joiners `candidates` builds, with "answers the question" measured
+ * against the question rather than against a name.
+ *
+ * The shared banks answer a question that came from a person the room has no name for, so
+ * there is nothing to address: what makes one of them the right line is that it uses the
+ * words the person used. That is the difference between "it's in the account, the funding
+ * screen" and "worth it for me" as an answer to "how do i put money in".
+ */
+function answeringCandidates(
+  lines: readonly string[],
+  question: string | undefined,
+  own: ReadonlySet<string> = EMPTY_OWN,
+): { singles: Candidate[]; joined: Candidate[] } {
+  const wrap = (raw: string): Candidate => ({
+    text: raw,
+    connected: sharesWord(raw, question),
+    own: own.has(normalizeLine(raw)),
+  });
+  const singles = lines.map(wrap);
+  const joined: Candidate[] = [];
+  const ownPair = (i: number, j: number): boolean =>
+    singles[i]!.own && singles[j]!.own;
+  for (let i = 0; i < lines.length; i += 1) {
+    for (let j = 0; j < lines.length; j += 1) {
+      if (i === j) continue;
+      if (tooSimilar(lines[i]!, lines[j]!)) continue;
+      const pair = joinThoughts(lines[i]!, lines[j]!);
+      joined.push({ ...wrap(pair), own: ownPair(i, j) });
+      for (let k = 0; k < lines.length; k += 1) {
+        if (k === i || k === j) continue;
+        if (tooSimilar(lines[i]!, lines[k]!) || tooSimilar(lines[j]!, lines[k]!)) continue;
+        joined.push({ ...wrap(joinThoughts(pair, lines[k]!)), own: ownPair(i, j) && singles[k]!.own });
+      }
+    }
+  }
+  return { singles, joined };
+}
+
+/** No member has written any of these lines — the default for a shared bank. */
+const EMPTY_OWN: ReadonlySet<string> = new Set<string>();
+
+interface TierPools {
+  beat: string[];
+  short: string[];
+  thought: string[];
+}
+
+/**
+ * Choose the line for a turn out of a tiered bank: fresh first, then the one that answers.
+ *
+ * The order is deliberate. A line the room has already published is a repeat whatever else
+ * is true of it, so the no-repeat window is applied before the fit and the fit before the
+ * preference for an answer — and when a bank is exhausted the freshest pool is still used
+ * rather than a name being bolted onto a line that answers nothing.
+ */
+function pickFromBanks(args: {
+  pools: TierPools;
+  target: LengthTarget;
+  seed: string;
+  personaId: string;
+  question?: string;
+  recent?: readonly TurnRecord[];
+  /** the lines in these pools that the persona wrote; see `Candidate.own` */
+  own?: ReadonlySet<string>;
+}): string {
+  const { pools, target, seed, personaId, question, recent, own } = args;
+  const said = recentlySaid(recent, personaId);
 
   if (target.tier === "beat") {
-    const fitting = PRODUCT_LINES.beat.filter((line) => line.length <= target.max);
-    const pool = fitting.length > 0 ? fitting : [PRODUCT_LINES.beat[0]!];
-    return hashPick(pool, `beat:${seed}`) ?? pool[0]!;
+    const fitting = freshLines(pools.beat, said).filter((line) => line.length <= target.max);
+    const pool = fitting.length > 0 ? fitting : [pools.beat[0] ?? "ok."];
+    const answering = pool.filter((line) => sharesWord(line, question));
+    return hashPick(answering.length > 0 ? answering : pool, `beat:${seed}`) ?? pool[0]!;
   }
 
-  const source = target.tier === "short" ? PRODUCT_LINES.short : PRODUCT_LINES.thought;
-  const { singles, joined } = candidates(source, null, false);
+  const source = freshLines(
+    target.tier === "short" ? pools.short : pools.thought,
+    said,
+  );
+  const { singles, joined } = answeringCandidates(source, question, own);
+  // A whole line first, then two of them joined. The order matters and was measured: pushing
+  // a turn onto a join whenever the bank is dry swaps one tell for a worse one — an exact
+  // line repeated (weight 0.32 in the audit) becomes an eight-word run shared between two
+  // different lines (weight 0.14). Deeper banks are the answer to a dry bank, not joins.
   return fitToTarget(singles, joined, target, seed);
 }
 
+/**
+ * What the room says when the question is about the platform (spec §9.2): an **answer**.
+ *
+ * This used to be a shared bank of twenty-five testimonials, and the live measurement is
+ * what condemned it: asked "how do i put money in btw", the room could only ever reply
+ * "worth it. my whole book is in there", in whichever name the scheduler drew — because
+ * nothing in a testimonial can be an answer to a question about mechanics. The lines now
+ * come from `knowledge.ts`, chosen for the question's own shape, so a funding question gets
+ * the funding screen and a loss-limit question gets the loss limit, in the member's own
+ * words where they have any and in a reviewed pooled line where they do not.
+ *
+ * `PRODUCT_LINES` is still the fallback for the one case with no intent: a caller that has
+ * no event to read (a test, or an older path) still gets a reviewed line rather than a shrug.
+ */
+export function productDraft(ctx: {
+  persona: Persona;
+  seq: number;
+  attempt: number;
+  event?: AgendaEvent;
+  recent?: readonly TurnRecord[];
+}): string {
+  const target = lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
+  const intent = ctx.event?.productIntent;
+  const question = ctx.event?.quoted;
+  const seed = `product:${intent ?? "generic"}:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`;
+
+  const pools = intent
+    ? {
+        beat: answerCandidates(intent, ctx.persona.id, "beat"),
+        short: answerCandidates(intent, ctx.persona.id, "short"),
+        thought: answerCandidates(intent, ctx.persona.id, "normal"),
+      }
+    : PRODUCT_LINES;
+
+  return pickFromBanks({
+    pools,
+    target,
+    seed,
+    personaId: ctx.persona.id,
+    question,
+    recent: ctx.recent,
+    own: intent ? ownSet(ownLinesFor(intent, ctx.persona.id)) : undefined,
+  });
+}
+
+/** The lines this member wrote, in the form the banks compare in. */
+function ownSet(lines: readonly string[]): ReadonlySet<string> {
+  return new Set(lines.map(normalizeLine));
+}
+
+/**
+ * What the room says when somebody walks in (knowledge.ts: `GREETINGS`).
+ *
+ * The measured room greeted nobody: 0 of 6 replies to a visitor opened with a welcome, and
+ * the opening line of a newcomer's chat — "yo, just joined. what is this place" — came back
+ * as a view on position sizing. A greeting is the one turn where the answer is a hello, so
+ * it is its own bank rather than a roll of the dice, and when the greeting also asks what the
+ * place is, the room's answer to that question is appended to it.
+ */
+export function greetingDraft(ctx: DraftContext): string {
+  const target = lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
+  const welcome = greetingFor(ctx.persona.id);
+  // "what is this place" is a question the room has a reviewed answer for (the `room`
+  // intent), and a greeting that asks it deserves both halves: the hello, then the answer.
+  const asksWhatThisIs = productIntentOf(ctx.event.quoted ?? "") === "room";
+  const room = answerCandidates("room", ctx.persona.id, "short");
+  // The hello always comes first: a line that answers "what is this place" without greeting
+  // somebody who just walked in is a room answering a question at nobody. So the combined
+  // lines are built hello-first, and the short pool is filtered to what actually fits a
+  // one-liner tier rather than letting a bare answer line in.
+  const joined = welcome.flatMap((hello) => room.map((line) => joinThoughts(hello, line)));
+  const joinedShort = joined.filter((line) => line.length <= 80);
+  const pools: TierPools = asksWhatThisIs
+    ? {
+        beat: welcome,
+        short: joinedShort.length > 0 ? joinedShort : welcome,
+        thought: joined,
+      }
+    : { beat: welcome, short: welcome, thought: welcome };
+
+  return pickFromBanks({
+    pools,
+    target,
+    seed: `greet:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`,
+    personaId: ctx.persona.id,
+    question: ctx.event.quoted,
+    recent: ctx.recent,
+    own: ownSet(ownLinesFor("room", ctx.persona.id)),
+  });
+}
+
+/**
+ * Small questions the room does not have product facts for are answered socially.
+ *
+ * "who talks the most" is not a market question and not a product question, and the room
+ * used to answer it with a tape read ("not a level, that's a chop range") because the only
+ * bank it had was market talk. Answering a person's actual question with a plausible social
+ * answer is what a room of people does; the generic pool is the deflection, which is also
+ * what a person says when they do not know.
+ */
+const SOCIAL_ANSWERS: ReadonlyArray<{ match: RegExp; lines: string[] }> = [
+  {
+    match: /\bwho talks (?:the )?most\b|\bwho (?:is|'?s) the (?:most|chatty)|\bwho posts\b/i,
+    lines: [
+      // Short enough to be a beat as well as an answer, because "who talks the most" is
+      // exactly the kind of question the room answers with three words.
+      "rafa talks the most",
+      "rafa talks the most and it is not close 😂",
+      "rafa talks the most by a mile, then sol when crypto is moving",
+      "rafa talks the most. you will work it out in about ten minutes",
+    ],
+  },
+  {
+    match: /\bwhere (?:is|are) (?:everyone|you all|y'?all|you) from\b|\bwhich (?:countries|cities)\b/i,
+    lines: [
+      "all over. lagos, chicago, london, tokyo, singapore",
+      "spread out. most of us are on at odd hours because of it",
+      "everywhere honestly. the timestamps in here are a mess 😅",
+    ],
+  },
+  {
+    match: /\bhow long (?:have you|you been|has everyone)\b/i,
+    lines: [
+      "a few years on my own, two on here",
+      "long enough to have opinions about people's stops",
+      "years. some of us longer than we will admit",
+    ],
+  },
+  {
+    match: /\b(?:do you|you all) know each other|\bis this a private (?:group|room)\b/i,
+    lines: [
+      "we are just the people who use the app at the same time of day",
+      "nah, we all ended up here the same way you did",
+      "some of us talk every day, i have never met any of them 😅",
+    ],
+  },
+];
+
+const SOCIAL_GENERIC: readonly string[] = [
+  "no idea honestly 😅",
+  "you would have to ask them",
+  "not something i know anything about",
+  "i have genuinely never thought about that",
+  "pass on that one, somebody else will know",
+  "fair question and i have no answer for it",
+];
+
+/**
+ * The question shapes an off-thread message is still answered from the fact base.
+ *
+ * `agenda.ts` flags a message as a product question when it names the platform or asks a
+ * trust question; a plain "what does it cost" uses neither, so it arrives here as off-topic.
+ * Answering it with the room's own cost lines is the difference between an answer and "no
+ * idea honestly". `trust` is deliberately absent: "real" and "legit" are ordinary words in a
+ * trading room, and a social question that happens to contain one should not be answered
+ * with a statement about the visitor's money.
+ */
+const SOCIAL_PLATFORM_INTENTS = new Set<ProductIntent>([
+  "deposit",
+  "withdraw",
+  "limits",
+  "autonomy",
+  "how-it-works",
+  "start",
+  "cost",
+  "room",
+]);
+
+/** The room's answer to a question that is neither about the market nor the platform. */
+export function socialDraft(ctx: DraftContext): string {
+  const question = ctx.event.quoted ?? "";
+  const intent = productIntentOf(question);
+  if (SOCIAL_PLATFORM_INTENTS.has(intent)) {
+    return productDraft({
+      persona: ctx.persona,
+      seq: ctx.seq,
+      attempt: ctx.attempt,
+      // The turn was not flagged as a product question, so the intent is attached here for
+      // the answer to route by.
+      event: { ...ctx.event, productIntent: intent },
+      recent: ctx.recent,
+    });
+  }
+
+  const target = lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
+  const matched = SOCIAL_ANSWERS.filter((entry) => entry.match.test(question));
+  const pool = matched.length > 0 ? matched.flatMap((entry) => entry.lines) : [...SOCIAL_GENERIC];
+  const said = recentlySaid(ctx.recent, ctx.persona.id);
+
+  if (target.tier === "beat") {
+    // A matched answer beats a shrug even at two or three words: "rafa talks the most" is the
+    // same length as "no idea honestly" and it is an answer.
+    const fit = (lines: readonly string[]): string[] =>
+      freshLines(lines, said).filter((line) => line.length <= target.max);
+    const matchedFit = fit(pool);
+    const genericFit = fit(SOCIAL_GENERIC);
+    const chosen = matchedFit.length > 0 ? matchedFit : genericFit.length > 0 ? genericFit : ["no idea"];
+    return hashPick(chosen, `social:${ctx.seq}`) ?? chosen[0]!;
+  }
+
+  const source = freshLines(pool, said);
+  const { singles, joined } = answeringCandidates(source, question);
+  const picked = fitToTarget(singles, joined, target, `social:${ctx.persona.id}:${ctx.seq}`);
+  return picked;
+}
+
+/**
+ * A question the room cannot answer gets asked back, on the turns delivered that way.
+ *
+ * The measured room never asked anything: 0 questions in 270 canned lines and 5.4% in the
+ * lines a model wrote. A reply that ends in a question is the commonest way a person keeps a
+ * conversation alive, and it costs nothing when the room has nothing to add.
+ */
+export function askBackFor(ctx: DraftContext): string {
+  const target = lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
+  const bank = ASK_BACKS[ctx.persona.id] ?? ASK_BACK_GENERIC;
+  const said = recentlySaid(ctx.recent, ctx.persona.id);
+  // The same name-on-the-end treatment every other fallback gets. A question rarely uses
+  // the words of the message it answers — "what's your read?" shares nothing with "flows
+  // lag" — and the Gate's ADDRESSEE rule asks a non-beat line to name the person it answers
+  // or share a word with them. Without this, the one turn shape that is *supposed* to have
+  // no subject in it would be the one shape the Gate reliably threw out. On a person's
+  // message the sender is not a name (`NOT_A_NAME`), so nothing is appended and the line
+  // stays a question at them rather than about them.
+  const pool = freshLines(bank, said).map((line) => addressed(line, ctx));
+  const { singles, joined } = answeringCandidates(pool, ctx.event.quoted);
+  return fitToTarget(singles, joined, target, `ask:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`);
+}
+
+const ASK_BACKS: Record<PersonaId, string[]> = {
+  mara: [
+    "what are you watching in here?",
+    "what is your read on it?",
+    "how long have you been on this one?",
+    "i only do gold and indices really, what are you trading mostly? and are you on here all day or just the open?",
+  ],
+  jess: [
+    "what was the flow though?",
+    "are you in it or watching?",
+    "how long have you been trading?",
+    "i am mostly options flow, so i never have a clean read on the outright. what are you looking at, and do you trade the open or later?",
+  ],
+  dmitri: [
+    "what is your read on rates?",
+    "where do you get your prints?",
+    "what is the driver from where you sit?",
+    "i trade rates and treat everything else as downstream of them. what do you trade, and is it a rates story for you at all?",
+  ],
+  sol: [
+    "what are you holding?",
+    "are you in or watching?",
+    "what's your bag?",
+    "i am mostly crypto and i ape first and think later, as everyone here will tell you. what do you trade, and how long have you been doing it?",
+  ],
+  toko: [
+    "you scalping or holding?",
+    "what time do you start?",
+    "what's your plan for the first thirty minutes?",
+    "i do the first thirty minutes and then i am gone, that is the whole strategy. what is yours, do you hold things overnight?",
+  ],
+  priya: [
+    "what's your invalidation?",
+    "how long do you hold usually?",
+    "do you hedge the prints?",
+    "i keep a watchlist and hedge into the prints, so my timing is boring on purpose. what do you trade, and where is your invalidation on it?",
+  ],
+  kofi: [
+    "you trade cable or gold?",
+    "what's your stop?",
+    "you on this all day or just the open?",
+    "i am fx, cable mostly, tight stop and out. what do you trade, and are you on it all day or just around the open?",
+  ],
+  lena: [
+    "do you look at flows at all?",
+    "how do you size it?",
+    "what are you allocating to?",
+    "i am funds and etfs so i am slower than everyone in here. what are you in, and do you read the flow before you size it?",
+  ],
+  raul: [
+    "do you watch the physicals?",
+    "what were you trading before this?",
+    "are you long the complex?",
+    "i do commodities and i care about the physical side more than the screen. what do you trade, and do you look at the physicals at all?",
+  ],
+  rafa: [
+    "what's your read?",
+    "you in this or flat?",
+    "what do you trade mostly?",
+    "index futures for me, and i would rather miss it than pay up for it. what do you trade, and are you in this one or flat?",
+  ],
+  nadia: [
+    "where's your stop?",
+    "how much are you risking?",
+    "what's your size on it?",
+    "i am the risk desk so i ask this of everyone. what do you trade, and how much of the account are you putting on it?",
+  ],
+};
+
+const ASK_BACK_GENERIC: readonly string[] = [
+  "what do you trade?",
+  "what's your read?",
+  "how long have you been at this?",
+  "what do you trade mostly, and are you on here all day or just around the open?",
+];
+
+
+/**
+ * Does the message name a market, even one the room is not currently on?
+ *
+ * "anyone watching bitcoin tonight" is off the open thread and still market talk: it is
+ * answered from the market bank, not from the social one. Without this the room would answer
+ * a question about a different market with "no idea honestly", which is both untrue and the
+ * deflection the off-topic work exists to remove.
+ */
+const MARKET_WORDS =
+  /\b(?:gold|silver|copper|oil|crude|bitcoin|btc|eth|ethereum|crypto|dollar|euro|pound|cable|yen|rates?|yields?|bonds?|bunds?|semis?|indices|index|sp500|nasdaq|equities|stocks?|shares|earnings|nfp|cpi|macro|chart|charts|levels?|range|breakout|price|tape|flows?|fills?|setup|long|short|stop|entry|target|drawdown|hedge|position|size|vol(?:atility)?)\b/i;
+
 export function cannedDraft(ctx: DraftContext): string {
-  const target = lengthTarget(ctx.persona, ctx.seq);
+  // One router, so every caller and every test sees the same answer for the same turn. The
+  // four shapes this bank was never written for, in the order they take precedence: a
+  // greeting is answered with a greeting; a question about the platform is answered from the
+  // fact base; a turn the room is delivering as a question is that question; and a question
+  // off the thread that names no market is answered socially. A question off the thread that
+  // *does* name a market is market talk and falls through to the member's own bank.
+  // A question about the platform wins over the hello when a message is both ("hey, how do i
+  // deposit"). Answering the question is the thing the person is waiting for, and the greeting
+  // still reaches the prompt on the Voice path.
+  if (ctx.event.productQuestion) {
+    return productDraft({
+      persona: ctx.persona,
+      seq: ctx.seq,
+      attempt: ctx.attempt,
+      event: ctx.event,
+      recent: ctx.recent,
+    });
+  }
+  if (ctx.event.greeting) return greetingDraft(ctx);
+  if (ctx.event.replyMode === "askBack") return askBackFor(ctx);
+  if (ctx.event.offTopic && !MARKET_WORDS.test(ctx.event.quoted ?? "")) return socialDraft(ctx);
+
+  const target = lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
   const bank = REPERTOIRE[ctx.persona.id] ?? GENERIC;
   // The retry number is in every seed, so a persona with no model does not repeat
   // itself into a Gate rejection it cannot escape.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { advance, previewHumanReply } from "./advance";
+import { nextEvent, threadReplyMode } from "./agenda";
 import { catchUp } from "./catchup";
 import { PRODUCT_LINES } from "./drafts";
 import { publish } from "./publisher";
@@ -72,11 +73,49 @@ function voiceSaying(text: string): ChatProvider {
 const OFF_TOPIC =
   "anyway the espresso machine finally died so i am drinking hotel coffee like an animal and this whole week has been a write off honestly";
 
+/**
+ * Is the room drafting a responder at this turn, and delivering it as an answer?
+ *
+ * The helpers below need a turn where the room speaks in a member's voice and says something,
+ * and the agenda decides both halves of that: a topic that has run its course rotates to the
+ * engine (IDLE), three posts on one side force a counter-position, every fifth turn is a world
+ * tick, and a minority of the turns that are left is delivered as a bare verdict or a question
+ * (`threadReplyMode`) — a verdict is a beat by construction and a question is capped at a
+ * normal length, so a line pinned to a tier is not what those turns are for. Asking the agenda
+ * is more honest than re-deriving its rules here, and it is what stops the search landing on a
+ * turn where nobody on this roster speaks.
+ *
+ * The seeded room is the one these helpers write: turns 1..seq-1 from mara, first topic, side
+ * "a", one per second, none of them stale.
+ */
+/** Is this turn delivered as a plain answer, not a verdict and not a question? */
+function deliveredAsAnswer(seq: number): boolean {
+  return threadReplyMode({ roomId: TEST_CONFIG.roomId, seq }) === "answer";
+}
+
+function answerTurn(seq: number): boolean {
+  const event = nextEvent({
+    seq,
+    now: BASE,
+    turns: Array.from({ length: seq - 1 }, (_, i) =>
+      makeTurn(i + 1, { sender: "mara", topicId: TEST_TOPICS[0].id }),
+    ),
+    config: TEST_CONFIG,
+    topics: TEST_TOPICS,
+    world: TEST_WORLD,
+    personas: TEST_PERSONAS,
+  });
+  // No `replyMode` on the event is what "delivered as an answer" looks like: the roll only
+  // touches the thread turns, and a FRICTION turn is a counter-position, which is a statement.
+  return event.authoredBy === "responder" && event.replyMode === undefined;
+}
+
 /** The first (persona, turn) pair in the searched range whose flaw says drift. */
 function driftingTurn(): { id: string; seq: number } {
   for (let seq = 2; seq <= 11; seq += 1) {
     // A WORLD turn is engine-authored, so no responder is drafted for it.
     if (seq % 5 === 0) continue;
+    if (!answerTurn(seq)) continue;
     for (const persona of TEST_PERSONAS.filter((p) => ["jev", "dmitri", "sol"].includes(p.id))) {
       if (flawFor(persona, seq).drift) return { id: persona.id, seq };
     }
@@ -88,6 +127,7 @@ function driftingTurn(): { id: string; seq: number } {
 function burstTurn(): { id: string; seq: number } {
   for (let seq = 2; seq <= 30; seq += 1) {
     if (seq % 5 === 0) continue;
+    if (!answerTurn(seq)) continue;
     for (const persona of TEST_PERSONAS.filter((p) => ["jev", "dmitri", "sol"].includes(p.id))) {
       if (isBurstTurn(persona, seq)) return { id: persona.id, seq };
     }
@@ -99,6 +139,7 @@ function burstTurn(): { id: string; seq: number } {
 function anchoredTurn(): { id: string; seq: number } {
   for (let seq = 2; seq <= 11; seq += 1) {
     if (seq % 5 === 0) continue;
+    if (!answerTurn(seq)) continue;
     for (const persona of TEST_PERSONAS.filter((p) => ["jev", "dmitri", "sol"].includes(p.id))) {
       if (!flawFor(persona, seq).drift) return { id: persona.id, seq };
     }
@@ -517,8 +558,10 @@ test("the same invented claim is published on an ordinary turn, where it is only
   // one whose slang occasionally misses. `gate.test.ts` holds the other half.
   const persona = TEST_PERSONAS.find((p) => p.id === "sol")!;
   // Not a world tick, and not the opening: the room has to be mid-thread.
+  // Seeded with a single turn, so the room is mid-thread: all this one needs is a turn the
+  // room delivers as an answer, since a verdict is a beat and a question is capped short.
   let seq = seqForTier(persona, "normal", 2);
-  while (seq % TEST_CONFIG.scheduling.worldEventEveryTurns === 0) {
+  while (!deliveredAsAnswer(seq) || seq % TEST_CONFIG.scheduling.worldEventEveryTurns === 0) {
     seq = seqForTier(persona, "normal", seq + 1);
   }
   const personas = TEST_PERSONAS.map((p) => (p.id === persona.id ? { ...p, model: "test/model" } : p));

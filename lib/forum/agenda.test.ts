@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { nextEvent } from "./agenda";
+import { nextEvent, threadReplyMode } from "./agenda";
 import type { AgendaContext } from "./agenda";
 import {
   makeTurn,
@@ -160,6 +160,62 @@ test("otherwise the room continues its open thread", () => {
   assert.equal(event.side, "a");
   assert.equal(event.topic.id, gold);
   assert.equal(event.quoted, "line 1");
+});
+
+test("the room's own turns are not all the same speech act", () => {
+  const modes = new Map<string, number>();
+  for (let seq = 1; seq <= 400; seq += 1) {
+    const mode = threadReplyMode({ roomId: "axion-forum", seq });
+    modes.set(mode, (modes.get(mode) ?? 0) + 1);
+  }
+
+  // A room whose every turn is an assertion is a row of broadcasts: 0.0% of the shipped
+  // room's canned lines asked anything. Questions and verdicts are both minorities.
+  for (const mode of ["answer", "askBack", "react"] as const) {
+    assert.ok((modes.get(mode) ?? 0) > 0, `${mode} is unreachable: ${JSON.stringify([...modes])}`);
+  }
+  assert.ok((modes.get("answer") ?? 0) > 200, "answering must still be the norm");
+  assert.ok(
+    (modes.get("askBack") ?? 0) < 100 && (modes.get("react") ?? 0) < 100,
+    `the unusual deliveries are not a minority: ${JSON.stringify([...modes])}`,
+  );
+
+  // The delivery is a property of the turn, not of the speaker: the agenda must roll it for
+  // the turn the same way every time, or a replay is a different room.
+  for (let seq = 1; seq <= 200; seq += 1) {
+    assert.equal(threadReplyMode({ roomId: "axion-forum", seq }), threadReplyMode({ roomId: "axion-forum", seq }));
+  }
+});
+
+test("a thread turn the room delivers as a question says so on the event", () => {
+  const turns = [makeTurn(1, { sender: "mara", side: "a", topicId: gold })];
+  const seqs = Array.from({ length: 60 }, (_, i) => i + 2);
+  const asking = seqs.filter(
+    (seq) => nextEvent(context({ seq, turns })).replyMode === "askBack",
+  );
+  assert.ok(asking.length > 0, "no thread turn in sixty was delivered as a question");
+
+  for (const seq of asking) {
+    const event = nextEvent(context({ seq, turns }));
+    assert.equal(event.kind, "THREAD", `seq ${seq} asks a question on a ${event.kind} turn`);
+    // A FRICTION turn is the room's counter-position to a topic it has been agreeing on, and a
+    // counter-position has to be a statement.
+    assert.notEqual(event.authoredBy, "engine");
+  }
+
+  // And a turn the room has forced onto the other side is never a question or a verdict.
+  const frictionTurns = [
+    makeTurn(1, { sender: "mara", side: "a", topicId: gold }),
+    makeTurn(2, { sender: "jev", side: "a", topicId: gold }),
+    makeTurn(3, { sender: "mara", side: "a", topicId: gold }),
+  ];
+  for (let seq = 4; seq <= 40; seq += 1) {
+    // A world tick takes the turn on its own schedule.
+    if (seq % TEST_CONFIG.scheduling.worldEventEveryTurns === 0) continue;
+    const event = nextEvent(context({ seq, turns: frictionTurns }));
+    assert.equal(event.kind, "FRICTION");
+    assert.equal(event.replyMode, undefined, `the counter-position at ${seq} was delivered as a ${event.replyMode}`);
+  }
 });
 
 test("a room that has agreed for too long is forced onto the other side", () => {

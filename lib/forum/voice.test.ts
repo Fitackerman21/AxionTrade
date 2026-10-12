@@ -200,6 +200,92 @@ test("a failing primary model fails over to the persona's fallbackModel", async 
   }
 });
 
+test("the Voice spends the whole key pool, not just the first two", async () => {
+  const original = globalThis.fetch;
+  const used: string[] = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    used.push(String(headers.Authorization ?? "").replace(/^Bearer /, ""));
+    const body = JSON.parse(String(init?.body)) as { model: string };
+    return new Response(
+      JSON.stringify({
+        model: body.model,
+        choices: [{ message: { content: "ok" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 },
+      }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+
+  try {
+    const pool = ["key-0", "key-1", "key-2", "key-3"];
+    for (let seq = 1; seq <= 24; seq += 1) {
+      await voiceDraft({ persona: voiced(), event: eventOf(), world: TEST_WORLD, seq, keys: pool });
+    }
+
+    assert.equal(used.length, 24, "one call per turn while the primary answers");
+    assert.deepEqual(
+      [...new Set(used)].sort(),
+      [...pool].sort(),
+      "every account in the pool has to carry some of the room's turns",
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("a replay spends the same keys, and the fallback never shares the primary's", async () => {
+  const original = globalThis.fetch;
+  let calls: string[] = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const key = String(headers.Authorization ?? "").replace(/^Bearer /, "");
+    const body = JSON.parse(String(init?.body)) as { model: string };
+    calls.push(`${body.model}@${key}`);
+    if (body.model === "primary/model") {
+      return new Response(JSON.stringify({ error: { message: "upstream down" } }), { status: 500 });
+    }
+    return new Response(
+      JSON.stringify({
+        model: body.model,
+        choices: [{ message: { content: "backup line" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 3, cost: 0 },
+      }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+
+  try {
+    const pool = ["key-0", "key-1", "key-2"];
+    const persona: Persona = { ...MARA, model: "primary/model", fallbackModel: "backup/model" };
+    const run = async () => {
+      calls = [];
+      const result = await voiceDraft({
+        persona,
+        event: eventOf(),
+        world: TEST_WORLD,
+        seq: 9,
+        keys: pool,
+      });
+      return { keys: calls.map((call) => call.slice(call.indexOf("@") + 1)), result };
+    };
+
+    const first = await run();
+    const second = await run();
+
+    assert.equal(first.result.model, "backup/model");
+    assert.equal(first.keys.length, 2, "the failing primary is followed by the fallback");
+    assert.notEqual(
+      first.keys[0],
+      first.keys[1],
+      "an exhausted account must not take both halves of the failover",
+    );
+    assert.deepEqual(second.keys, first.keys, "a replay spends the keys it spent the first time");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("an opening turn has no quoted message", async () => {
   const { provider, seen } = fake(() => answer("ok"));
   await voiceDraft({
@@ -391,12 +477,12 @@ test("a question that is not about the thread is answered on its own terms", asy
   assert.doesNotMatch(user, /<your side>/);
 });
 
-test("a question about the platform gets a bounded testimonial, never a refusal or a claim", async () => {
-  // Results and nitpicks on the sheet, because those are the only product material a
-  // persona holds. The licence is now to *use* them: the room answers "is this real"
-  // with what it gets out of the thing (and at most one petty annoyance), and the two
-  // things it may still never do are invent a fact about performance and refuse to
-  // answer at all.
+test("a question about the platform is answered from the room's facts, never a refusal or a claim", async () => {
+  // The measured failure this test now stands against: six messages from a newcomer, six
+  // replies, and none of them answered the question that was asked. The material is the
+  // reviewed fact sheet for the **question's own shape** (`knowledge.ts`) plus the
+  // member's own nitpicks, and the three things it may never do are invent a fact about
+  // performance, promise anyone an outcome, and refuse to engage.
   const withResults: Persona = {
     ...voiced(),
     sheet: {
@@ -414,6 +500,7 @@ test("a question about the platform gets a bounded testimonial, never a refusal 
       quoted: "Is axion ai trading real ?, hope I am not going to lose my money in this?",
       offTopic: true,
       productQuestion: true,
+      productIntent: "trust",
     }),
     world: TEST_WORLD,
     seq: 6,
@@ -422,15 +509,23 @@ test("a question about the platform gets a bounded testimonial, never a refusal 
 
   const user = seen[0]!.messages[0]!.content ?? "";
   assert.match(user, /asking about the platform itself/);
-  // The ask is a testimonial: an opinion, positive, in the persona's own experience.
-  assert.match(user, /give them a real opinion/);
-  assert.match(user, /Be positive and specific about it/);
+  // The turn names the question it is answering, so the model answers *that* one.
+  assert.match(user, /What they are asking is: whether it is real and whether the money is safe/);
+  // The facts, and only the facts: the funded balance, the released portion, the loss
+  // limit and the profit goal. A persona holding no product fact can only praise, deflect
+  // or invent, and all three read as a bot on a page about the product.
+  assert.match(user, /<the only facts you know about the platform>/);
+  assert.match(user, /the part of it that trades/);
+  assert.match(user, /inside the loss limit and the profit goal you set/);
+  assert.match(user, /the way you would to somebody sitting next to you/);
+  // The member's own nitpicks are still offered, and still bounded.
   assert.match(user, /the interface is busier than she needs/, "their own nitpicks are offered");
-  // ...bounded by the two bans that survive: no invented performance fact, no advice.
-  assert.match(user, /You may not invent anything about performance or money/);
-  assert.match(user, /never tell them to stay away from it/);
-  // ...and no refusing, which is what the room actually shipped.
-  assert.match(user, /Never refuse to answer, never say it is not your call/);
+  // ...bounded by the bans that survive: no invented performance fact, no promise, no advice.
+  assert.match(user, /Do not invent anything about performance or money/);
+  assert.match(user, /never promise an outcome/);
+  assert.match(user, /never tell them whether to put their money in it or to stay away from it/);
+  // ...and for a question the facts do not cover, the honest gap rather than a shrug.
+  assert.match(user, /If what they asked is not covered by those facts, say plainly/);
   assert.ok(user.includes("Is axion ai trading real"), "the question itself must reach the model");
   // The market stance is withheld here exactly as it is on an off-topic turn.
   assert.doesNotMatch(user, /<your side>/);
@@ -442,7 +537,7 @@ test("a question about the platform gets a bounded testimonial, never a refusal 
   // above it (§9.2).
   for (let seq = 1; seq <= 120; seq += 1) {
     assert.equal(flawFor(withResults, seq, false, true), PRODUCT_FLAW);
-    assert.match(flawFor(withResults, seq, false, true).text, /give them a real opinion/);
+    assert.match(flawFor(withResults, seq, false, true).text, /Answer the question they actually asked/);
     assert.equal(isBurstTurn(withResults, seq, false, true), false);
   }
   assert.ok(

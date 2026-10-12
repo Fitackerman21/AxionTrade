@@ -20,12 +20,13 @@
  * lets `advance()` stop holding that turn to the Gate's ADDRESSEE rule.
  */
 
-import { cannedDraft, productDraft } from "./drafts";
+import { cannedDraft } from "./drafts";
+import { knowledgeFor } from "./knowledge";
 import { digestFor, overusedTerms } from "./lexicon";
 import { FallbackProvider, OpenRouterProvider, openRouterKeys } from "./provider";
 import type { ChatProvider } from "./provider";
-import { lengthTarget, TEXTING_RULE } from "./register";
-import { hashPick } from "./rng";
+import { lengthTarget, TEXTING_RULE, tierOptionsFor } from "./register";
+import { hashPick, hashString } from "./rng";
 import type { AgendaEvent, Persona, TurnRecord, WorldState } from "./types";
 
 export interface VoiceDraftOptions {
@@ -164,7 +165,7 @@ const SLANG_FLAW =
  * or tell anyone what to do with their money.
  */
 export const PRODUCT_FLAW: VoiceFlaw = {
-  text: "Answer them as one user talking to another, and give them a real opinion: what you actually use it for, what it has done for your week, why you are still on it. Warm and positive, specific, your own words. If it fits, add the one small thing that still annoys you about using it. Never refuse to answer and never say it is not your call — you have a view and you give it.",
+  text: "Answer the question they actually asked, using only the facts you were given about the platform. Say it in your own words, the way you would explain it to somebody sitting next to you: what you do, what the thing does. You may add one concrete detail from your own use of it and at most one petty annoyance about the interface. If the facts do not cover what they asked, say plainly that you do not know that side and send them to support. Never refuse to engage and never say it is not your call.",
 };
 
 const HUMAN_FLAWS: readonly VoiceFlaw[] = [
@@ -236,6 +237,12 @@ export function flawFor(
    * whole failure, so it and "mention a real result" are simply off the table there.
    */
   noProductClaims = false,
+  /**
+   * true on a turn the room is answering with a reaction rather than a reply (the
+   * `react` reply mode). Two of the flaws — the double-text and the long drift — cannot
+   * be followed inside two or three words, so a reactive turn takes the neutral one.
+   */
+  reactive = false,
 ): VoiceFlaw {
   // A product question gets one directive and no dice roll. Every entry in
   // HUMAN_FLAWS competes with the restriction — the beat flaw asks for "two or three
@@ -246,7 +253,7 @@ export function flawFor(
   if (noProductClaims) return PRODUCT_FLAW;
 
   const roll = hashPick(HUMAN_FLAWS, `flaw:${persona.id}:${seq}`) ?? HUMAN_FLAWS[0]!;
-  if (engine) return HUMAN_FLAWS[0]!;
+  if (engine || reactive) return HUMAN_FLAWS[0]!;
   if (roll.needs === "slang" && !(persona.sheet.slang?.length ?? 0)) return HUMAN_FLAWS[0]!;
   if (roll.needs === "results" && !(persona.sheet.results?.length ?? 0)) return HUMAN_FLAWS[0]!;
   return roll;
@@ -270,8 +277,10 @@ export function isBurstTurn(
   engine = false,
   /** true on a product question, whose single directive never asks for a burst */
   noProductClaims = false,
+  /** true on a reaction turn, which is two or three words and cannot be two messages */
+  reactive = false,
 ): boolean {
-  return flawFor(persona, seq, engine, noProductClaims).burst === true;
+  return flawFor(persona, seq, engine, noProductClaims, reactive).burst === true;
 }
 
 const VOICE_SYSTEM = [
@@ -283,7 +292,7 @@ const VOICE_SYSTEM = [
   // The license that makes the room read like people rather than a chat log.
   "Real people in a group chat are not tidy: they go on tangents, give each other a hard time, use slang, misspell a word, leave a thought half-finished, and answer a message two messages late. Do that.",
   "You may be annoyed, dismissive, mean or bored. Not every message deserves a polite reply, and you do not have to be fair.",
-  "Never write a tidy summary, never balance both sides, never wrap up neatly, and never end with a question just to keep the chat going.",
+  "Never write a tidy summary, never balance both sides, never wrap up neatly, and never end every message with a question just to keep the chat going. Sometimes you do ask something back, because you are curious, and that is different.",
   // The slang half of "sound human". It is American on purpose and the rule is
   // explicit, because a persona written as Lagos or Accra will otherwise reach
   // for pidgin that nobody in a US room would say.
@@ -404,12 +413,16 @@ function turnUser(args: {
   critique?: string;
 }): string {
   const { event, world, persona, seq, recent, memory, critique } = args;
-  const target = lengthTarget(persona, seq);
+  // The turn's own shape can pin the length: a reaction is a beat whatever the dice said.
+  const target = lengthTarget(persona, seq, tierOptionsFor(event));
   const engine = event.authoredBy === "engine";
   // A product question is stricter than an off-topic one and supersedes it (§9.2),
   // so both are decided here, before anything reads either.
   const product = restricted(event);
   const offTopic = event.offTopic === true && !engine && !product;
+  const reactive = event.replyMode === "react";
+  // What the room actually knows about the question it was asked (knowledge.ts).
+  const knowledge = product ? knowledgeFor(event.productIntent ?? "other") : null;
   const quoted =
     event.quoted == null
       ? "<opening the room>"
@@ -423,7 +436,7 @@ function turnUser(args: {
   const hint = product
     ? "Answer them directly, in your own words, at the length above. This one is about the platform, so the market does not come into it."
     : (hashPick(DELIVERY_HINTS, `voice:${persona.id}:${seq}`) ?? DELIVERY_HINTS[0]!);
-  const flaw = flawFor(persona, seq, engine, product).text;
+  const flaw = flawFor(persona, seq, engine, product, reactive).text;
   const chat = recentChat(recent, persona.id);
   // The room's own vocabulary gets worn out over an afternoon — the same digest and the
   // same two topics hand the model the same nouns every turn, and it hands them back
@@ -444,16 +457,23 @@ function turnUser(args: {
       ? `You may use what you remember, the way a person uses a memory of a real conversation. Never recite it, never say that you remember it, never list it back.`
       : "",
     chat,
-    product
+    product && knowledge
       ? [
           `<the open thread>${event.topic.title}</the open thread>`,
-          `${event.sender} is asking about the platform itself, not about the market. Answer them as one user talking to another, not as the platform and not as a reviewer.`,
-          `Tell them your own experience: what you use it for, what it has done for your week, why you stayed on it. Be positive and specific about it — they are asking whether it is good, and for you it is.`,
+          `${event.sender} is asking about the platform itself, not about the market. What they are asking is: ${knowledge.label}. Answer THAT, as one user talking to another, not as the platform and not as a reviewer.`,
+          // The facts, and only the facts. A persona with no product fact can only praise,
+          // deflect or invent, and all three read as a bot on a page about the product; a
+          // persona with the reviewed facts answers the question.
+          `<the only facts you know about the platform>`,
+          ...knowledge.facts.map((fact) => `- ${fact}`),
+          `</the only facts you know about the platform>`,
+          `Explain it in your own words, the way you would to somebody sitting next to you. Do not recite that list and do not read it out like a manual.`,
+          `Use nothing but those facts. Do not invent anything about performance or money: nothing about fills, speed, accuracy, alerts, fees, processing times, or what anyone makes or loses on it, and no number you cannot back.`,
+          `If what they asked is not covered by those facts, say plainly that you only trade on it and do not know that side, and point them at support in the app. Do not guess and do not refuse to engage.`,
           persona.sheet.nitpicks && persona.sheet.nitpicks.length > 0
             ? `You may add at most one small annoyance of yours about using it, from: ${persona.sheet.nitpicks.join("; ")}. Keep it petty and cosmetic, and never let it become a fault in how the thing works.`
             : `If a small annoyance fits, keep it petty and cosmetic.`,
-          `You may not invent anything about performance or money: nothing about fills, speed, accuracy, alerts, fees, or what anyone makes or loses on it, and no number you cannot back. Your only facts are the ones listed above.`,
-          `Never refuse to answer, never say it is not your call, never say you are not the person to ask, and never call it real or fake or claim that anything you said earlier was not real. Never promise an outcome, never tell them whether to put their money in it, and never tell them to stay away from it.`,
+          `Never call it real or fake, never claim that anything you said earlier was not real, never promise an outcome, and never tell them whether to put their money in it or to stay away from it. Nobody here tells other people what to do with their money.`,
           `Do not steer it back to the market unless they asked about the market too.`,
         ].join(NL)
       : offTopic
@@ -467,6 +487,14 @@ function turnUser(args: {
     quoted,
     "",
     hint,
+    // Somebody walking in is the one turn where the first thing owed is a hello. The live
+    // room never gave one: no reply to a visitor in the measured chat greeted them.
+    event.greeting
+      ? `They have just walked in. Open with a short hello to them in your own voice, then answer if they asked anything. You are another trader saying hi, not a host and not a moderator.`
+      : "",
+    event.replyMode === "askBack"
+      ? `Finish with a short question of your own. You are curious what they think, so ask it normally rather than using it to keep the chat going.`
+      : "",
     critique
       ? `<your last attempt was rejected for this reason>${critique}${NL}Write a different line that fixes exactly that. Do not rephrase the rejected one.`
       : "",
@@ -489,7 +517,7 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
     return cannedResult(opts, `no model on ${persona.id}`);
   }
 
-  const provider = opts.provider ?? resolveVoiceProvider(persona, opts.keys);
+  const provider = opts.provider ?? resolveVoiceProvider(persona, opts.keys, seq);
   if (!provider) {
     return cannedResult(opts, `no voice provider for ${persona.id}`);
   }
@@ -536,7 +564,7 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
       usedVoice: true,
       fallback: false,
       reason: null,
-      drift: flawFor(persona, seq, engineFlaw, restricted(event)).drift ?? false,
+      drift: flawFor(persona, seq, engineFlaw, restricted(event), event.replyMode === "react").drift ?? false,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -547,22 +575,20 @@ export async function voiceDraft(opts: VoiceDraftOptions): Promise<VoiceDraftRes
 /** The P0 draft, with the reason the Voice did not run. */
 function cannedResult(opts: VoiceDraftOptions, reason: string): VoiceDraftResult {
   return {
-    // A product question falls back to the room's safe lines, not to a market line:
-    // a persona with no model (or a provider that is down) would otherwise answer
-    // "is this real" with a view on gold, which is the deflection that made the live
-    // room sound like a bot in the first place (§9.2).
-    text: restricted(opts.event)
-      ? productDraft({ persona: opts.persona, seq: opts.seq, attempt: opts.attempt ?? 1 })
-      : cannedDraft({
-          persona: opts.persona,
-          event: opts.event,
-          world: opts.world,
-          seq: opts.seq,
-          attempt: opts.attempt ?? 1,
-          // The fallback is read as often as a real line when the Voice is down, so it
-          // gets the same repeat window the live path does.
-          recent: opts.recent,
-        }),
+    // The bank routes by turn shape itself (`drafts.ts: cannedDraft`), so a product question
+    // falls back to the reviewed fact base rather than to a market line — a persona with no
+    // model (or a provider that is down) would otherwise answer "is this real" with a view on
+    // gold, which is the deflection that made the live room sound like a bot (§9.2).
+    text: cannedDraft({
+      persona: opts.persona,
+      event: opts.event,
+      world: opts.world,
+      seq: opts.seq,
+      attempt: opts.attempt ?? 1,
+      // The fallback is read as often as a real line when the Voice is down, so it
+      // gets the same repeat window the live path does.
+      recent: opts.recent,
+    }),
     model: null,
     usage: null,
     usedVoice: false,
@@ -580,8 +606,20 @@ function cannedResult(opts: VoiceDraftOptions, reason: string): VoiceDraftResult
  * the fallback is a failover to a *different* model rather than a retry of the
  * same one. Distinct families are the point: the spare should not fail for the
  * same reason the primary did.
+ *
+ * The key is rotated per turn rather than pinned to the first two in the pool.
+ * Every account carries its own daily request cap, so a room that spends the same
+ * two on every turn empties those two accounts while the rest sit untouched:
+ * measured live, the voice went quiet on canned lines with eight keys holding
+ * unused quota for the day. The offset is seeded on the persona and the turn, so a
+ * replay spends the key it spent the first time, and the fallback is offset one
+ * behind the primary so a single exhausted account cannot take both halves.
  */
-function resolveVoiceProvider(persona: Persona, keys?: string[]): ChatProvider | undefined {
+function resolveVoiceProvider(
+  persona: Persona,
+  keys?: string[],
+  seq = 0,
+): ChatProvider | undefined {
   const allKeys = keys ?? openRouterKeys();
   if (allKeys.length === 0) return undefined;
   if (!persona.model) return undefined;
@@ -589,8 +627,10 @@ function resolveVoiceProvider(persona: Persona, keys?: string[]): ChatProvider |
   const models = [persona.model, persona.fallbackModel].filter(
     (model): model is string => Boolean(model),
   );
+  const offset = hashString(`voice-key:${persona.id}:${seq}`) % allKeys.length;
   const providers = models.map(
-    (model, index) => new OpenRouterProvider({ apiKey: allKeys[index % allKeys.length]!, model }),
+    (model, index) =>
+      new OpenRouterProvider({ apiKey: allKeys[(offset + index) % allKeys.length]!, model }),
   );
 
   return providers.length === 1 ? providers[0]! : new FallbackProvider(providers);

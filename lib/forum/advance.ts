@@ -478,6 +478,43 @@ export async function advance(
       if (choice.relaxedCooldown) notes.push("every candidate was on cooldown");
     }
 
+    // A `quiet` turn: the room read the message and had nothing to add.
+    //
+    // Deliberately rare, never on a question, never on somebody's first message and never
+    // on anything about the platform (see `agenda.ts: humanReplyMode`), because this is the
+    // one reply mode that shows a visitor nothing. It is still a *write*: without a record
+    // after the person's message the agenda would recognise that message as unanswered
+    // forever and answer it on the next tick, so the quiet turn is the room's own note that
+    // it saw it.
+    if (event.kind === "HUMAN" && event.replyMode === "quiet" && !injectionTurn && !system) {
+      const quietRecord: TurnRecord = {
+        seq,
+        t: now,
+        driver,
+        trigger: event.kind,
+        event: {
+          kind: event.kind,
+          reason: event.reason,
+          sender: event.sender,
+          topicId: event.topic.id,
+          side: event.side,
+        },
+        candidates: candidatesForRecord,
+        ordered: choice.ordered,
+        chosen,
+        escalated,
+        decision: "UNPUBLISHED",
+        attempts: [],
+        message: null,
+        memoryWrites: [],
+        worldVersion: world.version,
+        note: "the room read it and had nothing to add (quiet turn)",
+        durationMs: Date.now() - startedAt,
+      };
+      await publishUnpublished(store, quietRecord);
+      return { status: "unpublished", record: quietRecord };
+    }
+
     // The Gate reviews responder drafts (spec §8). Engine turns — openings, world
     // reports, recaps and stage directions — are the room's own control voice and
     // bypass it: an empty room is worse than an un-reviewed control line.
@@ -575,7 +612,15 @@ export async function advance(
       // A double-texting turn writes two beats around the marker the prompt asked
       // for. They are split here rather than after the Gate, because the Gate judges
       // what the room actually says: one person's message, not a marker.
-      if (isBurstTurn(persona, seq, event.authoredBy === "engine", event.productQuestion === true)) {
+      if (
+        isBurstTurn(
+          persona,
+          seq,
+          event.authoredBy === "engine",
+          event.productQuestion === true,
+          event.replyMode === "react",
+        )
+      ) {
         beats = splitBeats(voice.text);
         if (beats.length > 1) return beats.join(" ");
       }

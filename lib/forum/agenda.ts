@@ -10,7 +10,9 @@
  */
 
 import { contentTokens } from "./gate";
+import { isGreeting, productIntentOf } from "./knowledge";
 import { digestFor } from "./lexicon";
+import { hashString } from "./rng";
 import type {
   AgendaEvent,
   ForumConfig,
@@ -232,17 +234,170 @@ function nextTopic(posts: readonly PostedTurn[], topics: readonly Topic[]): Topi
   return topics[(index + 1) % topics.length] as Topic;
 }
 
+/**
+ * Has this sender never spoken before, inside the window the agenda can see?
+ *
+ * A person's first message is the one where a greeting is owed and where a clock is
+ * running: a newcomer who gets silence on their opening line does not send a second, so
+ * the shapes that risk reading as an empty room are disabled for it.
+ */
+function isFirstFromSender(
+  turns: readonly TurnRecord[],
+  sender: string,
+  personas: readonly Persona[],
+): boolean {
+  if (!isExternal(sender, personas)) return false;
+  let seen = 0;
+  for (const turn of turns) {
+    const message = turn.message;
+    if (!message || message.sender !== sender) continue;
+    seen += 1;
+    if (seen > 1) return false;
+  }
+  return seen === 1;
+}
+
+/**
+ * How the room handles one person's message.
+ *
+ * A live room answers everything, always, once, and never asks anything back: over the
+ * measured afternoon it produced **0.0%** questions from the canned bank and only 5.4%
+ * from the model, greeted nobody (0 of 6 replies to a visitor), and answered all six of a
+ * newcomer's messages within 40-70 seconds. That regularity is a tell on its own, however
+ * good the individual lines are, so a minority of turns is delivered differently:
+ *
+ *  - `react` — a verdict, no information. The commonest way a group chat "does not
+ *    answer": somebody says nah, or fair, or an emoji, and the conversation moves on.
+ *  - `askBack` — an answer that ends in a question of the responder's own.
+ *  - `quiet` — the room read it and had nothing to add. Rarest of all, and never on a
+ *    question, never on the first message a person has ever sent, and never on anything
+ *    about the platform: silence is the one reply a worried visitor must not get.
+ *
+ * The roll is on the human message's own seq, so a replay delivers the same turn the same
+ * way, and the mode is not a property of the speaker — it belongs to the message.
+ */
+export function humanReplyMode(args: {
+  roomId: string;
+  seq: number;
+  text: string;
+  product: boolean;
+  greeting: boolean;
+  first: boolean;
+}): NonNullable<AgendaEvent["replyMode"]> {
+  const { roomId, seq, text, product, greeting, first } = args;
+  // The two shapes that are always answered exactly as asked: a question about the
+  // platform (spec §9.2) and somebody walking in the door.
+  if (product || greeting) return "answer";
+
+  const roll = hashString(`${roomId}:reply:${seq}`) % 100;
+  if (roll < 12) return "askBack";
+  if (roll < 24) return "react";
+  if (roll < 32) {
+    // Silence is only ever allowed where it would be read as a busy room rather than a
+    // dead one: a short social line, from somebody who has spoken before, with no
+    // question mark in it. Anything else is downgraded to a reaction, which is the same
+    // human move with a heartbeat behind it.
+    const asks = text.includes("?");
+    if (!asks && !first && text.trim().length <= 70) return "quiet";
+    return "react";
+  }
+  return "answer";
+}
+
+/**
+ * How a turn between two members is delivered.
+ *
+ * The fallback room asserted everything: measured over its canned lines, **0.0%** asked a
+ * question, against 5.4% of the lines a model wrote. A room where nobody ever asks anything
+ * is a row of broadcasts, and that is a tell about the *shape* of every turn rather than
+ * about any one line — the reader notices the sameness before they notice a bad sentence.
+ *
+ * So a minority of thread turns is delivered as a question instead of a statement, and a
+ * smaller share as a bare reaction (the same move as `react` on a person's message: a
+ * verdict carrying no information). Seeded on the room and the turn, like `humanReplyMode`,
+ * and rolled per turn rather than per speaker — no member may become "the one who asks".
+ *
+ * FRICTION is left alone: that turn is the room's counter-position to a topic it has been
+ * agreeing on, and a counter-position has to be a statement.
+ */
+export function threadReplyMode(args: {
+  roomId: string;
+  seq: number;
+}): NonNullable<AgendaEvent["replyMode"]> {
+  const roll = hashString(`${args.roomId}:thread:${args.seq}`) % 100;
+  if (roll < 14) return "askBack";
+  if (roll < 25) return "react";
+  return "answer";
+}
+
+/**
+ * A second member piling on.
+ *
+ * A real room does not ration itself to one reply per visitor: somebody answers and
+ * somebody else adds a line, or reacts to the answer. The live room never did, so every
+ * visitor got exactly one opinion from exactly one person. This fires at most once per
+ * person's message — it needs the newest post to be a reply to that message and the post
+ * before it to be the message itself — and never on a question about the platform, where a
+ * single clear answer is worth more than a pile-on.
+ */
+function pileOn(posts: readonly PostedTurn[], ctx: AgendaContext): AgendaEvent | null {
+  const reply = posts[posts.length - 1];
+  const original = posts[posts.length - 2];
+  if (!reply || !original) return null;
+  if (reply.message.system) return null;
+  if (!isExternal(original.message.sender, ctx.personas)) return null;
+  if (original.turn.trigger !== "HUMAN") return null;
+  if (reply.message.replyToSeq !== original.message.seq) return null;
+  if (reply.message.primaryRecipient !== original.message.sender) return null;
+
+  const text = original.message.text;
+  const topic = topicFor(original.message.topicId, ctx.topics);
+  const onTopic = asksAboutTopic(text, topic);
+  if (asksAboutProduct(text, onTopic)) return null;
+  if (isGreeting(text)) return null;
+  if (text.includes("?") && contentTokens(text).size === 0) return null;
+  // One in five of the messages the room has already answered, so the pile-on is a
+  // texture rather than the new rhythm.
+  if (hashString(`${ctx.config.roomId}:pile:${original.message.seq}`) % 100 >= 22) return null;
+
+  return {
+    kind: "HUMAN",
+    reason: `${original.message.sender} is still here and somebody else is answering too`,
+    sender: original.message.sender,
+    topic,
+    side: original.message.side,
+    quoted: text,
+    authoredBy: "responder",
+    replyTo: original.message.seq,
+    ...(onTopic ? {} : { offTopic: true }),
+  };
+}
+
 export function nextEvent(ctx: AgendaContext): AgendaEvent {
   const { seq, now, config, topics, world, personas, turns } = ctx;
   const posts = postedTurns(turns);
   const newest = posts[posts.length - 1];
   const engine = config.agenda.enginePersona;
 
+  // The room deliberately passed on the newest message. A `quiet` reply mode writes a
+  // record with no message, so the human message stays at the head of the *message* log —
+  // and the agenda would recognise it as unanswered forever, and answer it a second time,
+  // without this. The marker is the room's own record of reading it.
+  const lastRecord = turns[turns.length - 1];
+  const humanPassedOn = Boolean(
+    lastRecord &&
+      lastRecord.message === null &&
+      lastRecord.chosen !== null &&
+      lastRecord.trigger === "HUMAN",
+  );
+
   // 1. HUMAN — a person spoke and is owed a reply.
-  if (newest && isExternal(newest.message.sender, personas)) {
+  if (newest && isExternal(newest.message.sender, personas) && !humanPassedOn) {
+    const text = newest.message.text;
     const topic = topicFor(newest.message.topicId, topics);
-    const onTopic = asksAboutTopic(newest.message.text, topic);
-    const product = asksAboutProduct(newest.message.text, onTopic);
+    const onTopic = asksAboutTopic(text, topic);
+    const product = asksAboutProduct(text, onTopic);
+    const greeting = isGreeting(text);
     return {
       kind: "HUMAN",
       reason: onTopic
@@ -251,16 +406,34 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       sender: newest.message.sender,
       topic,
       side: newest.message.side,
-      quoted: newest.message.text,
+      quoted: text,
       authoredBy: "responder",
       // The reply is visibly attached to the message it answers, the way a quoted
       // reply works in a chat app.
       replyTo: newest.message.seq,
       // Off the thread: the answer is to the person, not to the market.
       ...(onTopic ? {} : { offTopic: true }),
-      // About the platform: a question the room answers without a claim (§9.2).
-      ...(product ? { productQuestion: true } : {}),
+      // About the platform: a question the room answers without a claim (§9.2), and
+      // `productIntent` is the shape of it — the difference between a testimonial and an
+      // answer is whether the room knows which question it was asked.
+      ...(product ? { productQuestion: true, productIntent: productIntentOf(text) } : {}),
+      // Somebody walked in rather than asked: the reply owes them a welcome first.
+      ...(greeting ? { greeting: true } : {}),
+      replyMode: humanReplyMode({
+        roomId: config.roomId,
+        seq,
+        text,
+        product,
+        greeting,
+        first: isFirstFromSender(turns, newest.message.sender, personas),
+      }),
     };
+  }
+
+  // 1b. PILE-ON — the person has had their answer, and a second member adds a line.
+  if (!humanPassedOn) {
+    const piling = pileOn(posts, ctx);
+    if (piling) return piling;
   }
 
   // 2. RECAP — the room was away long enough that replaying the gap would be a
@@ -313,19 +486,32 @@ export function nextEvent(ctx: AgendaContext): AgendaEvent {
       // A THREAD turn answers a real message, so it quotes one with a subject in it.
       const target = flipping ? null : replyTarget(posts);
 
+      if (flipping) {
+        return {
+          kind: "FRICTION",
+          reason: `${streak.count} posts in a row on side ${streak.side}; forcing the counter-position`,
+          sender: target ? target.sender : newest.message.sender,
+          topic,
+          side,
+          quoted: topic.friction[side],
+          // A FRICTION turn is handed the topic's canonical counter-line, which is a
+          // prompt rather than a message, so it is not attached to the previous post.
+          authoredBy: "responder",
+        };
+      }
+
       return {
-        kind: flipping ? "FRICTION" : "THREAD",
-        reason: flipping
-          ? `${streak.count} posts in a row on side ${streak.side}; forcing the counter-position`
-          : "continuing the open thread",
+        kind: "THREAD",
+        reason: "continuing the open thread",
         sender: target ? target.sender : newest.message.sender,
         topic,
         side,
-        quoted: flipping ? topic.friction[side] : target!.text,
-        // A FRICTION turn is handed the topic's canonical counter-line, which is a
-        // prompt rather than a message, so it is not attached to the previous post.
+        quoted: target!.text,
         authoredBy: "responder",
         ...(target ? { replyTo: target.seq } : {}),
+        // A statement, a question, or a verdict — the room's turns between its own
+        // members are not all the same speech act (`threadReplyMode`).
+        replyMode: threadReplyMode({ roomId: config.roomId, seq }),
       };
     }
   }
