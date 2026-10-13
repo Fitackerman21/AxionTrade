@@ -1023,25 +1023,71 @@ export function answerCandidates(
 }
 
 /**
+ * Does the message name a market, even one the room is not currently on?
+ *
+ * "anyone watching bitcoin tonight" is off the open thread and still market talk: it is
+ * answered from the market bank, not from the social one. Without this the room would answer
+ * a question about a different market with "no idea honestly", which is both untrue and the
+ * deflection the off-topic work exists to remove.
+ *
+ * It also decides greeting routes, which is why it lives here rather than in `drafts.ts`: a
+ * line that names a market is answered as market talk however it opens, so "morning, what's
+ * the read on gold" is a market question and not a hello.
+ */
+export const MARKET_WORDS =
+  /\b(?:gold|silver|copper|oil|crude|bitcoin|btc|eth|ethereum|crypto|dollar|euro|pound|cable|yen|rates?|yields?|bonds?|bunds?|semis?|indices|index|sp500|nasdaq|equities|stocks?|shares|earnings|nfp|cpi|macro|chart|charts|levels?|range|breakout|price|tape|flows?|fills?|setup|long|short|stop|entry|target|drawdown|hedge|position|size|vol(?:atility)?)\b/i;
+
+/**
  * Is this message someone arriving rather than asking?
  *
  * A greeting is a social act with a social answer, and the room never gave one: measured over
  * 1,026 published lines, 0 of 6 replies to a visitor greeted them, while greetings were 1.2%
- * of the room's own lines. The rule is narrow on purpose — a market question that opens with
- * "morning" is still a market question, so a greeting only counts when the message is short
- * and asks nothing.
+ * of the room's own lines.
+ *
+ * The live chats then produced the second half of the same failure, which is what the rule
+ * below is written against. A visitor sent "Hi", "Hello" and "Hello guys", and each one came
+ * back as a market verdict — "not my level.", "you have the causality backwards" — because
+ * the room only had one kind of answer. Sending "I'm just greeting, how is everyone doing?"
+ * got "that's a nothing level.", and "how is everyone doing?" got "no idea honestly 😅". So
+ * the rule covers both ways people arrive: the openers, and the social check-in, which is a
+ * question and is still a greeting ("how is everyone" is the room being asked about itself,
+ * not about the market).
+ *
+ * Market talk is excluded first and absolutely: "morning room 🔋 anyone watching gold" is a
+ * desk greeting with a market question attached, and the question is what has to be answered.
  */
 export function isGreeting(text: string): boolean {
   const clean = text.trim().toLowerCase();
-  if (clean.length > 60) return false;
-  // "morning room 🔋 anyone watching gold" is a desk greeting with a question attached; the
-  // question is what has to be answered, so the greeting does not take the turn over.
-  const asks = /\?/.test(clean) && !/^(?:hey|hi|hello|yo|sup|hiya|howdy)\b/.test(clean);
-  if (asks) return false;
-  return /^(?:hey|hi|hello|yo|sup|hiya|howdy|good (?:morning|evening|afternoon)|morning|evening|afternoon|welcome|new here|just (?:joined|arrived|signed up))\b/.test(
-    clean,
-  );
+  if (clean.length > 70) return false;
+  // A message that names a market is market talk, however it opens. The room answers it from
+  // the market bank, and no hello takes that turn over.
+  if (MARKET_WORDS.test(clean)) return false;
+  // Somebody walking in the door.
+  const opens =
+    /^(?:hey|hi|hello|yo|sup|hiya|howdy|good (?:morning|evening|afternoon)|morning|evening|afternoon|welcome|new here|just (?:joined|arrived|signed up|saying hi|greeting)|glad to be here|good to be here)\b/;
+  // Somebody asking the room about the room: a question, and a greeting all the same.
+  const arrival =
+    /\b(?:who'?s (?:here|around|up|on)|anyone (?:here|around|up|on)|is anyone (?:here|around|on)|(?:glad|good) to be here)\b/;
+  return opens.test(clean) || isCheckIn(clean) || arrival.test(clean);
 }
+
+/**
+ * The "how is everyone doing" shape, which is a greeting with a question in it.
+ *
+ * It is separated from the plain hello because it wants a different answer: a person asking
+ * the room how it is doing is owed a line about the room, not a welcome — they may have been
+ * here all week. The live room answered this shape with a market verdict ("that's a nothing
+ * level", "no idea honestly") because its only bank was market talk; `greetingDraft` answers
+ * it from `CHECK_IN_LINES` instead.
+ */
+export function isCheckIn(text: string): boolean {
+  const clean = text.trim().toLowerCase();
+  if (clean.length > 90) return false;
+  return CHECK_IN.test(clean);
+}
+
+const CHECK_IN =
+  /\b(?:how (?:is|are) (?:everyone|everybody|you all|y'?all|things|it going|the room)|how'?s (?:it going|everyone|everything|things)|how goes it|what'?s up|whats up)\b/;
 
 /**
  * The room's greetings, by member.
@@ -1052,9 +1098,12 @@ export function isGreeting(text: string): boolean {
 export const GREETINGS: Record<PersonaId, string[]> = {
   mara: ["hey, welcome in 😄", "hey you, good to have you in here"],
   jess: ["hey", "yo, welcome"],
-  dmitri: ["welcome. rates are the thing to watch here", "welcome in"],
+  // No market call in a greeting: a hello someone just walked in with is the one turn where
+  // the answer is social. "welcome. rates are the thing to watch here" greeted and pitched in
+  // the same breath, which is not what a person says to a stranger at the door.
+  dmitri: ["welcome in", "hey, welcome to the room"],
   sol: ["yo welcome to the chaos lol", "hey hey, welcome in"],
-  toko: ["welcome. first thirty minutes are the tradable ones", "welcome in"],
+  toko: ["welcome in", "yo, welcome. what are you trading?"],
   priya: ["welcome, good to have another one on the desk", "hey, welcome"],
   kofi: ["yo welcome in", "welcome, pull up a chair"],
   lena: ["hey, welcome", "hi, welcome to the room"],
@@ -1062,6 +1111,23 @@ export const GREETINGS: Record<PersonaId, string[]> = {
   rafa: ["welcome in", "hey, welcome. ignore half of what we say"],
   nadia: ["welcome", "hey, welcome in"],
 };
+
+/**
+ * What the room says back to "how is everyone doing".
+ *
+ * A check-in is not a welcome — the asker is often already in — so it wants a line about how
+ * the room actually is, which is what a person answers with. Kept greeting-first so a line can
+ * still stand as a reply to a fresh "hey everyone, how's it going".
+ */
+export const CHECK_IN_LINES: string[] = [
+  "hey, slow one here. you?",
+  "hi, quiet session. how about you?",
+  "yo, we're alright in here. you?",
+  "hey, not much happening. how are you?",
+  "hi, same as ever. how's your day?",
+  "hey, decent. are you new in here?",
+  "yo, all good. what are you trading today?",
+];
 
 export const GREETING_FALLBACK: readonly string[] = ["hey, welcome in", "welcome in"];
 

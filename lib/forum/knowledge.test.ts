@@ -23,10 +23,12 @@ import { humanReplyMode, nextEvent } from "./agenda";
 import { cannedDraft } from "./drafts";
 import { contentTokens, resolveGateConfig, runGate } from "./gate";
 import {
+  CHECK_IN_LINES,
   GREETINGS,
   KNOWLEDGE,
   PRODUCT_INTENTS,
   greetingFor,
+  isCheckIn,
   isGreeting,
   productIntentOf,
   type ProductIntent,
@@ -106,6 +108,58 @@ test("isGreeting takes a hello and leaves a market question alone", () => {
   assert.equal(isGreeting("morning, what's the read on gold?"), false);
   assert.equal(isGreeting("gold looks like its stuck"), false);
   assert.equal(isGreeting("how do i put money in"), false);
+
+  // The exact greetings from the live chats, each of which the room answered with a market
+  // verdict ("not a level", "you have the causality backwards", "that's a nothing level").
+  for (const hello of ["Hi", "Hello", "Hello guys", "hiya", "morning all"]) {
+    assert.equal(isGreeting(hello), true, `"${hello}" was not read as a greeting`);
+  }
+  for (const checkIn of [
+    "how is everyone doing?",
+    "I'm just greeting, how is everyone doing?",
+    "what's up everyone",
+    "how's it going in here",
+    "how are things",
+  ]) {
+    assert.equal(isCheckIn(checkIn), true, `"${checkIn}" was not read as a check-in`);
+    assert.equal(isGreeting(checkIn), true, `"${checkIn}" was not read as a greeting`);
+  }
+  // A market question is never a check-in, however it opens.
+  assert.equal(isCheckIn("morning, what's the read on gold?"), false);
+});
+
+test("a check-in gets a line about the room, not a welcome", async () => {
+  const personas = await roster();
+  const world = await store.readWorld();
+  const event: AgendaEvent = {
+    kind: "HUMAN",
+    reason: "test",
+    sender: "human",
+    topic: TEST_TOPICS[0],
+    side: "a",
+    quoted: "how is everyone doing?",
+    authoredBy: "responder",
+    offTopic: true,
+    greeting: true,
+    replyMode: "answer",
+  };
+  // Every answer is built from the check-in bank: a single line, or two joined to reach a
+  // longer turn. None of them is a welcome, which is the failure this shape was routed away
+  // from.
+  const welcomes = new Set(personas.flatMap((persona) => greetingFor(persona.id)));
+  let total = 0;
+  for (const persona of personas) {
+    for (let seq = 1; seq <= 40; seq += 1) {
+      const text = cannedDraft({ persona, event, world, seq, attempt: 1 });
+      total += 1;
+      assert.ok(
+        CHECK_IN_LINES.some((line) => text.includes(line)),
+        `${persona.id} answered a check-in from outside the bank: "${text}"`,
+      );
+      assert.equal(welcomes.has(text), false, `${persona.id} welcomed a check-in: "${text}"`);
+    }
+  }
+  assert.ok(total > 200, `the sample was too small to mean anything (${total})`);
 });
 
 /**
@@ -403,6 +457,19 @@ test("every member has a greeting, and a greeting turn gets one", async () => {
   for (const persona of personas) {
     assert.ok(greetingFor(persona.id).length > 0, `${persona.id} has no greeting`);
     assert.ok(GREETINGS[persona.id], `${persona.id} is missing from the greeting table`);
+  }
+  // Every line the greeting path may publish, checked as text: a greeting opens with a hello
+  // and is typed like a thumb. The check-in lines share the first rule so one can stand as the
+  // reply to a fresh "hey everyone, how's it going".
+  for (const lines of [...Object.values(GREETINGS), CHECK_IN_LINES]) {
+    for (const line of lines) {
+      assert.equal(typographyFault(line), "", `greeting carries a keyboard tell: "${line}"`);
+      assert.match(
+        line,
+        /^(?:hey|hi|hello|yo|sup|welcome|good (?:morning|evening|afternoon))/i,
+        `greeting does not open with a hello: "${line}"`,
+      );
+    }
   }
 
   const event: AgendaEvent = {

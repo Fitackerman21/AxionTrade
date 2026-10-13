@@ -33,7 +33,10 @@
 import { contentTokens } from "./gate";
 import {
   answerCandidates,
+  CHECK_IN_LINES,
   greetingFor,
+  isCheckIn,
+  MARKET_WORDS,
   ownLinesFor,
   productIntentOf,
   type ProductIntent,
@@ -770,6 +773,19 @@ function ownSet(lines: readonly string[]): ReadonlySet<string> {
  */
 export function greetingDraft(ctx: DraftContext): string {
   const target = lengthTarget(ctx.persona, ctx.seq, tierOptionsFor(ctx.event));
+  // "how is everyone doing" is a greeting with a question in it, and the question is about
+  // the room rather than the market. Answering it with a welcome reads as a bot that did not
+  // read past the hello; the room says how it actually is instead.
+  if (isCheckIn(ctx.event.quoted ?? "")) {
+    return pickFromBanks({
+      pools: { beat: CHECK_IN_LINES, short: CHECK_IN_LINES, thought: CHECK_IN_LINES },
+      target,
+      seed: `checkin:${ctx.persona.id}:${ctx.seq}:${ctx.attempt}`,
+      personaId: ctx.persona.id,
+      question: ctx.event.quoted,
+      recent: ctx.recent,
+    });
+  }
   const welcome = greetingFor(ctx.persona.id);
   // "what is this place" is a question the room has a reviewed answer for (the `room`
   // intent), and a greeting that asks it deserves both halves: the hello, then the answer.
@@ -1014,17 +1030,6 @@ const ASK_BACK_GENERIC: readonly string[] = [
   "what do you trade mostly, and are you on here all day or just around the open?",
 ];
 
-
-/**
- * Does the message name a market, even one the room is not currently on?
- *
- * "anyone watching bitcoin tonight" is off the open thread and still market talk: it is
- * answered from the market bank, not from the social one. Without this the room would answer
- * a question about a different market with "no idea honestly", which is both untrue and the
- * deflection the off-topic work exists to remove.
- */
-const MARKET_WORDS =
-  /\b(?:gold|silver|copper|oil|crude|bitcoin|btc|eth|ethereum|crypto|dollar|euro|pound|cable|yen|rates?|yields?|bonds?|bunds?|semis?|indices|index|sp500|nasdaq|equities|stocks?|shares|earnings|nfp|cpi|macro|chart|charts|levels?|range|breakout|price|tape|flows?|fills?|setup|long|short|stop|entry|target|drawdown|hedge|position|size|vol(?:atility)?)\b/i;
 
 export function cannedDraft(ctx: DraftContext): string {
   // One router, so every caller and every test sees the same answer for the same turn. The

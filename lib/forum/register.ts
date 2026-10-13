@@ -130,7 +130,11 @@ export function tierOptionsFor(
   if (!event) return undefined;
   if (event.replyMode === "react") return { force: "beat" };
   if (event.replyMode === "askBack") return { floor: "short", cap: "normal" };
-  if (event.productQuestion || event.greeting) return { floor: "short" };
+  if (event.productQuestion) return { floor: "short" };
+  // A greeting is one short line. Left to the dice it could land on `full`, and a welcome with
+  // no model behind it met the 140-character floor by joining two welcomes together — "welcome
+  // in. hey, welcome to the room" — which is the machine showing through the greeting itself.
+  if (event.greeting) return { force: "short" };
   return undefined;
 }
 
