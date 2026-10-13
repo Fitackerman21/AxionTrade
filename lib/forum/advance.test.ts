@@ -926,11 +926,14 @@ test("the Voice is handed what the persona remembers about this companion", asyn
     const prompt = voice.seen[0]?.messages[0]?.content ?? "";
 
     assert.equal(result.record?.chosen, "mara");
-    assert.match(prompt, /<what you remember about human>/);
+    assert.match(prompt, /<what you remember about someone>/);
     assert.match(prompt, /would not move the stop/);
     assert.match(prompt, /Never recite it, never say that you remember it/);
-    // The model is told what it is answering, and the transcript is still there.
-    assert.match(prompt, /<message from human>/);
+    // The model is told what it is answering, and the transcript is still there. The
+    // person's raw external id never reaches the prompt: handed `human`, the live model
+    // greeted a visitor as "hey human", so the prompt calls them "someone".
+    assert.match(prompt, /<message from someone>/);
+    assert.equal(/\bhuman\b/.test(prompt), false, `the external sender id leaked: ${prompt}`);
   } finally {
     await fixture.cleanup();
   }

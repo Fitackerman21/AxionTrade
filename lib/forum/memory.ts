@@ -134,12 +134,15 @@ export function injectionText(file: MemoryFile, olderThanSeq: number, limit = 6)
   const older = file.recent.filter((entry) => entry.seq < olderThanSeq).slice(-limit);
   const parts: string[] = [];
 
+  // The companion is named through `companionLabel`: the raw id `human` is a room id,
+  // not a name, and printing it here is what let a model greet a visitor as "human".
+  const who = companionLabel(file.companion);
   if (file.digest) {
-    parts.push(`Your notes on earlier conversations with ${file.companion}:`);
+    parts.push(`Your notes on earlier conversations with ${who}:`);
     parts.push(file.digest);
   }
   if (older.length > 0) {
-    parts.push(`Earlier, with ${file.companion}:`);
+    parts.push(`Earlier, with ${who}:`);
     parts.push(
       ...older.map((entry) => `- ${entry.role === "me" ? "you said" : "they said"}: ${entry.text}`),
     );

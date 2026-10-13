@@ -301,6 +301,10 @@ const VOICE_SYSTEM = [
   // reads as older or more formal than it is. Occasional on purpose — one glyph on the
   // lines that call for it, not on every line, which is its own tell.
   "Now and then — not on most messages — end a line with a single emoji that does what a word would: a laugh, a shrug, fire, a face for what you just said. One at most, and none on a line that does not want it.",
+  // The name a sender goes by in the prompt. A model handed the raw external id `human`
+  // greeted a visitor as "hey human" on the live page; the id is now kept out of the
+  // prompt, and this closes the same hole from the other side.
+  "If you do not know someone's name, talk to them as 'you'. Never invent a name for anyone and never fall back on a placeholder like 'human', 'user' or 'person' as if it were their name.",
   // The single most recognisable "a model wrote this" tell: the balanced
   // aphorism, and the clipped slogan fragment. Both are banned by shape, not by
   // example alone, because the shape is what the model reaches for.
@@ -384,6 +388,19 @@ function personaSystem(persona: Persona): string {
  */
 export const RECENT_CHAT_MESSAGES = 10;
 
+/**
+ * What a sender is called inside the prompt.
+ *
+ * The room records a person under the external id `human`, and handing that literal to
+ * the model is exactly what produced "hey human, welcome" on the live page: a model reads
+ * `<message from human>` as the sender's name and greets the visitor by it. The id never
+ * reaches the prompt — a person is "someone", because the room genuinely does not know
+ * their name and must not invent one.
+ */
+function senderLabel(sender: string): string {
+  return sender === "human" ? "someone" : sender;
+}
+
 /** A slice of the actual transcript, so the line is a reply and not a monologue. */
 function recentChat(recent: readonly TurnRecord[] | undefined, me: string): string {
   if (!recent || recent.length === 0) return "";
@@ -392,7 +409,7 @@ function recentChat(recent: readonly TurnRecord[] | undefined, me: string): stri
     .slice(-RECENT_CHAT_MESSAGES)
     .map((turn) => {
       const message = turn.message!;
-      const who = message.sender === me ? "you" : message.sender;
+      const who = message.sender === me ? "you" : senderLabel(message.sender);
       const text = message.text.replace(/\s+/g, " ").trim().slice(0, 180);
       return `- ${who}: ${text}`;
     });
@@ -417,6 +434,10 @@ function turnUser(args: {
   critique?: string;
 }): string {
   const { event, world, persona, seq, recent, memory, critique } = args;
+  // How the person who spoke is named to the model, and the same label at the start of a
+  // sentence. Both go through `senderLabel`, so the external id never reaches the prompt.
+  const actor = senderLabel(event.sender);
+  const actorUpper = actor.charAt(0).toUpperCase() + actor.slice(1);
   // The turn's own shape can pin the length: a reaction is a beat whatever the dice said.
   const target = lengthTarget(persona, seq, tierOptionsFor(event));
   const engine = event.authoredBy === "engine";
@@ -432,7 +453,7 @@ function turnUser(args: {
       ? "<opening the room>"
       : engine
         ? [`<the tape, and your own read of it>`, event.quoted, "</the tape>"].join(NL)
-        : [`<message from ${event.sender}>`, event.quoted, "</message>"].join(NL);
+        : [`<message from ${senderLabel(event.sender)}>`, event.quoted, "</message>"].join(NL);
   // A product question gets a fixed delivery note as well as a fixed flaw: half of
   // DELIVERY_HINTS hands the model licence to be distracted or to drift, which is
   // the licence that produced "yeah nah, 2400 mid" as an answer to a worried
@@ -450,7 +471,7 @@ function turnUser(args: {
   const today = digestFor(world, seq);
 
   return [
-    memory ? `<what you remember about ${event.sender}>${NL}${memory}${NL}</what you remember>` : "",
+    memory ? `<what you remember about ${senderLabel(event.sender)}>${NL}${memory}${NL}</what you remember>` : "",
     wornOut.length > 0
       ? [
           `<words the room has worn out>${wornOut.join(", ")}</words>`,
@@ -464,7 +485,7 @@ function turnUser(args: {
     product && knowledge
       ? [
           `<the open thread>${event.topic.title}</the open thread>`,
-          `${event.sender} is asking about the platform itself, not about the market. What they are asking is: ${knowledge.label}. Answer THAT, as one user talking to another, not as the platform and not as a reviewer.`,
+          `${actorUpper} is asking about the platform itself, not about the market. What they are asking is: ${knowledge.label}. Answer THAT, as one user talking to another, not as the platform and not as a reviewer.`,
           // The facts, and only the facts. A persona with no product fact can only praise,
           // deflect or invent, and all three read as a bot on a page about the product; a
           // persona with the reviewed facts answers the question.
@@ -483,7 +504,7 @@ function turnUser(args: {
       : offTopic
         ? [
             `<the open thread>${event.topic.title}</the open thread>`,
-            `${event.sender} asked you something that is not about that thread. Answer the question they actually asked, in your own voice and at your own length. Do not steer it back to the market, and do not bring the thread up unless the answer needs it.`,
+            `${actorUpper} asked you something that is not about that thread. Answer the question they actually asked, in your own voice and at your own length. Do not steer it back to the market, and do not bring the thread up unless the answer needs it.`,
             `If you do not know the answer, say so the way you would to someone at the desk. Do not invent a feature, a menu, a fee or a number.`,
           ].join(NL)
         : [`<what the room is on>${event.topic.title}</what the room is on>`, `<your side>${event.topic.sides[event.side]}</your side>`].join(NL),
@@ -494,7 +515,7 @@ function turnUser(args: {
     // Somebody walking in is the one turn where the first thing owed is a hello. The live
     // room never gave one: no reply to a visitor in the measured chat greeted them.
     event.greeting
-      ? `They have just walked in. Open with a short hello to them in your own voice, then answer if they asked anything. You are another trader saying hi, not a host and not a moderator.`
+      ? `They have just walked in. Open with a short hello to them in your own voice, then answer if they asked anything. You are another trader saying hi, not a host and not a moderator. You do not know their name, so talk to them as "you" and do not invent one.`
       : "",
     event.replyMode === "askBack"
       ? `Finish with a short question of your own. You are curious what they think, so ask it normally rather than using it to keep the chat going.`

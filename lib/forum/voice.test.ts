@@ -148,6 +148,33 @@ test("the recent transcript is threaded into the prompt so the line connects", a
   assert.ok(user.includes("- sol:"), "recent lines are attributed to their sender");
 });
 
+test("a person is never named by the room's raw external id", async () => {
+  const { provider, seen } = fake(() => answer("hey, welcome in"));
+  await voiceDraft({
+    persona: voiced(),
+    event: eventOf({
+      sender: "human",
+      quoted: "hello guys, i'm new here",
+      greeting: true,
+      replyMode: "answer",
+    }),
+    world: TEST_WORLD,
+    seq: 2,
+    recent: [makeTurn(1, { sender: "human", text: "hey everyone" })],
+    provider,
+  });
+
+  const user = seen[0]?.messages[0]?.content ?? "";
+  // The live page answered a greeting with "hey human, welcome" because the prompt handed
+  // the model the external id as if it were the sender's name. Neither the quoted message
+  // nor the transcript may carry it now.
+  assert.equal(/\bhuman\b/.test(user), false, `the external id leaked into the prompt: ${user}`);
+  assert.match(user, /<message from someone>/);
+  assert.match(user, /- someone:/);
+  // And the greeting is told not to invent a name for them.
+  assert.match(user, /do not invent one/);
+});
+
 test("the delivery hint varies between turns so the voice is not metronomic", async () => {
   const lines = new Set<string>();
   for (let seq = 1; seq <= 12; seq += 1) {
