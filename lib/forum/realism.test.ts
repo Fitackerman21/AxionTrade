@@ -258,3 +258,39 @@ test("the platform answer rate measures what the mechanical tells cannot", async
   // applicable and must not be charged as a miss.
   assert.equal(auditTurns(answered, []).productAnswerRate, 1);
 });
+
+test("a question is never counted as something the room passed on", async () => {
+  const seed = await room();
+  const roster = seed.personas.map((p) => p.id);
+
+  // A visitor asked and the room answered. Silence is not permitted on a question, so there
+  // was never a chance of one here: the metric is not applicable, not a floor miss. Counting
+  // the question would charge the room for answering and make the floor unreachable in a
+  // window of nothing but questions.
+  const asked = [
+    makeTurn(1, { sender: "shane", topicId: "t", text: "how do i set a loss limit?" }),
+    makeTurn(2, { sender: "mara", topicId: "t", text: "you set it in the app" }),
+  ];
+  const onlyQuestions = auditTurns(asked, roster);
+  assert.equal(onlyQuestions.silenceRate, 1);
+  // And it is neither a pass nor a miss: charging it either way would score the room on a
+  // measurement it could not have made.
+  assert.ok(
+    !realismMisses(onlyQuestions).some((m) => m.metric === "silenceRate"),
+    "an unmeasurable silence was reported as a miss",
+  );
+
+  // A statement the room read and passed on is a real silence beside a real person.
+  const passed = [
+    makeTurn(1, { sender: "shane", topicId: "t", text: "the tape is dead today" }),
+    {
+      ...makeTurn(2, { sender: "mara", topicId: "t", withMessage: false }),
+      trigger: "HUMAN" as const,
+      note: "the room read it and had nothing to add (quiet turn)",
+    },
+  ];
+  assert.ok(
+    auditTurns(passed, roster).silenceRate > 0,
+    "a statement the room passed on was not read as a silence",
+  );
+});

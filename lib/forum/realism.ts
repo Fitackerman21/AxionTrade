@@ -17,6 +17,7 @@
  * gates the tells; a human still has to read the room.
  */
 
+import { asksAboutProduct } from "./agenda";
 import { normalizeLine } from "./drafts";
 import { contentTokens } from "./gate";
 import { answerCandidates, isGreeting, PLATFORM_INTENTS, productIntentOf } from "./knowledge";
@@ -59,6 +60,11 @@ export interface RealismReport {
    * the room talks to itself far more than people talk to it, and a silence is only a silence
    * next to something a person said. A window with nothing from a person reports 1 — there was
    * nothing to pass on, so it is not held to the floor (see `REALISM_TARGETS`).
+   *
+   * Only statement-shaped messages are in the denominator: a question is never passed on by
+   * rule (`humanReplyMode`: silence is not allowed on one), so counting it would charge the
+   * room for answering. A window of nothing but questions is not applicable either, and
+   * reports 1 for the same reason a window with no people does.
    */
   silenceRate: number;
   /**
@@ -152,10 +158,21 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
   const silences = turns.filter(
     (turn) => !turn.message && /quiet turn/.test(turn.note ?? ""),
   ).length;
+  // Only the messages the room is *allowed* to pass on: silence is not permitted on a
+  // question (`humanReplyMode`), a greeting is always answered, and a platform question is
+  // forced to an answer by the gate. Anything else in this denominator penalises the room for
+  // answering, and in a window where every visitor asks something the floor becomes a miss
+  // that no amount of correct behaviour can clear — which is exactly what happened once
+  // platform questions started being answered every time.
   const fromPeople =
     rosterIds.size === 0
       ? 0
-      : posted.filter((message) => !rosterIds.has(message.sender.toLowerCase())).length;
+      : posted.filter((message) => {
+          if (rosterIds.has(message.sender.toLowerCase())) return false;
+          if (message.text.includes("?")) return false;
+          if (isGreeting(message.text)) return false;
+          return !asksAboutProduct(message.text, false);
+        }).length;
   const bySeq = new Map<number, string>();
   const senderBySeq = new Map<number, string>();
   for (const turn of turns) {
@@ -367,6 +384,19 @@ export const REALISM_TARGETS: readonly Target[] = [
 ];
 
 /**
+ * Is this metric unmeasurable in this window?
+ *
+ * `silenceRate` reports 1 only when there was nothing the room could have passed on — every
+ * visitor asked something. Both of its targets are meaningless there: the floor would charge
+ * the room for answering, and the ceiling would read "nothing to pass on" as "the room is
+ * empty". Such a target is dropped from the score and the miss list rather than scored as a
+ * pass or a failure.
+ */
+export function metricNotApplicable(target: Target, report: RealismReport): boolean {
+  return target.metric === "silenceRate" && report.silenceRate === 1;
+}
+
+/**
  * The score, 0–100: each target contributes its weight, in full when the metric is on the
  * right side of its line and partially when it is close. A miss is not fatal — the point
  * is a dial a change can be measured against, not a pass/fail that hides how far off it is.
@@ -377,6 +407,8 @@ export function realismScore(report: RealismReport): number {
   let score = 0;
   let totalWeight = 0;
   for (const target of REALISM_TARGETS) {
+    // Skipped before its weight is counted, so an unmeasurable metric neither helps nor hurts.
+    if (metricNotApplicable(target, report)) continue;
     const value = report[target.metric];
     let ratio: number;
     if (target.max !== undefined) {
@@ -397,6 +429,7 @@ export function realismMisses(
 ): Array<{ metric: string; value: number; weight: number; why: string }> {
   const misses: Array<{ metric: string; value: number; weight: number; why: string }> = [];
   for (const target of REALISM_TARGETS) {
+    if (metricNotApplicable(target, report)) continue;
     const value = report[target.metric];
     const failed =
       (target.max !== undefined && value > target.max) ||

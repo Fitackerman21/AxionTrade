@@ -965,7 +965,7 @@ const INTENT_PATTERNS: ReadonlyArray<readonly [ProductIntent, RegExp]> = [
   ],
   [
     "how-it-works",
-    /\b(?:how (?:does|do) (?:it|this|that|the (?:trading|trade|ai|axai|engine|platform|system|thing|whole thing)) work|how (?:it|this|that|the (?:platform|ai|engine|trading)) works?|how (?:do|does) (?:you|it|they|i) (?:trade|make money|actually trade)|what does (?:it|the platform|axai|the ai) do|how does (?:the )?trading work|does the ai (?:trade|work)|explain how|what happens (?:when|after) (?:i|you) (?:deposit|pay|put))\b/i,
+    /\b(?:how (?:does|do) (?:it|this|that|the (?:trading|trade|ai|axai|engine|platform|system|thing|whole thing)) work|how (?:it|this|that|the (?:platform|ai|engine|trading)) works?|how (?:do|does) (?:you|it|they|we|i) (?:trade|make money|actually trade)|how (?:do|does) (?:you|they|we|i|it)\b[a-z' ]{0,24}?\b(?:make|earn) money|what does (?:it|the platform|axai|the ai) do|how does (?:the )?trading work|does the ai (?:trade|work)|explain how|what happens (?:when|after) (?:i|you) (?:deposit|pay|put))\b/i,
   ],
   [
     "room",

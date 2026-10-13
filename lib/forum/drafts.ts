@@ -36,6 +36,7 @@ import {
   CHECK_IN_LINES,
   greetingFor,
   isCheckIn,
+  looksLikeQuestion,
   MARKET_WORDS,
   ownLinesFor,
   PLATFORM_INTENTS,
@@ -862,6 +863,31 @@ const SOCIAL_ANSWERS: ReadonlyArray<{ match: RegExp; lines: string[] }> = [
       "some of us talk every day, i have never met any of them 😅",
     ],
   },
+  {
+    // "what's your best trade" is the commonest thing a newcomer asks a trading room, and the
+    // generic pool answered it with "you would have to ask them" — a deflection to a question
+    // the room can actually answer. The measured room answered it ("gold long, still holding
+    // 2,400"), so the shape gets its own lines rather than the shrug.
+    match: /\b(?:best|favourite|favorite|biggest) (?:trade|win|call)\b|\bwhat'?s? your (?:best|biggest)\b|\bhow much (?:have you|you|did you) (?:made|make)\b|\bwhat have you made\b/i,
+    lines: [
+      "the gold long, still holding it",
+      "gold long here too, and i have not touched it",
+      "nothing clever, i am a small-wins guy",
+      "cable short when the boe blinked, that one paid",
+    ],
+  },
+  {
+    // The newcomer's other standard probe: "everyone here types like a bot". It is a joke
+    // about the room, and the room should take it like one — the social pool used to fall
+    // through to the fact base on the word `bot` and answer it with how the engine trades.
+    match: /\b(?:types?|sounds?|talks?|repl(?:y|ies)|acts?|writes?|feels?)\s+like\s+(?:actual(?:ly)?\s+|just\s+|literally\s+)*(?:a\s+|an\s+)?(?:bot|robot)s?\b|\bare you (?:all\s+)?(?:a\s+)?bots?\b|\bis (?:this|everyone here) (?:a\s+)?(?:bot|robot)\b/i,
+    lines: [
+      "we get that a lot 😂",
+      "flattering, i think",
+      "you are not the first to say it",
+      "we are just people who trade the same hours. mostly",
+    ],
+  },
 ];
 
 const SOCIAL_GENERIC: readonly string[] = [
@@ -891,7 +917,11 @@ const SOCIAL_PLATFORM_INTENTS: ReadonlySet<ProductIntent> = PLATFORM_INTENTS;
 export function socialDraft(ctx: DraftContext): string {
   const question = ctx.event.quoted ?? "";
   const intent = productIntentOf(question);
-  if (SOCIAL_PLATFORM_INTENTS.has(intent)) {
+  // The gate's own guard, for the reason it exists there: `productIntentOf`'s fuzzy shapes
+  // put any line that says `bot` into `autonomy`, so a joke that the room types like bots
+  // was answered with how the engine trades. The set is the gate's, so the two routers agree;
+  // the guard is the gate's too, so a remark is never mistaken for the question it resembles.
+  if (looksLikeQuestion(question) && SOCIAL_PLATFORM_INTENTS.has(intent)) {
     return productDraft({
       persona: ctx.persona,
       seq: ctx.seq,

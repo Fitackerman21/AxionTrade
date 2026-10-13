@@ -92,6 +92,11 @@ test("every measured question routes to the question shape it actually is", () =
   assert.equal(productIntentOf("Is this real?"), "trust");
   assert.equal(productIntentOf("Is axion ai trading real ?, hope I am not going to lose my money in this?"), "trust");
   assert.equal(productIntentOf("how does the trading work"), "how-it-works");
+  // The live room answered this one with "support in the app is who i would ask": the shape
+  // only matched with the pronoun hard against "make money", so the intervening words sent it
+  // to `other` and a how-it-works question got the generic account line.
+  assert.equal(productIntentOf("so how do you all actually make money on this thing"), "how-it-works");
+  assert.equal(productIntentOf("how do they make money"), "how-it-works");
   assert.equal(productIntentOf("does the ai trade for me or do i place them"), "autonomy");
   assert.equal(productIntentOf("can i set a loss limit"), "limits");
   assert.equal(productIntentOf("what does it cost"), "cost");

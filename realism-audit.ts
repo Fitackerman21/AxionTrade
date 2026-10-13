@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 
 import { advance } from "./lib/forum/advance";
 import type { ChatProvider } from "./lib/forum/provider";
-import { auditTurns, realismMisses, realismScore, REALISM_TARGETS } from "./lib/forum/realism";
+import { auditTurns, metricNotApplicable, realismMisses, realismScore, REALISM_TARGETS } from "./lib/forum/realism";
 import { createFixture } from "./lib/forum/test-utils";
 import type { TurnRecord } from "./lib/forum/types";
 
@@ -29,14 +29,16 @@ function report(label: string, turns: readonly TurnRecord[], roster: readonly st
   const audit = auditTurns(turns, roster);
   const score = realismScore(audit);
   console.log(`\n=== ${label} ===`);
-  console.log(`  published persona lines: ${audit.messages}`);
-  for (const target of REALISM_TARGETS) {
+  console.log(`  published persona lines: ${audit.messages}`);  for (const target of REALISM_TARGETS) {
     const value = audit[target.metric];
+    // The same rule the score uses, so the display cannot contradict it: a metric with
+    // nothing to measure is neither a pass nor a miss.
+    const na = metricNotApplicable(target, audit);
     const failed =
-      (target.max !== undefined && value > target.max) ||
-      (target.min !== undefined && value < target.min);
+      !na &&
+      ((target.max !== undefined && value > target.max) || (target.min !== undefined && value < target.min));
     console.log(
-      `  ${failed ? "MISS" : " ok "} ${target.metric.padEnd(20)} ${String((value * 100).toFixed(1)).padStart(6)}%  (${target.why})`,
+      `  ${na ? " n/a" : failed ? "MISS" : " ok "} ${target.metric.padEnd(20)} ${String((value * 100).toFixed(1)).padStart(6)}%  (${target.why})`,
     );
   }
   console.log(`  realism score: ${score}/100`);
