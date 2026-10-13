@@ -19,6 +19,7 @@ import test from "node:test";
 
 import { humanReplyMode, threadReplyMode } from "./agenda";
 import { askBackFor, cannedDraft } from "./drafts";
+import { answerCandidates } from "./knowledge";
 import { auditTurns, realismMisses, realismScore } from "./realism";
 import { dataStore, makeTurn, TEST_CONFIG } from "./test-utils";
 import type { AgendaEvent, Persona, Topic, TurnRecord, WorldState } from "./types";
@@ -222,4 +223,38 @@ test("an empty window is not a failure", () => {
   const report = auditTurns([]);
   assert.equal(report.messages, 0);
   assert.equal(realismScore(report) >= 90, true);
+});
+
+test("the platform answer rate measures what the mechanical tells cannot", async () => {
+  const seed = await room();
+  const roster = seed.personas.map((p) => p.id);
+  const QUESTION = "where do i set a loss limit, i cant find it anywhere";
+
+  // The same question, answered from the fact base and then dodged with the verdict the live
+  // room actually gave. Everything the mechanical tells look at — speakers, lengths, repeats,
+  // quoting — is held as close as the two shapes allow, so the score moves on this axis.
+  const answered: TurnRecord[] = [
+    makeTurn(1, { sender: "shane", topicId: "t", text: QUESTION }),
+    makeTurn(2, { sender: "mara", topicId: "t", text: answerCandidates("limits", "", "normal")[0]! }),
+  ];
+  answered[1]!.message!.replyToSeq = 1;
+
+  const dodged: TurnRecord[] = [
+    makeTurn(1, { sender: "shane", topicId: "t", text: QUESTION }),
+    makeTurn(2, { sender: "mara", topicId: "t", text: "are you in it or watching?" }),
+  ];
+  dodged[1]!.message!.replyToSeq = 1;
+
+  const got = auditTurns(answered, roster);
+  const missed = auditTurns(dodged, roster);
+
+  assert.equal(got.productAnswerRate, 1, "an answer from the bank was not counted as one");
+  assert.equal(missed.productAnswerRate, 0, "a market verdict was counted as an answer");
+  assert.ok(
+    realismScore(got) > realismScore(missed),
+    `the dodge scored ${realismScore(missed)}, the answer ${realismScore(got)}`,
+  );
+  // Without a roster the room cannot tell a visitor from a member, so the metric is not
+  // applicable and must not be charged as a miss.
+  assert.equal(auditTurns(answered, []).productAnswerRate, 1);
 });

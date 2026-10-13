@@ -109,6 +109,34 @@ test("a question about the platform itself is flagged, and market talk is not", 
   }
 });
 
+test("the question shape alone routes a platform question", () => {
+  const ask = (text: string) =>
+    nextEvent(context({ seq: 5, turns: [makeTurn(4, { sender: "human", topicId: gold, text })] }));
+
+  // The two questions the live room actually got wrong, verbatim. Neither names the product
+  // and neither carries a trust word, so the old gate let them fall through: the loss-limit
+  // question came back as "are you in it or watching?" and the autonomy question was never
+  // answered at all. `productIntentOf` classified both correctly and was never consulted.
+  for (const text of [
+    "where do i set a loss limit, i cant find it anywhere",
+    "one more, does it trade for me or do i place them myself",
+    "how do i put money in btw? cant find the deposit thing",
+  ]) {
+    const event = ask(text);
+    assert.equal(event.productQuestion, true, `"${text}" asks about the platform`);
+    assert.ok(event.productIntent, `"${text}" was not routed to a question shape`);
+  }
+
+  // A social aside that happens to trip the fuzzy `bot` shape is still a remark, not a
+  // question: answering it from the fact base is the same class of mismatch the fix removes.
+  for (const text of [
+    "lol everyone here types like a bot sometimes ngl",
+    "some of you reply like actual robots",
+  ]) {
+    assert.notEqual(ask(text).productQuestion, true, `"${text}" is a remark, not a question`);
+  }
+});
+
 test("a world tick hands the floor to the engine persona", () => {
   const turns = [makeTurn(3, { sender: "mara", topicId: semis })];
   const event = nextEvent(context({ seq: 5, turns }));

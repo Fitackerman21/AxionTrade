@@ -38,6 +38,7 @@ import {
   isCheckIn,
   MARKET_WORDS,
   ownLinesFor,
+  PLATFORM_INTENTS,
   productIntentOf,
   type ProductIntent,
 } from "./knowledge";
@@ -875,23 +876,16 @@ const SOCIAL_GENERIC: readonly string[] = [
 /**
  * The question shapes an off-thread message is still answered from the fact base.
  *
- * `agenda.ts` flags a message as a product question when it names the platform or asks a
- * trust question; a plain "what does it cost" uses neither, so it arrives here as off-topic.
- * Answering it with the room's own cost lines is the difference between an answer and "no
- * idea honestly". `trust` is deliberately absent: "real" and "legit" are ordinary words in a
- * trading room, and a social question that happens to contain one should not be answered
- * with a statement about the visitor's money.
+ * `agenda.ts` flags a message as a product question when it names the platform, asks a trust
+ * question, or matches one of the platform question shapes; a plain "what does it cost" uses
+ * none of the first two, so it arrives here as off-topic. Answering it with the room's own
+ * cost lines is the difference between an answer and "no idea honestly". `trust` is
+ * deliberately absent: "real" and "legit" are ordinary words in a trading room, and a social
+ * question that happens to contain one should not be answered with a statement about the
+ * visitor's money. The set is shared with the gate rather than copied, so a shape that routes
+ * there cannot silently stop routing here.
  */
-const SOCIAL_PLATFORM_INTENTS = new Set<ProductIntent>([
-  "deposit",
-  "withdraw",
-  "limits",
-  "autonomy",
-  "how-it-works",
-  "start",
-  "cost",
-  "room",
-]);
+const SOCIAL_PLATFORM_INTENTS: ReadonlySet<ProductIntent> = PLATFORM_INTENTS;
 
 /** The room's answer to a question that is neither about the market nor the platform. */
 export function socialDraft(ctx: DraftContext): string {

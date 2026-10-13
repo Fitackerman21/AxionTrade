@@ -58,6 +58,26 @@ export const PRODUCT_INTENTS: readonly ProductIntent[] = [
   "other",
 ];
 
+/**
+ * The question shapes that route a message to the fact base.
+ *
+ * `trust` is deliberately absent, for the same reason `drafts.ts` gives where it uses this
+ * list: "real" and "legit" are ordinary words in a trading room, and a trust question is
+ * only answered as one once `asksAboutProduct` has already found a trust word. Every shape
+ * here is a question about the platform with a reviewed answer, so a message that matches
+ * one is answered rather than deflected.
+ */
+export const PLATFORM_INTENTS: ReadonlySet<ProductIntent> = new Set<ProductIntent>([
+  "how-it-works",
+  "autonomy",
+  "deposit",
+  "withdraw",
+  "limits",
+  "start",
+  "cost",
+  "room",
+]);
+
 export interface KnowledgeEntry {
   id: ProductIntent;
   /** the question, in a few words, for the prompt and the turn's audit note */
@@ -1069,6 +1089,25 @@ export function isGreeting(text: string): boolean {
   const arrival =
     /\b(?:who'?s (?:here|around|up|on)|anyone (?:here|around|up|on)|is anyone (?:here|around|on)|(?:glad|good) to be here)\b/;
   return opens.test(clean) || isCheckIn(clean) || arrival.test(clean);
+}
+
+/**
+ * Does this read as a question rather than a remark?
+ *
+ * The classifier's fuzzy shapes need a second test before they may pull a message out of the
+ * social bank: `bot` alone puts any line about typing into `autonomy`, so a room where
+ * somebody jokes "everyone here types like a bot sometimes" would be answered with how the
+ * engine trades. A question word or a question mark is the cheap and honest line — the live
+ * failures ("where do i set a loss limit", "does it trade for me or do i place them myself")
+ * both carry one, and the social asides that must stay social carry neither.
+ */
+export function looksLikeQuestion(text: string): boolean {
+  return (
+    /\?/.test(text) ||
+    /\b(?:what|where|when|why|who|whose|which|how|do|does|did|can|could|should|would|will|is|are|am)\b/i.test(
+      text,
+    )
+  );
 }
 
 /**

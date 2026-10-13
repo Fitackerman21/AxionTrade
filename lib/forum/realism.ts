@@ -19,7 +19,8 @@
 
 import { normalizeLine } from "./drafts";
 import { contentTokens } from "./gate";
-import type { TurnRecord } from "./types";
+import { answerCandidates, isGreeting, PLATFORM_INTENTS, productIntentOf } from "./knowledge";
+import type { ForumMessage, TurnRecord } from "./types";
 
 export interface RealismReport {
   /** published persona messages in the window */
@@ -60,6 +61,21 @@ export interface RealismReport {
    * nothing to pass on, so it is not held to the floor (see `REALISM_TARGETS`).
    */
   silenceRate: number;
+  /**
+   * Share of the questions a person asked about the platform that got an answer from the
+   * fact base, rather than a market verdict or a shrug.
+   *
+   * This is the axis the mechanical tells could not see at all, and the reason the score sat
+   * at 96.6/100 while the room read as a bot where a newcomer first lands. Measured on the
+   * same live log: of the questions about the platform, **37.5%** were answered from the
+   * knowledge bank and **50%** were never routed to it — "where do i set a loss limit" came
+   * back as "are you in it or watching?" and "does it trade for me or do i place them
+   * myself" was never answered. A reader notices a question that was not read long before
+   * they notice a repeated line, so a room that scores 100 on repetition is still a 60 if it
+   * answers the wrong question. A window with nothing from a person, or no roster to tell a
+   * member from a visitor, reports 1 — not applicable, so it is not held to the floor.
+   */
+  productAnswerRate: number;
 }
 
 /** The length buckets a room should be using — the tiers in `register.ts`, roughly. */
@@ -125,6 +141,7 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
       lengthVariety: 1,
       questionRate: 1,
       silenceRate: 1,
+      productAnswerRate: 1,
     };
   }
 
@@ -217,6 +234,37 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
     }
   }
 
+  // Product-question responsiveness: of the questions a person asked about the platform, how
+  // many got an answer from the fact base rather than a market verdict or a shrug. The reply
+  // is the first message that quotes the question, and "an answer" is the Gate's own loose
+  // test — a shared content word with the bank for that intent. Not applicable without a
+  // roster (no way to tell a visitor from a member) or without a product question in the
+  // window, both reported as 1 so the metric is not a penalty for a quiet room.
+  let productQuestions = 0;
+  let productAnswered = 0;
+  if (rosterIds.size > 0) {
+    const replyBySeq = new Map<number, ForumMessage>();
+    for (const message of posted) {
+      if (message.replyToSeq !== undefined && !replyBySeq.has(message.replyToSeq)) {
+        replyBySeq.set(message.replyToSeq, message);
+      }
+    }
+    for (const question of posted) {
+      if (rosterIds.has(question.sender.toLowerCase())) continue;
+      const intent = productIntentOf(question.text);
+      // A greeting is answered as a greeting, so an intent that fires on "hello, i'm new" is
+      // not a product question the room owes an answer to.
+      if (intent === "other" || !PLATFORM_INTENTS.has(intent) || isGreeting(question.text)) continue;
+      productQuestions += 1;
+      const reply = replyBySeq.get(question.seq);
+      const bank = answerCandidates(intent, "", "normal");
+      const bankTokens = new Set(bank.flatMap((line) => [...contentTokens(line)]));
+      if (reply && [...contentTokens(reply.text)].some((token) => bankTokens.has(token))) {
+        productAnswered += 1;
+      }
+    }
+  }
+
   return {
     messages: total,
     repeatRate: repeatMessages / total,
@@ -228,6 +276,7 @@ export function auditTurns(turns: readonly TurnRecord[], roster?: readonly strin
     lengthVariety: buckets.size / LENGTH_BUCKETS,
     questionRate: questions / total,
     silenceRate: silences + fromPeople === 0 ? 1 : silences / (silences + fromPeople),
+    productAnswerRate: productQuestions === 0 ? 1 : productAnswered / productQuestions,
   };
 }
 
@@ -309,6 +358,12 @@ export const REALISM_TARGETS: readonly Target[] = [
     max: 0.35,
     why: "past a third, the room is not busy — it is empty",
   },
+  {
+    metric: "productAnswerRate",
+    weight: 0.12,
+    min: 0.9,
+    why: "a question about the platform that comes back as a market verdict is a room that did not read",
+  },
 ];
 
 /**
@@ -317,7 +372,10 @@ export const REALISM_TARGETS: readonly Target[] = [
  * is a dial a change can be measured against, not a pass/fail that hides how far off it is.
  */
 export function realismScore(report: RealismReport): number {
+  // Normalised by the weight total, so the score stays 0–100 as targets are added and no
+  // metric's influence depends on how many others happen to exist.
   let score = 0;
+  let totalWeight = 0;
   for (const target of REALISM_TARGETS) {
     const value = report[target.metric];
     let ratio: number;
@@ -328,8 +386,9 @@ export function realismScore(report: RealismReport): number {
       ratio = floor === 0 ? 1 : Math.min(1, value / floor);
     }
     score += target.weight * ratio;
+    totalWeight += target.weight;
   }
-  return Math.round(score * 1000) / 10;
+  return Math.round((score / totalWeight) * 1000) / 10;
 }
 
 /** Which targets a report misses, worst first — for the audit's own output. */
