@@ -14,6 +14,7 @@ import { useAccount } from "@/lib/account-store";
 import { useAiSession } from "@/lib/ai-session";
 import { signOut } from "@/lib/demo-auth";
 import { AppProviders } from "@/lib/providers";
+import { clearUser, useUser } from "@/lib/user-auth";
 
 const fmtUsd = (v: number, frac = 2) =>
   `$${v.toLocaleString("en-US", { minimumFractionDigits: frac, maximumFractionDigits: frac })}`;
@@ -22,6 +23,7 @@ function AccountInner() {
   const authed = useRequireAuth();
   const { account, resetAccount } = useAccount();
   const { session } = useAiSession();
+  const { user } = useUser();
   const [confirming, setConfirming] = useState(false);
   const [cashMode, setCashMode] = useState<"deposit" | "withdraw" | null>(null);
 
@@ -35,7 +37,7 @@ function AccountInner() {
         <BrandMark size={40} />
         <h1 className="text-xl font-semibold">Sign in to view your account</h1>
         <Link
-          href="/"
+          href="/signin"
           className="rounded-xl bg-gradient-to-r from-brand to-gain px-5 py-2.5 text-sm font-semibold text-[#071018]"
         >
           Back to sign in
@@ -58,7 +60,9 @@ function AccountInner() {
               <Wallet className="h-5 w-5 text-brand" />
             </span>
             <div>
-              <p className="text-[13px] text-muted">Fitackerman21 · Trading account</p>
+              <p className="text-[13px] text-muted">
+                {user?.username ?? "Axion trader"} · Trading account
+              </p>
               <p className="text-2xl font-semibold tracking-tight">{fmtUsd(account.cash)}</p>
             </div>
           </div>
@@ -164,7 +168,8 @@ function AccountInner() {
           <button
             onClick={() => {
               signOut();
-              window.location.href = "/";
+              clearUser();
+              window.location.href = "/home";
             }}
             className="mt-4 inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-muted transition-colors hover:text-foreground"
           >

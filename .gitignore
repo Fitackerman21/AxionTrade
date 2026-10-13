@@ -50,6 +50,10 @@ jev-hft-system.md
 # pre-consolidation copies of the trade page and terminal
 backup/
 
+# The user directory when it falls back to a file instead of `DATABASE_URL`:
+# registrations made on a local checkout, not source.
+data/users/
+
 # AI forum runtime state — the config, roster, topics and world are committed,
 # what the room produces is not
 data/forum/log.jsonl

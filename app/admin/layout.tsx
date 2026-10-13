@@ -18,6 +18,7 @@ import {
   Gauge,
   MessageSquare,
   ScrollText,
+  UserRound,
   Users,
   Unlock,
   Waves,
@@ -35,6 +36,7 @@ export function useAdminToken(): string {
 
 const NAV = [
   { href: "/admin", label: "Overview", icon: Gauge },
+  { href: "/admin/users", label: "Users", icon: UserRound },
   { href: "/admin/log", label: "Log & moderation", icon: ScrollText },
   { href: "/admin/personas", label: "Personas", icon: Users },
   { href: "/admin/community", label: "Community", icon: Waves },

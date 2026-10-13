@@ -20,6 +20,7 @@ import { Watchlist } from "@/components/watchlist";
 import { useAccount } from "@/lib/account-store";
 import { useAiSession } from "@/lib/ai-session";
 import { INSTRUMENTS } from "@/lib/market-data";
+import { initialsOf, useUser } from "@/lib/user-auth";
 
 const fmt = (v: number, frac = 2) =>
   `$${v.toLocaleString("en-US", { maximumFractionDigits: frac, minimumFractionDigits: frac })}`;
@@ -120,6 +121,7 @@ function DashboardInner() {
   const { account } = useAccount();
   const { session } = useAiSession();
   const { connected, quotes } = useLivePrices();
+  const { user } = useUser();
   const router = useRouter();
   const [tradeOpen, setTradeOpen] = useState(false);
   const [cashMode, setCashMode] = useState<"deposit" | "withdraw" | null>(null);
@@ -199,9 +201,11 @@ function DashboardInner() {
               </button>
               <Link href="/account" className="flex h-9 items-center gap-2 rounded-xl border border-border px-2.5">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-brand to-gain text-[11px] font-bold text-[#071018]">
-                  FT
+                  {initialsOf(user)}
                 </span>
-                <span className="hidden text-sm font-medium md:block">Fitackerman21</span>
+                <span className="hidden text-sm font-medium md:block">
+                  {user?.username ?? "Axion trader"}
+                </span>
               </Link>
             </>
           }

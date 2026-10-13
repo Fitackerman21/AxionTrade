@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { useAccount, type Transaction, type TxStatus } from "@/lib/account-store";
+import { useUser } from "@/lib/user-auth";
 
 /* ------------------------------------------------------------------ */
 /* rails                                                               */
@@ -36,6 +37,8 @@ interface Rail {
   feeFlat: number;
   /** what the money is seen to move through */
   instrument: string;
+  /** set when the instrument names its holder, so the signed-in user shows instead */
+  holder?: boolean;
   eta: string;
   /** asynchronous rails land as `processing` rather than instantly */
   async: boolean;
@@ -64,7 +67,8 @@ const RAILS: Rail[] = [
     icon: Smartphone,
     feePct: 0.012,
     feeFlat: 0,
-    instrument: "Wallet · Fitackerman21",
+    instrument: "Wallet",
+    holder: true,
     eta: "Instant",
     async: false,
     min: 10,
@@ -198,6 +202,7 @@ export function CashFlowSheet({
   onClose: () => void;
 }) {
   const { account, deposit, withdraw, pending } = useAccount();
+  const { user } = useUser();
   const [railId, setRailId] = useState("card");
   const [amountRaw, setAmountRaw] = useState("");
   const [phase, setPhase] = useState<Phase>("form");
@@ -215,6 +220,9 @@ export function CashFlowSheet({
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const rail = railById(railId);
+  // A rail that names its holder shows the person signed in, not a fixed account.
+  const holder = user?.username ?? "your account";
+  const describe = (r: Rail) => (r.holder ? `${r.instrument} · ${holder}` : r.instrument);
   const amount = useMemo(() => {
     const n = Number(amountRaw.replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? n : 0;
@@ -280,13 +288,13 @@ export function CashFlowSheet({
           const res =
             mode === "deposit"
               ? deposit(amount, {
-                  method: `${rail.label} · ${rail.instrument}`,
+                  method: `${rail.label} · ${describe(rail)}`,
                   fee,
                   status: rail.async ? "processing" : "completed",
                   note,
                 })
               : withdraw(amount, {
-                  method: `${rail.label} · ${rail.instrument}`,
+                  method: `${rail.label} · ${describe(rail)}`,
                   fee,
                   status: rail.async ? "processing" : "completed",
                   note,
@@ -457,7 +465,7 @@ export function CashFlowSheet({
                                 {r.label}
                               </span>
                               <span className="block truncate text-[11.5px] text-muted">
-                                {r.instrument} · {r.eta}
+                                {describe(r)} · {r.eta}
                               </span>
                             </span>
                             <span className="shrink-0 text-right">
@@ -525,7 +533,7 @@ export function CashFlowSheet({
                         {mode === "deposit" ? "Processing deposit" : "Processing withdrawal"}
                       </p>
                       <p className="font-mono text-xs tabular-nums text-muted">
-                        {usd(amount)} · {rail.instrument}
+                        {usd(amount)} · {describe(rail)}
                       </p>
                     </div>
                   </div>
@@ -593,7 +601,7 @@ export function CashFlowSheet({
                       {receipt.status === "processing" ? usd(receipt.amount) : usd(receipt.net)}
                     </p>
                     <p className="mt-0.5 text-[12px] text-muted">
-                      {receipt.rail.label} · {receipt.rail.instrument}
+                      {receipt.rail.label} · {describe(receipt.rail)}
                     </p>
                   </div>
 

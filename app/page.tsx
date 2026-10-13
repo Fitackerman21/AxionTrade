@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * Root route = auth gate. Signed-in visitors land on the workspace;
- * everyone else is bounced to the sign-in page at /signin. The sign-in
- * screen itself lives at app/signin/page.tsx.
+ * Root route = auth gate. Signed-in visitors land on the workspace; everyone else is
+ * bounced to the marketing home page at /home, which is the intended front door for
+ * axiontrade.vercel.app. The sign-in screen itself lives at app/signin/page.tsx, and
+ * /home links into the community room, which carries a Start Trading CTA to /signin.
  */
 
 import { useEffect } from "react";
@@ -20,7 +21,7 @@ export default function GatePage() {
   const authed = useRequireAuth();
 
   useEffect(() => {
-    if (authed === false) router.replace("/signin");
+    if (authed === false) router.replace("/home");
   }, [authed, router]);
 
   if (authed !== true) {

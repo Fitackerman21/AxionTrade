@@ -38,7 +38,9 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import Link from "next/link";
 import {
+  ArrowRight,
   CheckCheck,
   CornerUpLeft,
   Mic,
@@ -1104,6 +1106,24 @@ export function CommunityChat() {
               </span>
             </span>
           </button>
+          {/* Start Trading — the room's exit into the product. It sits in the header
+              so it is in view for the whole conversation, on every screen size. */}
+          <Link
+            href="/signin"
+            data-testid="start-trading"
+            className="group hidden shrink-0 items-center gap-1.5 rounded-full bg-gradient-to-r from-brand to-gain px-3.5 py-2 text-[13px] font-semibold text-[#071018] shadow-[0_6px_20px_-8px_rgba(46,144,250,0.6)] transition-transform active:scale-[0.98] sm:inline-flex"
+          >
+            Start trading
+            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+          </Link>
+          <Link
+            href="/signin"
+            data-testid="start-trading-compact"
+            aria-label="Start trading"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-brand to-gain text-[#071018] sm:hidden"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </Link>
           <div className="flex items-center gap-1 text-muted">
             {[Search, Phone, MoreVertical].map((Icon, i) => (
               <button
