@@ -20,6 +20,7 @@ import {
   ScrollText,
   Users,
   Unlock,
+  Waves,
 } from "lucide-react";
 
 import { AuroraBackground } from "@/components/aurora-background";
@@ -36,6 +37,7 @@ const NAV = [
   { href: "/admin", label: "Overview", icon: Gauge },
   { href: "/admin/log", label: "Log & moderation", icon: ScrollText },
   { href: "/admin/personas", label: "Personas", icon: Users },
+  { href: "/admin/community", label: "Community", icon: Waves },
   { href: "/admin/memory", label: "Memory", icon: Brain },
   { href: "/admin/controls", label: "Room controls", icon: Activity },
 ];

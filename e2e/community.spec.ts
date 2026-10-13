@@ -18,7 +18,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
 /** The bubble row wrapper; outgoing rows also carry `justify-end`. */
-const MESSAGE_ROW = "div.flex.items-end.gap-2";
+const MESSAGE_ROW = "div.flex.items-start.gap-2";
 
 /** `allow["human"]` in data/forum/config.json — who may answer a person. */
 const PERMITTED: Record<string, string> = {

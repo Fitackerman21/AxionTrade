@@ -10,7 +10,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isReactionEmoji, reactionsFor, reactionsForTurns } from "./reactions";
+import {
+  isReactionEmoji,
+  reactionFor,
+  reactionsFor,
+  reactionsForTurns,
+  roomReactionsFor,
+  REACTION_EMOJI,
+} from "./reactions";
 import { makeTurn } from "./test-utils";
 
 test("only the room's palette is accepted", () => {
@@ -47,4 +54,61 @@ test("a reaction to a message that is not in the log is dropped, not rendered", 
 
   assert.deepEqual([...grouped.keys()], [1]);
   assert.deepEqual(grouped.get(1), [{ emoji: "👍", by: ["human"] }]);
+});
+
+const CANDIDATES = ["mara", "sol", "rafa", "kofi", "jess"] as const;
+
+test("the glyph follows the shape of the line", () => {
+  // A joke gets a laugh, a call gets fire, a shrug gets a wry face. The glyphs may vary
+  // between the two candidates, but never across the families.
+  assert.ok(["😂", "💀"].includes(reactionFor("lol it's been coiled for six days", "s")));
+  assert.ok(["🔥", "👍"].includes(reactionFor("i'm long gold here", "s")));
+  assert.ok(["😅", "🫡"].includes(reactionFor("that's just mid honestly", "s")));
+  // Seeded: the same line and seed leave the same glyph every time.
+  assert.equal(reactionFor("lol", "seed-1"), reactionFor("lol", "seed-1"));
+  // And it is always in the palette.
+  for (let seq = 1; seq <= 200; seq += 1) {
+    assert.ok((REACTION_EMOJI as readonly string[]).includes(reactionFor("anything at all", `s${seq}`)));
+  }
+});
+
+test("the room reacts to a minority of lines, never to itself", () => {
+  let reacted = 0;
+  let two = 0;
+  for (let seq = 1; seq <= 1_000; seq += 1) {
+    const reactions = roomReactionsFor({
+      text: "i'm long gold into the print",
+      seq,
+      author: "mara",
+      candidates: CANDIDATES,
+    });
+    for (const reaction of reactions) {
+      assert.notEqual(reaction.by, "mara", "a persona reacted to its own line");
+      assert.ok((CANDIDATES as readonly string[]).includes(reaction.by));
+      assert.ok((REACTION_EMOJI as readonly string[]).includes(reaction.emoji));
+    }
+    // One chip per glyph, one reaction per person.
+    assert.equal(new Set(reactions.map((r) => r.emoji)).size, reactions.length);
+    assert.equal(new Set(reactions.map((r) => r.by)).size, reactions.length);
+    reactions.forEach(() => (reacted += 1));
+    if (reactions.length === 2) two += 1;
+  }
+  // Steady, not constant: roughly one line in five, and rare enough that two reactions
+  // is the exception. A room that reacts to everything is as synthetic as one that never does.
+  assert.ok(reacted / 1_000 > 0.15 && reacted / 1_000 < 0.3, `reaction rate was ${reacted / 1_000}`);
+  assert.ok(two > 20 && two < 120, `two-reaction lines: ${two}`);
+});
+
+test("a line too short to have a shape gets no chip, and a lone candidate has no one to react", () => {
+  let reacted = 0;
+  for (let seq = 1; seq <= 200; seq += 1) {
+    if (roomReactionsFor({ text: "ok", seq, author: "mara", candidates: CANDIDATES }).length > 0) {
+      reacted += 1;
+    }
+    assert.deepEqual(
+      roomReactionsFor({ text: "i'm long gold", seq, author: "mara", candidates: ["mara"] }),
+      [],
+    );
+  }
+  assert.equal(reacted, 0);
 });

@@ -64,7 +64,7 @@ const SCHEMA = `
 `;
 
 /** The keys the settings table is allowed to hold; anything else is rejected. */
-export const SETTING_KEYS = ["paused", "muted", "pace"] as const;
+export const SETTING_KEYS = ["paused", "muted", "pace", "community"] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 export interface AdminSettings {
@@ -159,6 +159,48 @@ export async function readAdminSettings(): Promise<AdminSettings> {
     muted: Array.isArray(muted) ? (muted as string[]) : [],
     pace: typeof byKey.get("pace") === "number" ? (byKey.get("pace") as number) : 1,
   };
+}
+
+/**
+ * What the community overview shows, and the room's public name.
+ *
+ * Stored under the `community` setting key rather than in a bundled file so the
+ * dashboard can change it without a redeploy — the same reason the roster overrides
+ * live in Postgres. The room's behaviour settings are untouched by this.
+ */
+export interface CommunityProfile {
+  name: string;
+  description: string;
+}
+
+export const DEFAULT_COMMUNITY: CommunityProfile = {
+  name: "Axion Community",
+  description:
+    "The community room that ships with the Axion app: the people who trade on it, talking to each other. It is the app's own room, the same faces most days.",
+};
+
+/** The community profile, with a lasting default for any field never set. */
+export async function readCommunityProfile(): Promise<CommunityProfile> {
+  await ensure();
+  const { rows } = await db().query<{ value: unknown }>(
+    "select value from forum_admin_settings where key = 'community'",
+  );
+  const value = (rows[0]?.value ?? {}) as Partial<CommunityProfile>;
+  return {
+    name: typeof value.name === "string" && value.name.trim() !== "" ? value.name.trim() : DEFAULT_COMMUNITY.name,
+    description:
+      typeof value.description === "string" && value.description.trim() !== ""
+        ? value.description.trim()
+        : DEFAULT_COMMUNITY.description,
+  };
+}
+
+export async function writeCommunityProfile(
+  profile: CommunityProfile,
+  actor: string,
+): Promise<void> {
+  await writeSetting("community", profile, actor);
+  await logAction("community.update", { profile }, actor);
 }
 
 export async function writeSetting(

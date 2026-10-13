@@ -6,6 +6,7 @@ import { nextEvent, threadReplyMode } from "./agenda";
 import { catchUp } from "./catchup";
 import { PRODUCT_LINES } from "./drafts";
 import { publish } from "./publisher";
+import { isReactionEmoji } from "./reactions";
 import type { ChatProvider, ChatRequest } from "./provider";
 import { FileStore } from "./store";
 import type { ForumStore } from "./store";
@@ -1089,6 +1090,44 @@ test("the publisher refuses anything that is not approved", async () => {
       /no message/,
     );
     assert.deepEqual(await fixture.store.readTurns(10), []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+/**
+ * The room reacts to some of what it says, and only to lines it actually published.
+ *
+ * Measured before this at 0% of published lines, so a persona never left a chip. The
+ * integration is what is asserted here — that `advance()` writes reactions beside the
+ * log, in the closed palette, to a published seq, from someone other than the author.
+ */
+test("the room reacts to some of its own lines, never to itself and never to an unpublished one", async () => {
+  const fixture = await createFixture();
+  try {
+    let now = BASE;
+    for (let i = 0; i < 120; i += 1) {
+      now += 45_000;
+      await advance(fixture.store, {
+        now,
+        driver: "reactions-test",
+        settings: { paused: false, muted: [], pace: 1 },
+        peekInjections: async () => null,
+      });
+    }
+
+    const published = new Map<number, string>();
+    for (const turn of await fixture.store.readTurns(Number.POSITIVE_INFINITY)) {
+      if (turn.message && !turn.message.system) published.set(turn.message.seq, turn.message.sender);
+    }
+    const reactions = await fixture.store.readReactions();
+    assert.ok(reactions.length > 0, "the room never reacted to anything in 120 turns");
+    for (const reaction of reactions) {
+      const author = published.get(reaction.seq);
+      assert.ok(author !== undefined, `a reaction points at seq ${reaction.seq}, which was never published`);
+      assert.notEqual(reaction.by, author, `${reaction.by} reacted to its own line`);
+      assert.ok(isReactionEmoji(reaction.emoji), `off-palette reaction: ${reaction.emoji}`);
+    }
   } finally {
     await fixture.cleanup();
   }

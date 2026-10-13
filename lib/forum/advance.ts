@@ -25,6 +25,7 @@ import { resolveGateConfig, runGate } from "./gate";
 import type { GateVerdict } from "./gate";
 import { respondersFor } from "./permissions";
 import { buildMessage, publish, publishUnpublished } from "./publisher";
+import { roomReactionsFor } from "./reactions";
 import { resolveJudgeProvider } from "./provider";
 import type { ChatProvider } from "./provider";
 import { localHourFor, recencyFromTurns, pickSpeaker } from "./schedule";
@@ -119,6 +120,30 @@ function transcriptWindowSeq(turns: readonly TurnRecord[]): number {
 /** Used for lease ownership; 0 where there is no process to name. */
 export function processId(): number {
   return typeof process !== "undefined" && typeof process.pid === "number" ? process.pid : 0;
+}
+
+/**
+ * Let the room react to a line it just published, occasionally.
+ *
+ * A reaction is not a turn: it has no seq, no length and no Gate review, so it is
+ * written beside the log rather than in it. The decision of who reacts and with what
+ * is deterministic on the turn's `seq` (`roomReactionsFor`), and a reaction that is
+ * already there is left alone — so re-running a turn cannot toggle a chip off.
+ */
+async function seedRoomReactions(
+  store: ForumStore,
+  args: { seq: number; text: string; author: PersonaId; candidates: readonly PersonaId[]; now: number },
+): Promise<void> {
+  const reactions = roomReactionsFor(args);
+  if (reactions.length === 0) return;
+  const existing = await store.readReactions();
+  for (const reaction of reactions) {
+    const already = existing.some(
+      (r) => r.seq === args.seq && r.by === reaction.by,
+    );
+    if (already) continue;
+    await store.toggleReaction({ seq: args.seq, emoji: reaction.emoji, by: reaction.by, t: args.now });
+  }
 }
 
 /**
@@ -923,6 +948,18 @@ export async function advance(
     if (decision === "APPROVE") {
       await publish(store, record);
       if (beats.length > 1) await publish(store, continuationRecord(record, beats[1]!));
+      // The room reacts to what was just said, the way a group chat does. Best-effort:
+      // a failure here must never cost the line that was already published, and a
+      // system stage direction is not something anyone reacts to.
+      if (record.message && !record.message.system) {
+        await seedRoomReactions(store, {
+          seq: record.seq,
+          text: record.message.text,
+          author: chosen,
+          candidates: selectable.map((persona) => persona.id),
+          now,
+        }).catch(() => undefined);
+      }
       // Stamp the audit trail now the line has a seq; a crash before this leaves
       // the injection marked attempted (-1), which the dashboard shows.
       if (injection) {

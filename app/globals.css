@@ -103,6 +103,26 @@ body {
   animation: float-slow-2 22s ease-in-out infinite;
 }
 
+/*
+ * The community chat canvas.
+ *
+ * A warm near-black with a faint two-tone dot lattice and a soft brand glow top
+ * and bottom — the kind of wallpaper a phone messenger paints, rather than the
+ * flat engineering grid it used to be. Static on purpose: the old animated grid
+ * repainted under every scroll and keystroke, which is exactly the jank this is
+ * meant to remove.
+ */
+.chat-wallpaper {
+  background-color: #0d1013;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1.5px),
+    radial-gradient(rgba(46, 144, 250, 0.06) 1px, transparent 1.5px),
+    radial-gradient(ellipse 130% 70% at 50% -15%, rgba(46, 144, 250, 0.12), transparent 60%),
+    radial-gradient(ellipse 130% 70% at 50% 115%, rgba(0, 200, 150, 0.09), transparent 60%);
+  background-size: 22px 22px, 22px 22px, 100% 100%, 100% 100%;
+  background-position: 0 0, 11px 11px, 0 0, 0 0;
+}
+
 @keyframes grid-pan {
   from { background-position: 0 0; }
   to { background-position: 56px 56px; }

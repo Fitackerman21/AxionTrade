@@ -17,8 +17,8 @@
  *
  * Bubble spec follows Telegram Web (tweb) night mode: solid bubbles, sender name
  * inside the bubble, time inline at the end of the text, avatar rendered only on
- * the last message of a group and bottom-aligned, last bubble in a group gets the
- * squared avatar-side corner.
+ * the last message of a group. The avatar is top-aligned to the bubble the way a
+ * phone messenger draws it (WhatsApp), rather than bottom-aligned.
  *
  * Quoted replies work the way they do in a phone messenger: swipe a message to the
  * right (or hover it and use the arrow on a desktop) to answer that specific line,
@@ -26,11 +26,18 @@
  * original quoted above it. The room's own lines carry the same quote, because
  * every reply in the log records the message it answered (`replyToSeq`).
  *
- * The "… is typing" indicator appears in two places on purpose: in the header, and
- * as a bubble at the end of the transcript, which is where a messenger puts it.
+ * ## Why the transcript is a memoized subtree
+ *
+ * The page used to keep every piece of state — the draft, the swipe offset, the open
+ * emoji palette — in the one component that also rendered every row, so each keystroke
+ * and each pointermove re-rendered the whole transcript. With a few hundred rows that
+ * is the input lag and the stuck swipe. Now the rows live in `Transcript`, memoized on
+ * its data alone; `MessageRow` is memoized and owns its own swipe offset and palette, so
+ * a drag re-renders one row and a keystroke re-renders none of them. The composer's
+ * `draft` never crosses into the transcript.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   CheckCheck,
   CornerUpLeft,
@@ -41,6 +48,7 @@ import {
   Search,
   Send,
   Smile,
+  Users,
   X,
 } from "lucide-react";
 
@@ -99,6 +107,18 @@ const YOU: ChatPersona = {
   online: true,
 };
 
+/** The community profile shown in the overview; the live read replaces it. */
+interface CommunityProfile {
+  name: string;
+  description: string;
+}
+
+const DEFAULT_COMMUNITY: CommunityProfile = {
+  name: "Axion Community",
+  description:
+    "The community room that ships with the Axion app: the people who trade on it, talking to each other.",
+};
+
 /** How often the open page refreshes the transcript while the room is idle. */
 const POLL_MS = 6_000;
 /** How often the open page re-reads the roster, so a dashboard edit shows up here. */
@@ -107,6 +127,8 @@ const ROSTER_POLL_MS = 20_000;
 const TYPING_POLL_MS = 3_000;
 /** A gap this long between messages breaks the avatar/name grouping. */
 const GROUP_GAP_MS = 5 * 60_000;
+/** The avatar column width, shared by the rows, the member rail and the typing bubble. */
+const AVATAR_SIZE = 40;
 
 interface Row {
   key: string;
@@ -210,7 +232,7 @@ const SWIPE_MAX_PX = 96;
 /** Deterministic 0/1 so sticker arrows stay stable across renders. */
 const up = (id: number) => id % 2 === 0;
 
-function Avatar({ p, size = 34 }: { p: ChatPersona; size?: number }) {
+function Avatar({ p, size = AVATAR_SIZE }: { p: ChatPersona; size?: number }) {
   return (
     <span
       className="relative flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-[#071018]"
@@ -231,7 +253,10 @@ function Avatar({ p, size = 34 }: { p: ChatPersona; size?: number }) {
         initials(p.name)
       )}
       {p.online && (
-        <span className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-background bg-gain" />
+        <span
+          className="absolute right-0 bottom-0 rounded-full border-2 border-background bg-gain"
+          style={{ height: size * 0.28, width: size * 0.28 }}
+        />
       )}
     </span>
   );
@@ -250,116 +275,6 @@ function TickerChip({ ticker, id }: { ticker: string; id: number }) {
   );
 }
 
-function Bubble({
-  row,
-  sender,
-  first,
-  last,
-  outgoing,
-  quoted,
-  onJump,
-  onReact,
-}: {
-  row: Row;
-  sender: ChatPersona;
-  first: boolean;
-  last: boolean;
-  outgoing: boolean;
-  /** the message this one answers, when it is still on screen */
-  quoted?: Row;
-  onJump?: (seq: number) => void;
-  onReact?: (seq: number, emoji: string) => void;
-}) {
-  // Telegram corner logic: 12px everywhere, except the avatar-side bottom
-  // corner of the last bubble in a group which is squared to 4px.
-  const radius = outgoing
-    ? last
-      ? "rounded-[12px] rounded-br-[4px]"
-      : "rounded-[12px]"
-    : last
-      ? "rounded-[12px] rounded-bl-[4px]"
-      : "rounded-[12px]";
-
-  return (
-    <div
-      className={`flex items-end gap-2 ${outgoing ? "justify-end pl-12" : "justify-start pr-12"}`}
-    >
-      {!outgoing && (
-        <span className="w-[34px] shrink-0">{last && <Avatar p={sender} />}</span>
-      )}
-      <div
-        className={`max-w-[min(560px,82%)] px-3 py-1.5 ${radius} ${
-          outgoing
-            ? "bg-[#2b5278] text-white"
-            : "bg-surface-2 text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.35)]"
-        }`}
-      >
-        {!outgoing && first && (
-          <p className="text-[13.5px] leading-tight font-semibold" style={{ color: sender.color }}>
-            {sender.name}
-          </p>
-        )}
-        {quoted && (
-          <button
-            type="button"
-            data-testid="quoted"
-            onClick={() => quoted.seq !== undefined && onJump?.(quoted.seq)}
-            className={`mb-1 flex w-full items-baseline gap-1.5 overflow-hidden rounded-md border-l-2 px-2 py-1 text-left ${
-              outgoing ? "border-white/60 bg-black/20" : "border-brand bg-black/20"
-            }`}
-          >
-            <span
-              className="shrink-0 text-[12px] font-semibold"
-              style={{ color: outgoing ? "#cfe3ff" : personaFor(quoted.from).color }}
-            >
-              {personaFor(quoted.from).name}
-            </span>
-            <span className="truncate text-[12px] opacity-80">{quoted.text}</span>
-          </button>
-        )}
-        {row.ticker && (
-          <div className="mt-1">
-            <TickerChip ticker={row.ticker} id={row.at} />
-          </div>
-        )}
-        <p data-testid="message-text" className="text-[14.5px] leading-[1.35] break-words">
-          {row.text}
-          <span
-            className={`ml-2 inline-block translate-y-0.5 text-[11px] whitespace-nowrap ${
-              outgoing ? "text-white/60" : "text-muted"
-            }`}
-          >
-            {clockOf(row.at)}
-            {outgoing && <CheckCheck className="ml-0.5 inline h-3.5 w-3.5 align-[-2px] text-white/70" />}
-          </span>
-        </p>
-        {row.reactions && row.reactions.length > 0 && (
-          <div data-testid="reactions" className="mt-1 flex flex-wrap items-center gap-1">
-            {row.reactions.map((reaction) => {
-              const mine = reaction.by.includes(YOU.id);
-              return (
-                <button
-                  key={reaction.emoji}
-                  type="button"
-                  data-testid={`reaction-${reaction.emoji}`}
-                  aria-label={`${reaction.emoji} ${reaction.by.length}`}
-                  onClick={() => row.seq !== undefined && onReact?.(row.seq, reaction.emoji)}
-                  className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
-                    mine ? "bg-brand/35 ring-1 ring-brand/70" : "bg-black/20 hover:bg-black/30"
-                  }`}
-                >
-                  <span className="text-[13px]">{reaction.emoji}</span>
-                  <span className="tabular-nums">{reaction.by.length}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function TypingDots() {
   return (
     <span className="inline-flex items-center gap-0.5" aria-hidden>
@@ -374,17 +289,535 @@ function TypingDots() {
   );
 }
 
-function MemberRow({ p }: { p: ChatPersona }) {
+/**
+ * One message row.
+ *
+ * Memoized, and it owns the two pieces of state that move during an interaction: the
+ * swipe offset and whether this row's emoji palette is open. Both used to live in the
+ * page, which meant a drag re-rendered every row on screen and the swipe stuttered on a
+ * long transcript. Here a drag re-renders this row and nothing else.
+ */
+const MessageRow = memo(function MessageRow({
+  row,
+  sender,
+  first,
+  last,
+  outgoing,
+  quoted,
+  active,
+  onJump,
+  onReply,
+  onReact,
+  onOpenProfile,
+}: {
+  row: Row;
+  sender: ChatPersona;
+  first: boolean;
+  last: boolean;
+  outgoing: boolean;
+  /** the message this one answers, when it is still on screen */
+  quoted?: Row;
+  /** true when this row is the message currently being replied to */
+  active: boolean;
+  onJump: (seq: number) => void;
+  onReply: (row: Row) => void;
+  onReact: (seq: number, emoji: string) => void;
+  onOpenProfile: (p: ChatPersona) => void;
+}) {
+  // Telegram corner logic: 12px everywhere, except the avatar-side bottom
+  // corner of the last bubble in a group which is squared to 4px.
+  const radius = outgoing
+    ? last
+      ? "rounded-[12px] rounded-br-[4px]"
+      : "rounded-[12px]"
+    : last
+      ? "rounded-[12px] rounded-bl-[4px]"
+      : "rounded-[12px]";
+
+  const [dx, setDx] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const dragRef = useRef<{ x0: number; dx: number } | null>(null);
+  const frameRef = useRef<number | null>(null);
+
+  const scheduleOffset = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      setDx((current) => (dragRef.current ? Math.max(0, Math.min(SWIPE_MAX_PX, dragRef.current.dx)) : current));
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
+
+  return (
+    <div
+      data-seq={row.seq}
+      data-testid="message"
+      className={`group relative ${first ? "mt-3" : "mt-[2px]"} ${
+        active ? "rounded-lg bg-brand/10" : ""
+      }`}
+      style={{
+        transform: dx > 0 ? `translateX(${dx}px)` : undefined,
+        transition: dx > 0 ? "none" : "transform 120ms ease-out",
+        touchAction: "pan-y",
+      }}
+      // Swipe right to reply, the way a phone messenger does it. Mouse users get
+      // the hover arrow below instead.
+      onPointerDown={(event) => {
+        if (event.pointerType === "mouse") return;
+        dragRef.current = { x0: event.clientX, dx: 0 };
+      }}
+      onPointerMove={(event) => {
+        const drag = dragRef.current;
+        if (!drag) return;
+        const next = event.clientX - drag.x0;
+        if (next <= 3) return;
+        drag.dx = next;
+        scheduleOffset();
+      }}
+      onPointerUp={() => {
+        const drag = dragRef.current;
+        dragRef.current = null;
+        setDx(0);
+        if (drag && drag.dx >= SWIPE_TRIGGER_PX) onReply(row);
+      }}
+      onPointerCancel={() => {
+        dragRef.current = null;
+        setDx(0);
+      }}
+    >
+      {dx > 4 && (
+        <span
+          aria-hidden
+          data-testid="swipe-reply"
+          className="absolute top-1/2 left-1 -translate-y-1/2 text-brand"
+          style={{ opacity: Math.min(1, dx / SWIPE_TRIGGER_PX) }}
+        >
+          <CornerUpLeft className="h-5 w-5" />
+        </span>
+      )}
+      <div className={`flex items-start gap-2 ${outgoing ? "justify-end pl-12" : "justify-start pr-12"}`}>
+        {!outgoing && (
+          <span className="shrink-0" style={{ width: AVATAR_SIZE }}>
+            {last && (
+              <button
+                type="button"
+                aria-label={`${sender.name}'s profile`}
+                onClick={() => onOpenProfile(sender)}
+                className="rounded-full"
+              >
+                <Avatar p={sender} />
+              </button>
+            )}
+          </span>
+        )}
+        <div
+          className={`max-w-[min(560px,82%)] px-3 py-1.5 ${radius} ${
+            outgoing
+              ? "bg-[#2b5278] text-white"
+              : "bg-surface-2 text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.35)]"
+          }`}
+        >
+          {!outgoing && first && (
+            <p className="text-[13.5px] leading-tight font-semibold" style={{ color: sender.color }}>
+              <button
+                type="button"
+                data-testid="sender-name"
+                onClick={() => onOpenProfile(sender)}
+                className="text-left hover:underline"
+              >
+                {sender.name}
+              </button>
+            </p>
+          )}
+          {quoted && (
+            <button
+              type="button"
+              data-testid="quoted"
+              onClick={() => quoted.seq !== undefined && onJump(quoted.seq)}
+              className={`mb-1 flex w-full items-baseline gap-1.5 overflow-hidden rounded-md border-l-2 px-2 py-1 text-left ${
+                outgoing ? "border-white/60 bg-black/20" : "border-brand bg-black/20"
+              }`}
+            >
+              <span
+                className="shrink-0 text-[12px] font-semibold"
+                style={{ color: outgoing ? "#cfe3ff" : personaFor(quoted.from).color }}
+              >
+                {personaFor(quoted.from).name}
+              </span>
+              <span className="truncate text-[12px] opacity-80">{quoted.text}</span>
+            </button>
+          )}
+          {row.ticker && (
+            <div className="mt-1">
+              <TickerChip ticker={row.ticker} id={row.at} />
+            </div>
+          )}
+          <p data-testid="message-text" className="text-[14.5px] leading-[1.35] break-words">
+            {row.text}
+            <span
+              className={`ml-2 inline-block translate-y-0.5 text-[11px] whitespace-nowrap ${
+                outgoing ? "text-white/60" : "text-muted"
+              }`}
+            >
+              {clockOf(row.at)}
+              {outgoing && <CheckCheck className="ml-0.5 inline h-3.5 w-3.5 align-[-2px] text-white/70" />}
+            </span>
+          </p>
+          {row.reactions && row.reactions.length > 0 && (
+            <div data-testid="reactions" className="mt-1 flex flex-wrap items-center gap-1">
+              {row.reactions.map((reaction) => {
+                const mine = reaction.by.includes(YOU.id);
+                return (
+                  <button
+                    key={reaction.emoji}
+                    type="button"
+                    data-testid={`reaction-${reaction.emoji}`}
+                    aria-label={`${reaction.emoji} ${reaction.by.length}`}
+                    onClick={() => row.seq !== undefined && onReact(row.seq, reaction.emoji)}
+                    className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
+                      mine ? "bg-brand/35 ring-1 ring-brand/70" : "bg-black/20 hover:bg-black/30"
+                    }`}
+                  >
+                    <span className="text-[13px]">{reaction.emoji}</span>
+                    <span className="tabular-nums">{reaction.by.length}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {row.seq !== undefined && (
+        <div
+          className={`absolute top-1/2 flex -translate-y-1/2 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
+            outgoing ? "left-1" : "right-1"
+          }`}
+        >
+          <button
+            type="button"
+            aria-label={`Reply to ${sender.name}`}
+            data-testid="reply-action"
+            onClick={() => onReply(row)}
+            // Hover affordance for a mouse: a swipe needs a thumb.
+            className="rounded-full bg-surface-2 p-1.5 text-muted"
+          >
+            <CornerUpLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={`React to ${sender.name}`}
+            data-testid="react-action"
+            onClick={() => setPaletteOpen((open) => !open)}
+            className="rounded-full bg-surface-2 p-1.5 text-muted"
+          >
+            <Smile className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+      {paletteOpen && row.seq !== undefined && (
+        <div
+          data-testid="reaction-palette"
+          className={`absolute -top-3 z-10 flex items-center gap-0.5 rounded-full border border-border bg-surface px-1.5 py-1 shadow-[0_8px_24px_-6px_rgba(0,0,0,0.7)] ${
+            outgoing ? "right-1" : "left-1"
+          }`}
+        >
+          {REACTION_EMOJI.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              aria-label={`React with ${emoji}`}
+              onClick={() => {
+                setPaletteOpen(false);
+                onReact(row.seq!, emoji);
+              }}
+              className="rounded-full px-1 text-[16px] leading-none transition-transform hover:scale-125"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/**
+ * The transcript subtree.
+ *
+ * Memoized on its data alone: the composer's draft is deliberately *not* a prop, so
+ * typing in the composer re-renders the composer and nothing in the scrollback.
+ */
+const Transcript = memo(function Transcript({
+  rows,
+  roster,
+  replyToSeq,
+  typing,
+  source,
+  notice,
+  scrollRef,
+  onJump,
+  onReply,
+  onReact,
+  onOpenProfile,
+}: {
+  rows: Row[];
+  roster: ChatPersona[] | null;
+  replyToSeq?: number;
+  typing: PendingReply | null;
+  source: Source;
+  notice: string | null;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  onJump: (seq: number) => void;
+  onReply: (row: Row) => void;
+  onReact: (seq: number, emoji: string) => void;
+  onOpenProfile: (p: ChatPersona) => void;
+}) {
+  // The roster reference is read so a profile edit (which swaps `roster`) forces the
+  // senders to be recomputed here rather than left stale by the memo.
+  void roster;
+
+  /** Live rows by seq, so a quoted strip can resolve the message it points at. */
+  const bySeq = useMemo(() => {
+    const map = new Map<number, Row>();
+    for (const row of rows) if (row.seq !== undefined) map.set(row.seq, row);
+    return map;
+  }, [rows]);
+
+  return (
+    <div ref={scrollRef} className="chat-wallpaper relative min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
+      <div className="mb-3 flex justify-center">
+        <span className="rounded-full bg-surface-2/90 px-3 py-1 text-[11px] font-medium text-muted">
+          Today
+        </span>
+      </div>
+
+      {rows.map((row, i) => {
+        const sender = personaFor(row.from);
+        const outgoing = row.from === YOU.id;
+        const prev = i > 0 ? rows[i - 1] : null;
+        const next = i < rows.length - 1 ? rows[i + 1] : null;
+        const first = !prev || prev.from !== row.from || row.at - prev.at > GROUP_GAP_MS;
+        const last = !next || next.from !== row.from || next.at - row.at > GROUP_GAP_MS;
+        const quoted = row.replyToSeq === undefined ? undefined : bySeq.get(row.replyToSeq);
+
+        return (
+          <MessageRow
+            key={row.key}
+            row={row}
+            sender={sender}
+            first={first}
+            last={last}
+            outgoing={outgoing}
+            quoted={quoted}
+            active={row.seq !== undefined && row.seq === replyToSeq}
+            onJump={onJump}
+            onReply={onReply}
+            onReact={onReact}
+            onOpenProfile={onOpenProfile}
+          />
+        );
+      })}
+
+      {/* `items-center` on purpose: the transcript's message rows are matched by
+          the e2e spec with `div.flex.items-start.gap-2`, and a typing bubble is not
+          a message. */}
+      {typing && source === "live" && (
+        <div data-testid="typing-row" className="mt-3 flex items-center gap-2">
+          <span className="shrink-0" style={{ width: AVATAR_SIZE }}>
+            <Avatar p={personaFor(typing.sender)} />
+          </span>
+          <div className="rounded-[12px] rounded-bl-[4px] bg-surface-2 px-3 py-2 text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.35)]">
+            <span className="text-[13px] font-semibold" style={{ color: personaFor(typing.sender).color }}>
+              {personaFor(typing.sender).name}
+            </span>
+            <span className="ml-1.5 align-middle text-[12px] text-muted">is typing…</span>
+            <span className="ml-2 inline-flex align-middle">
+              <TypingDots />
+            </span>
+          </div>
+        </div>
+      )}
+
+      {notice && (
+        <div className="mt-3 flex justify-center">
+          <span className="rounded-full bg-surface-2/90 px-3 py-1 text-[11px] font-medium text-muted">
+            {notice}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+});
+
+function MemberRow({ p, onClick }: { p: ChatPersona; onClick?: () => void }) {
   const subtitle = p.bio ? p.bio : p.role;
   return (
-    <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-surface-2/70">
-      <Avatar p={p} size={32} />
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium" style={{ color: p.color }}>
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-surface-2/70"
+    >
+      <Avatar p={p} size={34} />
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-medium" style={{ color: p.color }}>
           {p.name}
           {p.age ? <span className="ml-1 text-[11px] text-muted">· {p.age}</span> : null}
-        </p>
-        <p className="truncate text-[11px] text-muted">{subtitle}</p>
+        </span>
+        <span className="block truncate text-[11px] text-muted">{subtitle}</span>
+      </span>
+    </button>
+  );
+}
+
+/** A member's bio and details, opened from their name, avatar, or the overview. */
+function ProfilePanel({
+  persona,
+  messageCount,
+  onClose,
+}: {
+  persona: ChatPersona;
+  messageCount: number;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      data-testid="profile-panel"
+      className="absolute inset-0 z-30 flex items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm overflow-hidden rounded-t-3xl border border-border/70 bg-surface shadow-[0_24px_64px_-16px_rgba(0,0,0,0.8)] sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex flex-col items-center gap-3 px-6 pt-8 pb-6"
+          style={{ background: `linear-gradient(160deg, ${persona.g1}22, ${persona.g2}12)` }}
+        >
+          <Avatar p={persona} size={88} />
+          <div className="text-center">
+            <p className="text-lg font-semibold text-foreground">{persona.name}</p>
+            <p className="text-[13px] text-muted">{persona.role}</p>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-muted">
+            <span className="flex items-center gap-1.5">
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${persona.online ? "bg-gain" : "bg-muted"}`} />
+              {persona.online ? "online" : "offline"}
+            </span>
+            {persona.age ? <span>{persona.age}</span> : null}
+            <span>
+              {messageCount} {messageCount === 1 ? "message" : "messages"}
+            </span>
+          </div>
+        </div>
+        <div className="border-t border-border/70 px-6 py-5">
+          <p className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">About</p>
+          <p className="text-[13.5px] leading-relaxed text-foreground/90">
+            {persona.bio ?? `${persona.name} trades from ${persona.role.split("·").slice(-1)[0]?.trim() ?? "here"}.`}
+          </p>
+        </div>
+        <div className="flex justify-end border-t border-border/70 px-4 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-surface-2 px-4 py-2 text-[13px] font-medium text-foreground hover:bg-border"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The community overview: description and every member, opened from the header. */
+function CommunityOverview({
+  community,
+  members,
+  onClose,
+  onOpenMember,
+}: {
+  community: CommunityProfile;
+  members: ChatPersona[];
+  onClose: () => void;
+  onOpenMember: (p: ChatPersona) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      data-testid="community-overview"
+      className="absolute inset-0 z-20 flex items-stretch justify-center bg-black/55 backdrop-blur-sm sm:items-center sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex w-full max-w-lg flex-col overflow-hidden border border-border/70 bg-surface shadow-[0_24px_64px_-16px_rgba(0,0,0,0.8)] sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="relative flex items-center gap-3 border-b border-border/70 px-5 py-4"
+          style={{ background: "linear-gradient(135deg, #2e90fa18, #00c89612)" }}
+        >
+          <span
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full"
+            style={{ background: "linear-gradient(135deg, #2e90fa, #00c896)" }}
+          >
+            <BrandMark size={30} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[16px] font-semibold text-foreground">{community.name}</h2>
+            <p className="text-[12px] text-muted">
+              {members.length} members · {members.filter((p) => p.online).length} online
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close overview"
+            data-testid="overview-close"
+            onClick={onClose}
+            className="rounded-full p-2 text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="border-b border-border/70 px-5 py-4">
+          <p className="mb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">About</p>
+          <p className="text-[13.5px] leading-relaxed text-foreground/90">{community.description}</p>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <p className="flex items-center gap-1.5 px-2 pb-2 text-[11px] font-semibold tracking-wide text-muted uppercase">
+            <Users className="h-3.5 w-3.5" /> Members
+          </p>
+          <div className="grid gap-0.5 sm:grid-cols-2">
+            {members.map((p) => (
+              <div key={p.id} data-testid="community-member" data-id={p.id}>
+                <MemberRow p={p} onClick={() => onOpenMember(p)} />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -394,26 +827,19 @@ export function CommunityChat() {
   const [rows, setRows] = useState<Row[]>(replayRows);
   /** the roster the room is showing — the bundled one until the live read lands */
   const [roster, setRoster] = useState<ChatPersona[] | null>(livePersonas);
+  const [community, setCommunity] = useState<CommunityProfile>(DEFAULT_COMMUNITY);
   const [source, setSource] = useState<Source>("demo");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [typing, setTyping] = useState<PendingReply | null>(null);
-  /** the seq whose emoji palette is open, if any */
-  const [reacting, setReacting] = useState<number | null>(null);
   /** the message being answered, set by a swipe or the hover arrow */
   const [replyTo, setReplyTo] = useState<Row | null>(null);
-  /** the in-progress swipe: which row, and how far it has been dragged */
-  const [swipe, setSwipe] = useState<{ key: string; dx: number } | null>(null);
-  const dragRef = useRef<{ key: string; x0: number } | null>(null);
+  /** the profile panel's subject, if open */
+  const [profile, setProfile] = useState<ChatPersona | null>(null);
+  /** the community overview, if open */
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  /** Live rows by seq, so a quoted strip can resolve the message it points at. */
-  const bySeq = useMemo(() => {
-    const map = new Map<number, Row>();
-    for (const row of rows) if (row.seq !== undefined) map.set(row.seq, row);
-    return map;
-  }, [rows]);
 
   /** The timer that shows the typing bubble once the room has finished reading. */
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -481,6 +907,28 @@ export function CommunityChat() {
     };
   }, []);
 
+  /** The community's name and description, for the overview modal. */
+  useEffect(() => {
+    const loadCommunity = async () => {
+      try {
+        const response = await fetch("/api/community", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = (await response.json()) as Partial<CommunityProfile>;
+        if (typeof data.name === "string" && typeof data.description === "string") {
+          setCommunity({ name: data.name, description: data.description });
+        }
+      } catch {
+        // the default profile stays — the overview renders without the admin layer
+      }
+    };
+    void loadCommunity();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadCommunity();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   /**
    * Reading refreshes *and* wakes: the endpoint's catch-up is what brings a paused
    * room forward, so polling while the page is open is the room's heartbeat. It is
@@ -509,11 +957,9 @@ export function CommunityChat() {
   }, [load, typing]);
 
   // Start pinned to the newest message, and stay pinned as turns arrive.
-  //
   // Pinned by *which* row is newest, not by how many there are: a poll that appends
   // one message and retimes another leaves the length unchanged, and the live page
-  // showed the consequence — the newest bubble sitting half under the composer, so
-  // the last thing the room said was the one thing a visitor could not read.
+  // showed the consequence — the newest bubble sitting half under the composer.
   const newestKey = rows[rows.length - 1]?.key;
   useEffect(() => {
     const el = scrollRef.current;
@@ -522,8 +968,6 @@ export function CommunityChat() {
       el.scrollTop = el.scrollHeight;
     };
     pin();
-    // Again after the frame that laid the new row out, because a message bubble and
-    // the mobile viewport both settle after the effect runs.
     const frame = requestAnimationFrame(pin);
     return () => cancelAnimationFrame(frame);
   }, [newestKey, rows.length, typing]);
@@ -571,8 +1015,7 @@ export function CommunityChat() {
    * goes through the same endpoint and adopts the same projection back — the count on
    * the chip is the server's, never an optimistic guess.
    */
-  const react = async (seq: number, emoji: string) => {
-    setReacting(null);
+  const react = useCallback(async (seq: number, emoji: string) => {
     try {
       const response = await fetch("/api/forum/messages", {
         method: "POST",
@@ -588,8 +1031,19 @@ export function CommunityChat() {
     } catch {
       setNotice("could not reach the room");
     }
-  };
+  }, [adopt]);
 
+  /** The scrollback is memoized, so these callbacks must be stable across renders. */
+  const onJump = useCallback((seq: number) => {
+    scrollRef.current
+      ?.querySelector(`[data-seq="${seq}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
+  const onReply = useCallback((row: Row) => setReplyTo(row), []);
+  const onReact = useCallback((seq: number, emoji: string) => void react(seq, emoji), [react]);
+  const onOpenProfile = useCallback((p: ChatPersona) => setProfile(p), []);
+
+  const members = roster ?? PERSONAS;
   const label =
     source === "live"
       ? "live"
@@ -597,41 +1051,59 @@ export function CommunityChat() {
         ? "demo replay · the room is quiet"
         : "room unavailable · demo replay";
 
+  /** How many lines each member has, for the profile panel. */
+  const messageCountFor = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      if (!row.system) counts.set(row.from, (counts.get(row.from) ?? 0) + 1);
+    }
+    return (id: string) => counts.get(id) ?? 0;
+  }, [rows]);
+
   return (
     <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col px-2 sm:px-4">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-surface/95 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.65)] backdrop-blur">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-surface/95 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.65)] backdrop-blur">
         {/* ---------- header ---------- */}
         <header className="flex items-center gap-3 border-b border-border/70 bg-surface px-4 py-2.5">
-          <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
-            style={{ background: "linear-gradient(135deg, #2e90fa, #00c896)" }}
+          <button
+            type="button"
+            data-testid="community-header"
+            onClick={() => setOverviewOpen(true)}
+            aria-label="Open community overview"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left transition-colors hover:bg-surface-2/60"
           >
-            <BrandMark size={28} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[15px] font-semibold text-foreground">Axion Community</h1>
-            {typing && (
-              <p
-                data-testid="typing"
-                className="flex items-center gap-1.5 text-xs font-medium text-brand"
-              >
-                {personaFor(typing.sender).name} is typing
-                <TypingDots />
-              </p>
-            )}
-            <p
-              data-testid="room-status"
-              className="flex items-center gap-1.5 text-xs text-muted"
+            <span
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+              style={{ background: "linear-gradient(135deg, #2e90fa, #00c896)" }}
             >
-              <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  source === "live" ? "bg-gain" : source === "demo" ? "bg-muted" : "bg-loss"
-                }`}
-                aria-hidden
-              />
-              {(roster ?? PERSONAS).length} members · {(roster ?? PERSONAS).filter((p) => p.online).length} online · {label}
-            </p>
-          </div>
+              <BrandMark size={28} />
+            </span>
+            <span className="min-w-0 flex-1">
+              {/* a span, not an h1: the whole header is a button, and a heading is not
+                  phrasing content */}
+              <span className="block truncate text-[15px] font-semibold text-foreground">
+                {community.name}
+              </span>
+              {typing && (
+                <span
+                  data-testid="typing"
+                  className="flex items-center gap-1.5 text-xs font-medium text-brand"
+                >
+                  {personaFor(typing.sender).name} is typing
+                  <TypingDots />
+                </span>
+              )}
+              <span data-testid="room-status" className="flex items-center gap-1.5 text-xs text-muted">
+                <span
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    source === "live" ? "bg-gain" : source === "demo" ? "bg-muted" : "bg-loss"
+                  }`}
+                  aria-hidden
+                />
+                {members.length} members · {members.filter((p) => p.online).length} online · {label}
+              </span>
+            </span>
+          </button>
           <div className="flex items-center gap-1 text-muted">
             {[Search, Phone, MoreVertical].map((Icon, i) => (
               <button
@@ -648,163 +1120,19 @@ export function CommunityChat() {
 
         <div className="flex min-h-0 flex-1">
           {/* ---------- messages ---------- */}
-          <div ref={scrollRef} className="bg-grid relative min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-            <div className="mb-3 flex justify-center">
-              <span className="rounded-full bg-surface-2/90 px-3 py-1 text-[11px] font-medium text-muted">
-                Today
-              </span>
-            </div>
-
-            {rows.map((row, i) => {
-              const sender = personaFor(row.from);
-              const outgoing = row.from === YOU.id;
-              const prev = i > 0 ? rows[i - 1] : null;
-              const next = i < rows.length - 1 ? rows[i + 1] : null;
-              const first = !prev || prev.from !== row.from || row.at - prev.at > GROUP_GAP_MS;
-              const last = !next || next.from !== row.from || next.at - row.at > GROUP_GAP_MS;
-              const quoted = row.replyToSeq === undefined ? undefined : bySeq.get(row.replyToSeq);
-              const dragging = swipe?.key === row.key ? swipe.dx : 0;
-
-              return (
-                <div
-                  key={row.key}
-                  data-seq={row.seq}
-                  data-testid="message"
-                  className={`group relative ${first ? "mt-3" : "mt-[2px]"} ${
-                    row.seq !== undefined && row.seq === replyTo?.seq ? "rounded-lg bg-brand/10" : ""
-                  }`}
-                  style={{
-                    transform: dragging ? `translateX(${dragging}px)` : undefined,
-                    transition: dragging ? "none" : "transform 120ms ease-out",
-                    touchAction: "pan-y",
-                  }}
-                  // Swipe right to reply, the way a phone messenger does it.
-                  onPointerDown={(event) => {
-                    if (event.pointerType === "mouse") return;
-                    dragRef.current = { key: row.key, x0: event.clientX };
-                  }}
-                  onPointerMove={(event) => {
-                    const drag = dragRef.current;
-                    if (!drag || drag.key !== row.key) return;
-                    const dx = Math.max(0, Math.min(SWIPE_MAX_PX, event.clientX - drag.x0));
-                    if (dx > 4) setSwipe({ key: row.key, dx });
-                  }}
-                  onPointerUp={() => {
-                    const dx = swipe?.key === row.key ? swipe.dx : 0;
-                    dragRef.current = null;
-                    setSwipe(null);
-                    if (dx >= SWIPE_TRIGGER_PX) setReplyTo(row);
-                  }}
-                  onPointerCancel={() => {
-                    dragRef.current = null;
-                    setSwipe(null);
-                  }}
-                >
-                  {dragging > 4 && (
-                    <span
-                      aria-hidden
-                      data-testid="swipe-reply"
-                      className="absolute top-1/2 left-1 -translate-y-1/2 text-brand"
-                      style={{ opacity: Math.min(1, dragging / SWIPE_TRIGGER_PX) }}
-                    >
-                      <CornerUpLeft className="h-5 w-5" />
-                    </span>
-                  )}
-                  <Bubble
-                    row={row}
-                    sender={sender}
-                    first={first}
-                    last={last}
-                    outgoing={outgoing}
-                    quoted={quoted}
-                    onJump={(seq) =>
-                      scrollRef.current
-                        ?.querySelector(`[data-seq="${seq}"]`)
-                        ?.scrollIntoView({ block: "center", behavior: "smooth" })
-                    }
-                    onReact={(seq, emoji) => void react(seq, emoji)}
-                  />
-                  {row.seq !== undefined && (
-                    <div
-                      className={`absolute top-1/2 flex -translate-y-1/2 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
-                        outgoing ? "left-1" : "right-1"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        aria-label={`Reply to ${sender.name}`}
-                        data-testid="reply-action"
-                        onClick={() => setReplyTo(row)}
-                        // Hover affordance for a mouse: a swipe needs a thumb.
-                        className="rounded-full bg-surface-2 p-1.5 text-muted"
-                      >
-                        <CornerUpLeft className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`React to ${sender.name}`}
-                        data-testid="react-action"
-                        onClick={() =>
-                          setReacting(reacting === row.seq ? null : (row.seq ?? null))
-                        }
-                        className="rounded-full bg-surface-2 p-1.5 text-muted"
-                      >
-                        <Smile className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                  {reacting === row.seq && row.seq !== undefined && (
-                    <div
-                      data-testid="reaction-palette"
-                      className={`absolute -top-3 z-10 flex items-center gap-0.5 rounded-full border border-border bg-surface px-1.5 py-1 shadow-[0_8px_24px_-6px_rgba(0,0,0,0.7)] ${
-                        outgoing ? "right-1" : "left-1"
-                      }`}
-                    >
-                      {REACTION_EMOJI.map((emoji) => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          aria-label={`React with ${emoji}`}
-                          onClick={() => void react(row.seq!, emoji)}
-                          className="rounded-full px-1 text-[16px] leading-none transition-transform hover:scale-125"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* `items-center` on purpose: the transcript's message rows are matched by
-                the e2e spec with `div.flex.items-end.gap-2`, and a typing bubble is not
-                a message. */}
-            {typing && source === "live" && (
-              <div data-testid="typing-row" className="mt-3 flex items-center gap-2">
-                <span className="w-[34px] shrink-0">
-                  <Avatar p={personaFor(typing.sender)} />
-                </span>
-                <div className="rounded-[12px] rounded-bl-[4px] bg-surface-2 px-3 py-2 text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.35)]">
-                  <span className="text-[13px] font-semibold" style={{ color: personaFor(typing.sender).color }}>
-                    {personaFor(typing.sender).name}
-                  </span>
-                  <span className="ml-1.5 align-middle text-[12px] text-muted">is typing…</span>
-                  <span className="ml-2 inline-flex align-middle">
-                    <TypingDots />
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {notice && (
-              <div className="mt-3 flex justify-center">
-                <span className="rounded-full bg-surface-2/90 px-3 py-1 text-[11px] font-medium text-muted">
-                  {notice}
-                </span>
-              </div>
-            )}
-          </div>
+          <Transcript
+            rows={rows}
+            roster={roster}
+            replyToSeq={replyTo?.seq}
+            typing={typing}
+            source={source}
+            notice={notice}
+            scrollRef={scrollRef}
+            onJump={onJump}
+            onReply={onReply}
+            onReact={onReact}
+            onOpenProfile={onOpenProfile}
+          />
 
           {/* ---------- members rail ---------- */}
           <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto border-l border-border/70 bg-surface/60 px-2 py-3 xl:flex">
@@ -812,8 +1140,8 @@ export function CommunityChat() {
               Members
             </p>
             <MemberRow p={{ ...YOU, role: "you · online" }} />
-            {[...(roster ?? PERSONAS)].sort((a, b) => Number(b.online) - Number(a.online)).map((p) => (
-              <MemberRow key={p.id} p={p} />
+            {[...members].sort((a, b) => Number(b.online) - Number(a.online)).map((p) => (
+              <MemberRow key={p.id} p={p} onClick={() => setProfile(p)} />
             ))}
           </aside>
         </div>
@@ -878,6 +1206,22 @@ export function CommunityChat() {
             {draft.trim() ? <Send className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
           </button>
         </footer>
+
+        {overviewOpen && (
+          <CommunityOverview
+            community={community}
+            members={members}
+            onClose={() => setOverviewOpen(false)}
+            onOpenMember={(p) => setProfile(p)}
+          />
+        )}
+        {profile && (
+          <ProfilePanel
+            persona={profile}
+            messageCount={messageCountFor(profile.id)}
+            onClose={() => setProfile(null)}
+          />
+        )}
       </div>
     </div>
   );

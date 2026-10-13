@@ -297,6 +297,10 @@ const VOICE_SYSTEM = [
   // explicit, because a persona written as Lagos or Accra will otherwise reach
   // for pidgin that nobody in a US room would say.
   "Slang is American and current — 'cooked', 'locked in', 'mid', 'delulu', 'aura', 'rent free', 'glazing', 'crash out', 'no cap', 'down bad', 'yapping', 'touch grass', whatever people your age actually say. Never explain it, never put it in quotes, and never use slang from another country, another language or a local dialect.",
+  // Emoji: people in a trading chat punctuate with them, and a room that never does
+  // reads as older or more formal than it is. Occasional on purpose — one glyph on the
+  // lines that call for it, not on every line, which is its own tell.
+  "Now and then — not on most messages — end a line with a single emoji that does what a word would: a laugh, a shrug, fire, a face for what you just said. One at most, and none on a line that does not want it.",
   // The single most recognisable "a model wrote this" tell: the balanced
   // aphorism, and the clipped slogan fragment. Both are banned by shape, not by
   // example alone, because the shape is what the model reaches for.
